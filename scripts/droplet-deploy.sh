@@ -69,15 +69,30 @@ if ! command -v node >/dev/null 2>&1 || ! node --version | grep -qE '^v(2[0-9]|[
   apt-get install -y nodejs
 fi
 
+# MySQL root access — try socket auth (sudo mysql) first, then env-var password.
+mysql_root() {
+  if [ -n "${MYSQL_ROOT_PASSWORD:-}" ]; then
+    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot "$@"
+  else
+    mysql "$@"
+  fi
+}
+
 # DB credentials
 if [ ! -f "$DB_PASS_FILE" ]; then
   log "Creating MySQL database + user…"
+  if ! mysql_root -e "SELECT 1" >/dev/null 2>&1; then
+    warn "Cannot reach MySQL as root."
+    warn "Re-run with the root password:"
+    warn "  ... MYSQL_ROOT_PASSWORD='your_mysql_root_password' bash /tmp/d.sh"
+    exit 1
+  fi
   DB_PASS=$(openssl rand -hex 16)
   echo "$DB_PASS" > "$DB_PASS_FILE"
   chmod 600 "$DB_PASS_FILE"
-  mysql -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-  mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
-  mysql -e "GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;"
+  mysql_root -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+  mysql_root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
+  mysql_root -e "GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;"
 else
   DB_PASS=$(cat "$DB_PASS_FILE")
 fi
