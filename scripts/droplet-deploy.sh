@@ -101,18 +101,25 @@ detect_mysql_auth() {
   fi
 }
 
-# DB credentials
-if [ ! -f "$DB_PASS_FILE" ]; then
-  log "Creating MySQL database + user…"
-  detect_mysql_auth
+# DB credentials — always (re)provision idempotently so prior half-runs heal
+log "Ensuring MySQL database + user (idempotent)…"
+detect_mysql_auth
+if [ -f "$DB_PASS_FILE" ]; then
+  DB_PASS=$(cat "$DB_PASS_FILE")
+else
   DB_PASS=$(openssl rand -hex 16)
   echo "$DB_PASS" > "$DB_PASS_FILE"
   chmod 600 "$DB_PASS_FILE"
-  mysql_root -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-  mysql_root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
-  mysql_root -e "GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;"
-else
-  DB_PASS=$(cat "$DB_PASS_FILE")
+fi
+mysql_root -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysql_root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
+mysql_root -e "ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';"
+mysql_root -e "GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;"
+
+# Verify the smappen user can actually connect with the stored password
+if ! MYSQL_PWD="$DB_PASS" mysql -u"$DB_USER" "$DB_NAME" -e "SELECT 1" >/dev/null 2>&1; then
+  warn "smappen MySQL user still can't connect with stored password. Aborting."
+  exit 1
 fi
 
 # Clone or pull
