@@ -1,20 +1,19 @@
 #!/bin/bash
-# Smappen one-shot droplet deploy.
-# Run on a fresh Ubuntu 22.04+ droplet as root (or with sudo).
+# Smappen one-shot droplet deploy (Apache + Cloudflare DNS).
+# Designed to coexist with an existing GreenDock install on the same Ubuntu 22.04+/24.04 droplet.
 #
-# USAGE:
-#   curl -fsSL https://raw.githubusercontent.com/<USER>/smappen/main/scripts/droplet-deploy.sh -o deploy.sh
-#   chmod +x deploy.sh
-#   GITHUB_REPO=https://github.com/<USER>/smappen.git \
+# USAGE (on the droplet, as root):
+#   GITHUB_REPO=https://github.com/usaproduce/smappen.git \
 #   DOMAIN=smappen.mygreendock.com \
 #   EMAIL=adam.smith1735@gmail.com \
-#   ./deploy.sh
+#   GOOGLE_API_KEY=... ORS_API_KEY=... CENSUS_API_KEY=... \
+#   bash /tmp/deploy.sh
 
 set -e
 
-: "${GITHUB_REPO:?Set GITHUB_REPO env var (e.g. https://github.com/you/smappen.git)}"
-: "${DOMAIN:?Set DOMAIN env var (e.g. smappen.mygreendock.com)}"
-: "${EMAIL:?Set EMAIL env var (for Let's Encrypt)}"
+: "${GITHUB_REPO:?Set GITHUB_REPO}"
+: "${DOMAIN:?Set DOMAIN}"
+: "${EMAIL:?Set EMAIL}"
 
 APP_DIR=/var/www/smappen
 DB_NAME=smappen
@@ -22,23 +21,37 @@ DB_USER=smappen
 DB_PASS_FILE=/root/.smappen_db_pass
 
 log() { echo -e "\n\033[1;36m>>> $*\033[0m"; }
+warn() { echo -e "\033[1;33m⚠️  $*\033[0m"; }
+ok() { echo -e "\033[1;32m✅ $*\033[0m"; }
 
 if [ "$EUID" -ne 0 ]; then
-  echo "Run as root (sudo)."
+  echo "Run as root (sudo bash $0)"
   exit 1
 fi
 
-log "Installing system packages…"
+log "Installing system packages (PHP 8.2, Apache modules, MySQL client, etc)…"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y software-properties-common curl ca-certificates lsb-release apt-transport-https gnupg unzip git
-add-apt-repository -y ppa:ondrej/php
-apt-get update -y
-apt-get install -y \
-  php8.2 php8.2-fpm php8.2-mysql php8.2-curl php8.2-mbstring php8.2-xml php8.2-zip php8.2-gd php8.2-bcmath \
-  nginx certbot python3-certbot-nginx wkhtmltopdf
+apt-get install -y software-properties-common curl ca-certificates gnupg unzip git openssl
 
-# MySQL (skip if greendock already installed it)
+# PHP 8.2 (Ondrej PPA) — only if not already present
+if ! php -v 2>/dev/null | grep -q '^PHP 8\.[12]'; then
+  add-apt-repository -y ppa:ondrej/php
+  apt-get update -y
+fi
+apt-get install -y \
+  php8.2 php8.2-cli php8.2-fpm php8.2-mysql php8.2-curl php8.2-mbstring \
+  php8.2-xml php8.2-zip php8.2-gd php8.2-bcmath libapache2-mod-php8.2
+
+# Apache (should already be there if greendock is running) + mod_rewrite
+apt-get install -y apache2
+a2enmod rewrite headers ssl proxy_fcgi setenvif >/dev/null
+
+# Certbot (Apache plugin)
+apt-get install -y certbot python3-certbot-apache
+
+# MySQL client (server should already be installed for greendock)
+apt-get install -y mysql-client wkhtmltopdf
 if ! command -v mysql >/dev/null 2>&1; then
   apt-get install -y mysql-server
 fi
@@ -49,8 +62,8 @@ if ! command -v composer >/dev/null 2>&1; then
   curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 fi
 
-# Node 20 (only if not present)
-if ! command -v node >/dev/null 2>&1; then
+# Node 20
+if ! command -v node >/dev/null 2>&1 || ! node --version | grep -qE '^v(2[0-9]|[3-9][0-9])'; then
   log "Installing Node 20…"
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
   apt-get install -y nodejs
@@ -80,11 +93,10 @@ else
 fi
 cd "$APP_DIR"
 
-# Composer
 log "Installing PHP dependencies…"
 composer install --no-dev --optimize-autoloader --no-interaction
 
-# .env — build fresh if missing, else patch DB_PASS into existing
+# .env: fresh if missing, else patch DB_PASS
 if [ ! -f "$APP_DIR/.env" ]; then
   log "Creating .env…"
   JWT_SECRET=$(openssl rand -hex 32)
@@ -117,106 +129,104 @@ else
   sed -i "s|^DB_PASS=.*|DB_PASS=$DB_PASS|" "$APP_DIR/.env"
 fi
 chmod 600 "$APP_DIR/.env"
-chown www-data:www-data "$APP_DIR/.env"
 
-# Sanity check: bail if any API key is still a placeholder
 if grep -q '__SET_ME__' "$APP_DIR/.env"; then
-  echo
-  echo "⚠️  .env still contains __SET_ME__ placeholders."
-  echo "    Either: re-run with GOOGLE_API_KEY=… ORS_API_KEY=… CENSUS_API_KEY=… ./deploy.sh"
-  echo "    Or:     nano $APP_DIR/.env"
+  warn ".env still contains __SET_ME__ — set GOOGLE_API_KEY/ORS_API_KEY/CENSUS_API_KEY env vars and rerun, or nano $APP_DIR/.env"
   exit 1
 fi
 
-# Migrations
 log "Running database migrations…"
 php scripts/migrate.php
 
-# Permissions
 log "Setting permissions…"
 mkdir -p storage/cache storage/reports/maps storage/logs storage/exports storage/uploads public/uploads public/app
-chown -R www-data:www-data storage/ public/uploads/ public/app/
+chown -R www-data:www-data storage/ public/uploads/ public/app/ .env
 chmod -R 775 storage/ public/uploads/
 
-# Frontend build (if dist not present in repo)
+# Frontend build
 if [ ! -f "$APP_DIR/public/app/index.html" ]; then
   log "Building frontend…"
   cd frontend
-  if [ ! -f .env ]; then
-    cat > .env <<EOF
+  cat > .env <<EOF
 VITE_API_URL=https://$DOMAIN
 VITE_GOOGLE_MAPS_API_KEY=$(grep '^GOOGLE_API_KEY=' "$APP_DIR/.env" | cut -d'=' -f2)
 EOF
-  fi
-  npm ci
+  npm ci --no-audit --no-fund
   npm run build
   cd ..
+  chown -R www-data:www-data public/app/
 fi
 
-# Nginx config
-log "Configuring nginx for $DOMAIN…"
-cat > "/etc/nginx/sites-available/smappen" <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN;
-    root $APP_DIR/public;
-    index index.php index.html;
+# Apache vhost (NOT nginx — keeps greendock untouched)
+log "Configuring Apache vhost for $DOMAIN…"
+cat > "/etc/apache2/sites-available/smappen.conf" <<EOF
+<VirtualHost *:80>
+    ServerName $DOMAIN
+    DocumentRoot $APP_DIR/public
 
-    location /api {
-        try_files \$uri \$uri/ /index.php?\$query_string;
-    }
+    <Directory $APP_DIR/public>
+        AllowOverride All
+        Require all granted
+        Options -Indexes +FollowSymLinks
+    </Directory>
 
-    location / {
-        try_files \$uri \$uri/ /app/index.html;
-    }
+    <FilesMatch \.php\$>
+        SetHandler "proxy:unix:/var/run/php/php8.2-fpm.sock|fcgi://localhost"
+    </FilesMatch>
 
-    location ~ \.php\$ {
-        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
-        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
-        include fastcgi_params;
-        fastcgi_read_timeout 60;
-    }
+    # API → index.php
+    RewriteEngine On
+    RewriteCond %{REQUEST_URI} ^/api
+    RewriteRule ^ /index.php [L]
 
-    location ~ /\. { deny all; }
+    # Frontend SPA fallback
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} !^/api
+    RewriteRule ^ /app/index.html [L]
 
-    location /app/assets {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-    }
+    ErrorLog \${APACHE_LOG_DIR}/smappen-error.log
+    CustomLog \${APACHE_LOG_DIR}/smappen-access.log combined
 
-    client_max_body_size 20M;
-    gzip on;
-    gzip_types text/plain text/css application/json application/javascript application/geo+json image/svg+xml;
-}
+    <Directory $APP_DIR/public/app/assets>
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </Directory>
+</VirtualHost>
 EOF
-ln -sf /etc/nginx/sites-available/smappen /etc/nginx/sites-enabled/smappen
-nginx -t
-systemctl reload nginx
-
-# SSL — only attempt if DOMAIN resolves to this server
-log "Checking DNS for $DOMAIN…"
-SERVER_IP=$(curl -fsSL ifconfig.me)
-DOMAIN_IP=$(dig +short "$DOMAIN" | tail -1)
-if [ "$SERVER_IP" = "$DOMAIN_IP" ]; then
-  log "DNS OK — requesting Let's Encrypt cert…"
-  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" --redirect || true
-else
-  echo "⚠️  $DOMAIN does not yet resolve to $SERVER_IP (got: $DOMAIN_IP)."
-  echo "    Add a DNS A-record: $DOMAIN → $SERVER_IP"
-  echo "    Then run:  certbot --nginx -d $DOMAIN --redirect -m $EMAIL --agree-tos"
-fi
-
-# PHP-FPM reload
+a2ensite smappen.conf >/dev/null
+apache2ctl configtest
+systemctl reload apache2
 systemctl reload php8.2-fpm
 
-# Cron for cleanup
+# SSL via Cloudflare-aware check
+log "Checking DNS for $DOMAIN…"
+SERVER_IP=$(curl -fsSL ifconfig.me)
+DOMAIN_IP=$(dig +short "$DOMAIN" @1.1.1.1 | grep -E '^[0-9.]+$' | tail -1)
+
+if [ -z "$DOMAIN_IP" ]; then
+  warn "$DOMAIN does not resolve yet. Add a Cloudflare DNS A-record (grey cloud / DNS-only): $DOMAIN → $SERVER_IP"
+  warn "Once DNS propagates, run: certbot --apache -d $DOMAIN --redirect -m $EMAIL --agree-tos --non-interactive"
+elif [ "$SERVER_IP" != "$DOMAIN_IP" ]; then
+  warn "$DOMAIN resolves to $DOMAIN_IP (likely Cloudflare proxy), but droplet IP is $SERVER_IP."
+  warn "Let's Encrypt won't work through Cloudflare's proxy."
+  warn "  Option A (easiest): In Cloudflare DNS, set the smappen A-record to DNS only (grey cloud) → rerun certbot → re-enable proxy with Full (Strict) SSL"
+  warn "  Option B: Use Cloudflare Origin CA cert instead"
+  warn "Skipping SSL for now. After fixing DNS, run: certbot --apache -d $DOMAIN --redirect -m $EMAIL --agree-tos --non-interactive"
+else
+  log "DNS OK — requesting Let's Encrypt cert via Apache…"
+  certbot --apache -d "$DOMAIN" --redirect -m "$EMAIL" --agree-tos --non-interactive || warn "certbot failed (check above) — site still usable on http://"
+fi
+
+# Cron
 if ! crontab -l 2>/dev/null | grep -q "smappen/scripts/cleanup-cron.php"; then
   log "Installing cleanup cron…"
   (crontab -l 2>/dev/null; echo "*/15 * * * * php $APP_DIR/scripts/cleanup-cron.php >> $APP_DIR/storage/logs/cleanup.log 2>&1") | crontab -
 fi
 
-log "✅ Smappen deployed to https://$DOMAIN"
+ok "Smappen deployed."
 echo
 echo "Smoke test:"
-echo "  curl -i https://$DOMAIN/api/auth/me     # expect 401"
-echo "  open https://$DOMAIN in browser"
+echo "  curl -i http://$DOMAIN/api/auth/me            # expect 401 (no auth)"
+echo "  curl -i https://$DOMAIN/                      # expect 200 (frontend HTML)"
+echo
+echo "Open in browser: https://$DOMAIN"
