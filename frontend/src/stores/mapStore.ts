@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+import type { HeatmapMetric } from '../api/heatmap';
+
 interface MapState {
   center: { lat: number; lng: number };
   zoom: number;
@@ -7,6 +9,7 @@ interface MapState {
   drawingType: 'polygon' | 'circle' | 'pin' | null;
   placePinFor: 'isochrone' | null;
   showHeatmap: boolean;
+  heatmapMetric: HeatmapMetric;
   showPOIs: boolean;
   showImportedPoints: boolean;
   poiResults: any[];
@@ -17,6 +20,8 @@ interface MapState {
   selectArea: (id: string | null) => void;
   startDrawing: (t: 'polygon' | 'circle' | 'pin' | null, mode?: 'isochrone' | null) => void;
   toggleLayer: (k: 'showHeatmap' | 'showPOIs' | 'showImportedPoints') => void;
+  toggleHeatmap: () => void;
+  setHeatmapMetric: (m: HeatmapMetric) => void;
   setPoiResults: (places: any[]) => void;
   setPendingIsochrone: (data: any | null) => void;
   setMapInstance: (m: google.maps.Map | null) => void;
@@ -30,6 +35,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   drawingType: null,
   placePinFor: null,
   showHeatmap: false,
+  heatmapMetric: 'population_density',
   showPOIs: true,
   showImportedPoints: true,
   poiResults: [],
@@ -40,6 +46,8 @@ export const useMapStore = create<MapState>((set, get) => ({
   selectArea: (id) => set({ selectedAreaId: id }),
   startDrawing: (drawingType, placePinFor = null) => set({ drawingType, placePinFor }),
   toggleLayer: (k) => set((s) => ({ [k]: !s[k] } as any)),
+  toggleHeatmap: () => set((s) => ({ showHeatmap: !s.showHeatmap })),
+  setHeatmapMetric: (heatmapMetric) => set({ heatmapMetric }),
   setPoiResults: (poiResults) => set({ poiResults }),
   setPendingIsochrone: (pendingIsochrone) => set({ pendingIsochrone }),
   setMapInstance: (mapInstance) => set({ mapInstance }),

@@ -1,63 +1,101 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&display=swap');
 
 :root {
-  --brand: #6B4EFF;
-  --brand-dark: #4830d9;
-  --ink: #111827;
-  --ink-2: #1f2937;
-  --slate: #475569;
-  --bg: #f8fafc;
+  /* Smappen brand purple — replaces the old violet */
+  --brand: #7848BB;
+  --brand-dark: #6B37A6;
+  --brand-light: #EDE5F7;
+  --brand-50: #F6F2FB;
+  --cta: #E53935;
+  --cta-dark: #D42A2A;
+
+  --ink: #1A1A2E;
+  --ink-2: #2D2D44;
+  --body: #4A4A5A;
+  --slate: #6B6B7B;
+  --muted: #8E8E9A;
+  --line: #D1D1DB;
+  --line-soft: #E8E8EE;
+  --bg-panel: #F3F3F7;
+  --bg: #F9F9FB;
 }
 
 html, body, #root {
   height: 100%;
   margin: 0;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: 'Nunito', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   background: var(--bg);
-  color: var(--ink);
+  color: var(--body);
 }
 
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
   padding: 0.5rem 1rem;
   border-radius: 8px;
-  font-weight: 600;
-  font-size: 0.875rem;
+  font-weight: 700;
+  font-size: 14px;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: background 0.15s, transform 0.05s;
+  transition: background-color 0.15s ease, transform 0.05s ease;
 }
-.btn:active { transform: translateY(1px); }
+.btn:active { transform: scale(0.98); }
 .btn-primary { background: var(--brand); color: white; }
 .btn-primary:hover { background: var(--brand-dark); }
-.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-secondary { background: white; color: var(--ink); border-color: #e5e7eb; }
-.btn-secondary:hover { background: #f1f5f9; }
-.btn-ghost { background: transparent; color: var(--slate); }
-.btn-ghost:hover { background: #f1f5f9; }
-.btn-danger { background: #dc2626; color: white; }
+.btn-primary:disabled { background: #A78BDA; cursor: not-allowed; }
+
+.btn-cta { background: var(--cta); color: white; }
+.btn-cta:hover { background: var(--cta-dark); }
+
+.btn-secondary { background: white; color: var(--body); border-color: var(--line); font-weight: 600; }
+.btn-secondary:hover { background: var(--bg-panel); border-color: #B0B0BC; }
+
+.btn-ghost { background: transparent; color: var(--slate); font-weight: 600; }
+.btn-ghost:hover { background: var(--bg-panel); }
+
+.btn-danger { background: var(--cta); color: white; }
 
 .input, .select, .textarea {
   display: block;
   width: 100%;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: white;
-  font-size: 0.875rem;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  height: 40px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.input::placeholder, .select::placeholder, .textarea::placeholder {
+  color: var(--muted);
+  font-style: italic;
 }
 .input:focus, .select:focus, .textarea:focus {
-  outline: none;
   border-color: var(--brand);
-  box-shadow: 0 0 0 3px rgba(107, 78, 255, 0.15);
+  box-shadow: 0 0 0 3px rgba(120, 72, 187, 0.12);
+}
+
+.input-address {
+  border: 2px solid var(--brand);
+  border-radius: 8px;
+  height: 44px;
+  padding: 0 44px 0 16px;
+  font-size: 14px;
 }
 
 .label {
   display: block;
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
   color: var(--slate);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -66,13 +104,17 @@ html, body, #root {
 
 .card {
   background: white;
-  border-radius: 10px;
-  border: 1px solid #e5e7eb;
-  padding: 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--line-soft);
+  padding: 16px;
 }
 
+.shadow-panel-left { box-shadow: 2px 0 8px rgba(0, 0, 0, 0.08); }
+.shadow-panel-right { box-shadow: -2px 0 8px rgba(0, 0, 0, 0.08); }
+.shadow-float { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); }
+
 .skeleton {
-  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background: linear-gradient(90deg, #F3F3F7 25%, #E8E8EE 50%, #F3F3F7 75%);
   background-size: 200% 100%;
   animation: skeleton 1.4s ease-in-out infinite;
   border-radius: 4px;
@@ -80,4 +122,56 @@ html, body, #root {
 @keyframes skeleton {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+/* Right toolbar icon button */
+.toolbar-btn {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--body);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.toolbar-btn:hover { background: var(--bg-panel); }
+.toolbar-btn.active { background: var(--brand-light); color: var(--brand); }
+
+/* Area list row */
+.area-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+.area-row:hover { background: var(--brand-50); }
+.area-row.selected {
+  background: var(--brand-light);
+}
+.area-row.selected .area-name { font-weight: 700; }
+.area-color-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  flex-shrink: 0;
+  border: 1px solid rgba(0,0,0,0.08);
+}
+.area-name {
+  font-size: 14px;
+  color: var(--body);
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+.area-meta {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--body);
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }

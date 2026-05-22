@@ -1,6 +1,15 @@
+// Smappen area-marker palette.
 export const AREA_PALETTE = [
-  '#6B4EFF', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4',
-  '#ec4899', '#8b5cf6', '#10b981', '#f97316', '#0ea5e9',
+  '#E53935', // red
+  '#00897B', // teal/green
+  '#7848BB', // purple
+  '#F57C00', // orange
+  '#1565C0', // blue
+  '#D81B60', // pink
+  '#00ACC1', // cyan
+  '#7CB342', // lime
+  '#FFB300', // amber
+  '#3949AB', // indigo
 ];
 
 export function pickColor(index: number): string {

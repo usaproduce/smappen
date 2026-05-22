@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { Trash2, MoreHorizontal, Car, Bike, Footprints, Hexagon } from 'lucide-react';
+import { Trash2, MoreHorizontal, Car, Bike, Footprints, Circle, Clock } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { areasApi } from '../../api/areas';
-import { formatNumber } from '../../utils/format';
 import type { Area } from '../../types';
 import toast from 'react-hot-toast';
 
@@ -18,10 +17,9 @@ export default function AreaCard({ area }: { area: Area }) {
   const { removeArea } = useProjectStore();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const Icon = modeIcon[area.travel_mode ?? ''] ?? Hexagon;
   const isSelected = area.id === selectedAreaId;
-
-  const pop = (area as any).demographics_cache?.population?.total;
+  const ModeIcon = modeIcon[area.travel_mode ?? ''] ?? Circle;
+  const isIsochrone = area.area_type === 'isochrone' || area.area_type === 'isodistance';
 
   async function onDelete() {
     if (!confirm(`Delete "${area.name}"?`)) return;
@@ -29,28 +27,29 @@ export default function AreaCard({ area }: { area: Area }) {
       await areasApi.delete(area.id);
       removeArea(area.id);
       toast.success('Deleted');
-    } catch (e: any) {
+    } catch {
       toast.error('Delete failed');
     }
   }
 
   return (
     <div
-      className={`flex items-center gap-2 p-2 rounded cursor-pointer border ${isSelected ? 'border-violet-300 bg-violet-50' : 'border-transparent hover:bg-slate-50'}`}
+      className={`area-row ${isSelected ? 'selected' : ''}`}
       onClick={() => {
         selectArea(area.id);
         if (area.geometry) fitBoundsToArea(area.geometry);
       }}
     >
-      <span className="w-3 h-3 rounded-full" style={{ background: area.fill_color }} />
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium truncate" style={{ color: 'var(--ink)' }}>{area.name}</div>
-        <div className="text-xs text-slate-500 flex items-center gap-1">
-          <Icon size={10} />
-          {area.travel_time_minutes ? `${area.travel_time_minutes} min` : area.area_type}
-          {pop ? <span className="ml-1">· {formatNumber(pop)} pop</span> : null}
-        </div>
-      </div>
+      <span className="area-color-dot" style={{ background: area.fill_color }} />
+      {isIsochrone ? (
+        <span className="area-meta">
+          <ModeIcon size={14} />
+          {area.travel_time_minutes ? `${area.travel_time_minutes} min` : ''}
+        </span>
+      ) : (
+        <Circle size={14} style={{ color: area.fill_color }} />
+      )}
+      <span className="area-name">{area.name}</span>
       <div className="relative" onClick={(e) => e.stopPropagation()}>
         <button className="text-slate-400 hover:text-slate-700 p-1" onClick={() => setMenuOpen(!menuOpen)}>
           <MoreHorizontal size={14} />

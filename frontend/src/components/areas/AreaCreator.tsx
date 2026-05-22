@@ -121,10 +121,16 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
         </div>
         <div className="p-4 space-y-3">
           <div>
-            <label className="label">Address</label>
+            <label className="label">Starting address</label>
             <div className="flex gap-2">
-              <input ref={addressRef} className="input flex-1" placeholder="Enter address…" value={address} onChange={(e) => setAddress(e.target.value)} />
-              <button type="button" className="btn btn-secondary" onClick={() => { startDrawing('pin', 'isochrone'); toast('Click on the map to set center'); }}>
+              <input
+                ref={addressRef}
+                className="input-address flex-1"
+                placeholder="Starting address (e.g. London)"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+              />
+              <button type="button" className="btn btn-secondary" title="Pick on map" onClick={() => { startDrawing('pin', 'isochrone'); toast('Click on the map to set center'); }}>
                 <MapPin size={14} />
               </button>
             </div>

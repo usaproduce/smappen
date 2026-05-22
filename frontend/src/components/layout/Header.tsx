@@ -40,8 +40,8 @@ export default function Header() {
   return (
     <header className="bg-white border-b border-slate-200 px-4 h-14 flex items-center justify-between sticky top-0 z-30">
       <div className="flex items-center gap-4">
-        <Link to="/" className="flex items-center gap-2 font-bold" style={{ color: '#1e3a5f' }}>
-          <MapPin size={20} color="var(--brand)" />
+        <Link to="/" className="flex items-center gap-2 font-extrabold" style={{ color: '#1A1A2E', fontSize: 17 }}>
+          <MapPin size={20} color="#7848BB" />
           Smappen
         </Link>
         <div className="relative">

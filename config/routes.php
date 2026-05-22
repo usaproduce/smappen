@@ -9,6 +9,7 @@ use App\Controllers\IsochroneController;
 use App\Controllers\GeocodingController;
 use App\Controllers\PlacesController;
 use App\Controllers\DemographicsController;
+use App\Controllers\HeatmapController;
 use App\Controllers\ImportController;
 use App\Controllers\ExportController;
 use App\Controllers\ReportController;
@@ -46,6 +47,9 @@ return function (Router $r) {
     $r->get('/api/areas/{id}/demographics', [DemographicsController::class, 'show'], $auth);
     $r->get('/api/areas/{id}/pois', [PlacesController::class, 'forArea'], $auth);
     $r->post('/api/demographics/compare', [DemographicsController::class, 'compare'], $auth);
+
+    // Heatmap viewport tracts (choropleth)
+    $r->get('/api/heatmap/tracts', [HeatmapController::class, 'tracts'], $auth);
 
     // Isochrone
     $r->post('/api/isochrone/calculate', [IsochroneController::class, 'calculate'], $auth);
