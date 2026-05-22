@@ -34,14 +34,20 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y software-properties-common curl ca-certificates gnupg unzip git openssl
 
-# PHP 8.2 (Ondrej PPA) — only if not already present
-if ! php -v 2>/dev/null | grep -q '^PHP 8\.[12]'; then
+# PHP 8.3 via Ondrej PPA (some composer deps require >= 8.3).
+# Installed alongside whatever greendock uses — Apache picks PHP per-vhost via FPM socket.
+if ! ls /etc/apt/sources.list.d/ondrej*php* >/dev/null 2>&1; then
   add-apt-repository -y ppa:ondrej/php
   apt-get update -y
 fi
 apt-get install -y \
-  php8.2 php8.2-cli php8.2-fpm php8.2-mysql php8.2-curl php8.2-mbstring \
-  php8.2-xml php8.2-zip php8.2-gd php8.2-bcmath libapache2-mod-php8.2
+  php8.3 php8.3-cli php8.3-fpm php8.3-mysql php8.3-curl php8.3-mbstring \
+  php8.3-xml php8.3-zip php8.3-gd php8.3-bcmath
+systemctl enable --now php8.3-fpm
+
+# Use 8.3 as the default CLI php for this script
+PHP_BIN=/usr/bin/php8.3
+COMPOSER_BIN="$PHP_BIN /usr/local/bin/composer"
 
 # Apache (should already be there if greendock is running) + mod_rewrite
 apt-get install -y apache2
@@ -133,8 +139,8 @@ else
 fi
 cd "$APP_DIR"
 
-log "Installing PHP dependencies…"
-composer install --no-dev --optimize-autoloader --no-interaction
+log "Installing PHP dependencies (via PHP 8.3)…"
+$COMPOSER_BIN install --no-dev --optimize-autoloader --no-interaction
 
 # .env: fresh if missing, else patch DB_PASS
 if [ ! -f "$APP_DIR/.env" ]; then
@@ -176,7 +182,7 @@ if grep -q '__SET_ME__' "$APP_DIR/.env"; then
 fi
 
 log "Running database migrations…"
-php scripts/migrate.php
+$PHP_BIN scripts/migrate.php
 
 log "Setting permissions…"
 mkdir -p storage/cache storage/reports/maps storage/logs storage/exports storage/uploads public/uploads public/app
@@ -211,8 +217,14 @@ cat > "/etc/apache2/sites-available/smappen.conf" <<EOF
     </Directory>
 
     <FilesMatch \.php\$>
-        SetHandler "proxy:unix:/var/run/php/php8.2-fpm.sock|fcgi://localhost"
+        SetHandler "proxy:unix:/var/run/php/php8.3-fpm.sock|fcgi://localhost"
     </FilesMatch>
+
+    # Let's Encrypt HTTP-01 challenge — must be served as static files, not rewritten
+    Alias /.well-known/acme-challenge /var/www/html/.well-known/acme-challenge
+    <Directory /var/www/html/.well-known/acme-challenge>
+        Require all granted
+    </Directory>
 
     # API → index.php
     RewriteEngine On
@@ -236,7 +248,7 @@ EOF
 a2ensite smappen.conf >/dev/null
 apache2ctl configtest
 systemctl reload apache2
-systemctl reload php8.2-fpm
+systemctl reload php8.3-fpm 2>/dev/null || systemctl restart php8.3-fpm
 
 # SSL via Cloudflare-aware check
 log "Checking DNS for $DOMAIN…"
@@ -254,7 +266,22 @@ elif [ "$SERVER_IP" != "$DOMAIN_IP" ]; then
   warn "Skipping SSL for now. After fixing DNS, run: certbot --apache -d $DOMAIN --redirect -m $EMAIL --agree-tos --non-interactive"
 else
   log "DNS OK — requesting Let's Encrypt cert via Apache…"
-  certbot --apache -d "$DOMAIN" --redirect -m "$EMAIL" --agree-tos --non-interactive || warn "certbot failed (check above) — site still usable on http://"
+  if certbot --apache -d "$DOMAIN" --redirect -m "$EMAIL" --agree-tos --non-interactive; then
+    ok "SSL cert installed for $DOMAIN"
+  else
+    warn "certbot failed. Common causes:"
+    warn "  - Cloudflare proxy enabled (orange cloud) — set to DNS-only (grey) and retry"
+    warn "  - Apache config error — check: apache2ctl -S | grep $DOMAIN"
+    warn "  - Hit Let's Encrypt rate limit (5 certs/week per domain)"
+    warn "Site is still reachable on http://$DOMAIN"
+  fi
+fi
+
+# Sanity-check the cert actually covers our subdomain
+SERVED_CN=$(echo | openssl s_client -servername "$DOMAIN" -connect "$DOMAIN:443" 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | tr -d '\n')
+if [ -n "$SERVED_CN" ] && ! echo "$SERVED_CN" | grep -q "$DOMAIN"; then
+  warn "Live SSL cert subject is: $SERVED_CN — does NOT cover $DOMAIN"
+  warn "Apache may be falling through to greendock's *:443 vhost. Run: apache2ctl -S"
 fi
 
 # Cron
