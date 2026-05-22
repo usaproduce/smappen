@@ -84,9 +84,9 @@ cd "$APP_DIR"
 log "Installing PHP dependencies…"
 composer install --no-dev --optimize-autoloader --no-interaction
 
-# .env: keep existing if present, else build a fresh one
+# .env — build fresh if missing, else patch DB_PASS into existing
 if [ ! -f "$APP_DIR/.env" ]; then
-  log "Creating .env (you'll need to fill in API keys)…"
+  log "Creating .env…"
   JWT_SECRET=$(openssl rand -hex 32)
   cat > "$APP_DIR/.env" <<EOF
 APP_URL=https://$DOMAIN
@@ -100,21 +100,31 @@ DB_PASS=$DB_PASS
 
 JWT_SECRET=$JWT_SECRET
 
-GOOGLE_API_KEY=__SET_ME__
-ORS_API_KEY=__SET_ME__
-CENSUS_API_KEY=__SET_ME__
+GOOGLE_API_KEY=${GOOGLE_API_KEY:-__SET_ME__}
+ORS_API_KEY=${ORS_API_KEY:-__SET_ME__}
+CENSUS_API_KEY=${CENSUS_API_KEY:-__SET_ME__}
 
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=
-STRIPE_PRICE_STARTER=
-STRIPE_PRICE_PRO=
-STRIPE_PRICE_BUSINESS=
+STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+STRIPE_PRICE_STARTER=${STRIPE_PRICE_STARTER:-}
+STRIPE_PRICE_PRO=${STRIPE_PRICE_PRO:-}
+STRIPE_PRICE_BUSINESS=${STRIPE_PRICE_BUSINESS:-}
 
 FRONTEND_URL=https://$DOMAIN
 EOF
+else
+  log "Patching DB_PASS into existing .env…"
+  sed -i "s|^DB_PASS=.*|DB_PASS=$DB_PASS|" "$APP_DIR/.env"
+fi
+chmod 600 "$APP_DIR/.env"
+chown www-data:www-data "$APP_DIR/.env"
+
+# Sanity check: bail if any API key is still a placeholder
+if grep -q '__SET_ME__' "$APP_DIR/.env"; then
   echo
-  echo "⚠️  Edit $APP_DIR/.env and replace __SET_ME__ with your real keys, then re-run this script."
-  echo "    nano $APP_DIR/.env"
+  echo "⚠️  .env still contains __SET_ME__ placeholders."
+  echo "    Either: re-run with GOOGLE_API_KEY=… ORS_API_KEY=… CENSUS_API_KEY=… ./deploy.sh"
+  echo "    Or:     nano $APP_DIR/.env"
   exit 1
 fi
 
