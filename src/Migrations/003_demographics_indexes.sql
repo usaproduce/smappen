@@ -1,0 +1,2 @@
+CREATE INDEX idx_census_demo_pop ON census_demographics(total_population);
+CREATE INDEX idx_census_demo_income ON census_demographics(median_household_income);

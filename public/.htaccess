@@ -1,0 +1,19 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # API requests → index.php
+    RewriteCond %{REQUEST_URI} ^/api
+    RewriteRule ^ index.php [L]
+
+    # Frontend SPA fallback — serve built React app
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ app/index.html [L]
+</IfModule>
+
+# Block dotfiles
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+Options -Indexes

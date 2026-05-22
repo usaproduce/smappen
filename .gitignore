@@ -1,0 +1,17 @@
+.env
+vendor/
+node_modules/
+frontend/dist/
+frontend/node_modules/
+public/app/
+storage/cache/*
+storage/reports/*
+storage/logs/*
+storage/exports/*
+storage/uploads/*
+public/uploads/*
+!**/.gitkeep
+.DS_Store
+.idea/
+.vscode/
+*.log

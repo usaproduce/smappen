@@ -1,0 +1,88 @@
+<?php
+namespace App\Services;
+
+use App\Core\Config;
+
+class IsochroneService
+{
+    private const ENDPOINT = 'https://api.openrouteservice.org/v2/isochrones/';
+    private const VALID_MODES = ['driving-car', 'cycling-regular', 'foot-walking', 'wheelchair'];
+
+    public function calculate(float $lat, float $lng, int $timeMinutes, string $travelMode = 'driving-car'): array
+    {
+        if (!in_array($travelMode, self::VALID_MODES, true)) {
+            throw new \InvalidArgumentException('Invalid travel mode');
+        }
+        $cacheKey = 'iso:' . md5("{$lat},{$lng},{$timeMinutes},{$travelMode}");
+        $cached = CacheService::getJson($cacheKey);
+        if ($cached) return $cached;
+
+        $apiKey = Config::get('ORS_API_KEY');
+        if (!$apiKey) {
+            throw new \RuntimeException('ORS_API_KEY not configured');
+        }
+
+        $url = self::ENDPOINT . $travelMode;
+        $payload = [
+            'locations' => [[$lng, $lat]],
+            'range' => [$timeMinutes * 60],
+            'range_type' => 'time',
+            'smoothing' => 25,
+        ];
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => json_encode($payload),
+            CURLOPT_HTTPHEADER => [
+                'Authorization: ' . $apiKey,
+                'Content-Type: application/json',
+                'Accept: application/json',
+            ],
+            CURLOPT_TIMEOUT => 30,
+        ]);
+        $response = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err = curl_error($ch);
+        curl_close($ch);
+
+        if ($response === false) throw new \RuntimeException('ORS request failed: ' . $err);
+        if ($code !== 200) throw new \RuntimeException('ORS HTTP ' . $code . ': ' . $response);
+
+        $data = json_decode($response, true);
+        if (!isset($data['features'][0]['geometry'])) {
+            throw new \RuntimeException('Invalid ORS response');
+        }
+        $geometry = $data['features'][0]['geometry'];
+        $wkt = GeoUtils::geoJsonToWkt($geometry);
+        $bbox = GeoUtils::getBoundingBox($geometry);
+        $areaSqKm = GeoUtils::calculateArea($geometry);
+
+        $result = [
+            'geojson' => $geometry,
+            'wkt' => $wkt,
+            'area_sq_km' => $areaSqKm,
+            'bbox' => $bbox,
+            'travel_mode' => $travelMode,
+            'time_minutes' => $timeMinutes,
+            'center' => ['lat' => $lat, 'lng' => $lng],
+        ];
+        CacheService::set($cacheKey, $result, 86400);
+        return $result;
+    }
+
+    public function calculateRadius(float $lat, float $lng, float $radiusKm): array
+    {
+        $geometry = GeoUtils::generateCirclePolygon($lat, $lng, $radiusKm);
+        return [
+            'geojson' => $geometry,
+            'wkt' => GeoUtils::geoJsonToWkt($geometry),
+            'area_sq_km' => M_PI * $radiusKm * $radiusKm,
+            'bbox' => GeoUtils::getBoundingBox($geometry),
+            'travel_mode' => 'radius',
+            'radius_km' => $radiusKm,
+            'center' => ['lat' => $lat, 'lng' => $lng],
+        ];
+    }
+}
