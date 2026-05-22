@@ -232,9 +232,11 @@ cat > "/etc/apache2/sites-available/smappen.conf" <<EOF
     RewriteCond %{REQUEST_URI} ^/api
     RewriteRule ^ /index.php [L]
 
-    # Frontend SPA fallback
-    RewriteCond %{REQUEST_FILENAME} !-f
-    RewriteCond %{REQUEST_FILENAME} !-d
+    # Frontend SPA fallback — use DOCUMENT_ROOT+REQUEST_URI because in
+    # VirtualHost context REQUEST_FILENAME equals REQUEST_URI (not the
+    # filesystem path), so its -f / -d checks always say "doesn't exist".
+    RewriteCond %{DOCUMENT_ROOT}%{REQUEST_URI} !-f
+    RewriteCond %{DOCUMENT_ROOT}%{REQUEST_URI} !-d
     RewriteCond %{REQUEST_URI} !^/api
     RewriteRule ^ /app/index.html [L]
 
@@ -247,6 +249,16 @@ cat > "/etc/apache2/sites-available/smappen.conf" <<EOF
 </VirtualHost>
 EOF
 a2ensite smappen.conf >/dev/null
+
+# If certbot's SSL vhost exists from a previous run, delete it so we can
+# regenerate it from the updated HTTP vhost (otherwise rewrite fixes only
+# apply to :80, not :443).
+if [ -f /etc/apache2/sites-enabled/smappen-le-ssl.conf ]; then
+  log "Removing stale SSL vhost so it gets regenerated from current HTTP vhost…"
+  a2dissite smappen-le-ssl.conf >/dev/null 2>&1 || true
+  rm -f /etc/apache2/sites-available/smappen-le-ssl.conf /etc/apache2/sites-enabled/smappen-le-ssl.conf
+fi
+
 apache2ctl configtest
 systemctl reload apache2
 systemctl reload php8.3-fpm 2>/dev/null || systemctl restart php8.3-fpm
