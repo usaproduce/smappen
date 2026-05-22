@@ -37,6 +37,9 @@ class CensusService
 
     public function fetchDemographicsForState(string $stateFips): array
     {
+        if (!$this->apiKey) {
+            throw new \RuntimeException('CENSUS_API_KEY not configured');
+        }
         $vars = implode(',', array_values(self::VARIABLES));
         $url = "{$this->baseUrl}/{$this->acsYear}/{$this->acsDataset}?get=NAME,{$vars}&for=tract:*&in=state:{$stateFips}&key={$this->apiKey}";
         $resp = $this->httpGet($url);

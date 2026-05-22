@@ -54,11 +54,25 @@ class Response
 
     public static function corsHeaders(): void
     {
-        $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
-        header('Access-Control-Allow-Origin: ' . $origin);
-        header('Access-Control-Allow-Credentials: true');
+        $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+        // Only echo the origin back if it matches our allow-list.
+        // Defaults to FRONTEND_URL plus its http variant (handy in dev).
+        $configured = \App\Core\Config::get('FRONTEND_URL', '');
+        $appUrl = \App\Core\Config::get('APP_URL', '');
+        $allowed = array_filter([$configured, $appUrl, 'http://localhost:5173', 'http://localhost:8080']);
+        $isAllowed = $origin !== '' && in_array($origin, $allowed, true);
+
+        if ($isAllowed) {
+            header('Access-Control-Allow-Origin: ' . $origin);
+            header('Vary: Origin');
+            header('Access-Control-Allow-Credentials: true');
+        } else {
+            // Same-origin & token-bearer requests work without these.
+            // Cross-origin requests from unapproved hosts get blocked by the browser.
+            header('Access-Control-Allow-Origin: ' . ($configured ?: '*'));
+        }
         header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS, PATCH');
-        header('Access-Control-Allow-Headers: Authorization, Content-Type, X-Requested-With, X-CSRF-Token');
+        header('Access-Control-Allow-Headers: Authorization, Content-Type, X-Requested-With, X-CSRF-Token, Stripe-Signature');
         header('Access-Control-Max-Age: 86400');
     }
 }

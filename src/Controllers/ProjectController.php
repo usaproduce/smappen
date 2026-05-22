@@ -55,8 +55,15 @@ class ProjectController
         foreach (['name', 'description', 'center_lat', 'center_lng', 'zoom_level', 'is_shared'] as $f) {
             if (array_key_exists($f, $body)) $update[$f] = $body[$f];
         }
-        if (!empty($body['is_shared']) && empty($project['share_token'])) {
-            $update['share_token'] = Project::generateShareToken();
+        if (array_key_exists('is_shared', $body)) {
+            if (!empty($body['is_shared'])) {
+                // Always generate a fresh token when sharing turns on, so old links
+                // can't be silently reactivated by re-toggling.
+                $update['share_token'] = Project::generateShareToken();
+            } else {
+                // Turning off invalidates any outstanding share link.
+                $update['share_token'] = null;
+            }
         }
         Project::update($project['id'], $update);
         Response::success(Project::findById($project['id']), 'Project updated');

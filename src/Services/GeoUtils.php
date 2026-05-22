@@ -84,19 +84,20 @@ class GeoUtils
 
     public static function calculateArea(array $geoJson): float
     {
-        // Approximate area in sq km using planar approximation (good enough for small areas)
+        // Spherical-excess approximation, returns sq km on WGS84 ellipsoid.
         if (($geoJson['type'] ?? '') !== 'Polygon') return 0.0;
         $ring = $geoJson['coordinates'][0] ?? [];
         $n = count($ring);
         if ($n < 3) return 0.0;
         $area = 0.0;
         for ($i = 0; $i < $n - 1; $i++) {
-            $p1 = $ring[$i];
-            $p2 = $ring[$i + 1];
-            $area += deg2rad($p2[0] - $p1[0]) * (2 + sin(deg2rad($p1[1])) + sin(deg2rad($p2[1])));
+            [$lng1, $lat1] = $ring[$i];
+            [$lng2, $lat2] = $ring[$i + 1];
+            $area += deg2rad($lng2 - $lng1) * (sin(deg2rad($lat1)) + sin(deg2rad($lat2)));
         }
-        $area = abs($area * 6378137.0 * 6378137.0 / 2.0);
-        return $area / 1000000.0;
+        $earthRadiusM = 6378137.0;
+        $area = abs($area * $earthRadiusM * $earthRadiusM / 2.0);
+        return $area / 1_000_000.0;
     }
 
     public static function pointInPolygon(float $lat, float $lng, array $polygon): bool

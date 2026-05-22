@@ -60,12 +60,11 @@ class IsochroneController
 
     private static function logUsage(Request $request, string $api): void
     {
-        Database::getInstance()->insert('api_usage_log', [
-            'user_id' => $request->user['id'],
-            'api_name' => $api,
-            'endpoint' => $request->getPath(),
-            'request_count' => 1,
-            'created_at' => date('Y-m-d H:i:s'),
-        ]);
+        // Raw INSERT — api_usage_log has BIGINT AUTO_INCREMENT id, not UUID.
+        Database::getInstance()->query(
+            'INSERT INTO api_usage_log (user_id, api_name, endpoint, request_count, created_at)
+             VALUES (?, ?, ?, 1, ?)',
+            [$request->user['id'], $api, $request->getPath(), date('Y-m-d H:i:s')]
+        );
     }
 }

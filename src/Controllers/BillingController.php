@@ -34,8 +34,9 @@ class BillingController
 
     public function webhook(Request $request): void
     {
-        $payload = file_get_contents('php://input');
-        $sig = $_SERVER['HTTP_STRIPE_SIGNATURE'] ?? '';
+        // Use the raw body cached on the Request — php://input may already be consumed.
+        $payload = $request->getRawBody();
+        $sig = $request->getHeader('Stripe-Signature') ?? ($_SERVER['HTTP_STRIPE_SIGNATURE'] ?? '');
         try {
             $type = (new StripeService())->handleWebhook($payload, $sig);
             Response::success(['handled' => $type]);

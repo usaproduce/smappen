@@ -4,6 +4,7 @@ namespace App\Controllers;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Config;
+use App\Core\PlanLimits;
 use App\Models\Area;
 use App\Models\Project;
 use App\Models\Report;
@@ -16,6 +17,11 @@ class ReportController
 {
     public function generate(Request $request): void
     {
+        // Plan check: PDF reports are paid only.
+        $plan = $request->user['plan'] ?? 'free';
+        if (!PlanLimits::getLimit($plan, 'reports')) {
+            Response::error('PDF reports require a paid plan. Upgrade to enable.', 403);
+        }
         $area = Area::findById($request->getParam('id'));
         if (!$area) Response::error('Area not found', 404);
         $project = Project::findById($area['project_id']);

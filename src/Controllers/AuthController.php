@@ -59,7 +59,9 @@ class AuthController
         if (!$user || !password_verify($password, $user['password_hash'])) {
             Response::error('Invalid credentials', 401);
         }
-        if (!$user['is_active']) Response::error('Account is inactive', 403);
+        if (!$user['is_active']) {
+            Response::error('Account is inactive', 403);
+        }
 
         User::update($user['id'], ['last_login_at' => date('Y-m-d H:i:s')]);
         $user = User::getWithOrganization($user['id']);

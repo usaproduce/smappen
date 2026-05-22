@@ -83,6 +83,13 @@ class AreaController
                   'travel_mode', 'travel_time_minutes', 'travel_distance_km', 'center_address'] as $f) {
             if (array_key_exists($f, $body)) $update[$f] = $body[$f];
         }
+        // folder_id must belong to the same project as the area (no cross-project moves).
+        if (!empty($update['folder_id'])) {
+            $folder = \App\Models\Folder::findById($update['folder_id']);
+            if (!$folder || $folder['project_id'] !== $area['project_id']) {
+                Response::error('folder_id must be in the same project as the area', 422);
+            }
+        }
         if (isset($body['geometry'])) $update['geometry'] = $body['geometry'];
         Area::update($area['id'], $update);
         Response::success(Area::findById($area['id']), 'Area updated');

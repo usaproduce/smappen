@@ -39,7 +39,7 @@ $totalPop = (int)($pop['total'] ?? 0);
 <h1><?= htmlspecialchars($title) ?></h1>
 <div class="meta">Generated <?= htmlspecialchars($generated_at) ?></div>
 
-<?php if (!empty($map_path) && file_exists($map_path)): ?>
+<?php if (!empty($map_path) && is_string($map_path) && file_exists($map_path) && filesize($map_path) > 0): ?>
 <div style="text-align:center; margin:10pt 0;">
   <img src="<?= htmlspecialchars($map_path) ?>" style="max-width:100%;" />
 </div>

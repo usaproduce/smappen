@@ -20,12 +20,19 @@ class FolderController
         $body = $request->getBody() ?? [];
         $name = trim($body['name'] ?? '');
         if ($name === '') Response::error('Folder name is required');
+        $parentId = $body['parent_folder_id'] ?? null;
+        if ($parentId) {
+            $parent = Folder::findById($parentId);
+            if (!$parent || $parent['project_id'] !== $project['id']) {
+                Response::error('parent_folder_id must be in the same project', 422);
+            }
+        }
         $id = Folder::create([
             'project_id' => $project['id'],
             'name' => $name,
             'color' => $body['color'] ?? '#6B4EFF',
             'sort_order' => (int)($body['sort_order'] ?? 0),
-            'parent_folder_id' => $body['parent_folder_id'] ?? null,
+            'parent_folder_id' => $parentId,
         ]);
         Response::success(Folder::findById($id), 'Folder created', 201);
     }
@@ -42,6 +49,16 @@ class FolderController
         $update = [];
         foreach (['name', 'color', 'parent_folder_id', 'sort_order'] as $f) {
             if (array_key_exists($f, $body)) $update[$f] = $body[$f];
+        }
+        // parent_folder_id must belong to the same project (no cross-project moves).
+        if (!empty($update['parent_folder_id'])) {
+            $parent = Folder::findById($update['parent_folder_id']);
+            if (!$parent || $parent['project_id'] !== $folder['project_id']) {
+                Response::error('parent_folder_id must be in the same project', 422);
+            }
+            if ($parent['id'] === $folder['id']) {
+                Response::error('A folder cannot be its own parent', 422);
+            }
         }
         Folder::update($folder['id'], $update);
         Response::success(Folder::findById($folder['id']), 'Folder updated');

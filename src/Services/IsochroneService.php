@@ -37,8 +37,9 @@ class IsochroneService
             CURLOPT_POSTFIELDS => json_encode($payload),
             CURLOPT_HTTPHEADER => [
                 'Authorization: ' . $apiKey,
-                'Content-Type: application/json',
-                'Accept: application/json',
+                'Content-Type: application/json; charset=utf-8',
+                // ORS only serves application/geo+json — asking for application/json gives 406.
+                'Accept: application/geo+json, application/json',
             ],
             CURLOPT_TIMEOUT => 30,
         ]);

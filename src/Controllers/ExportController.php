@@ -91,6 +91,14 @@ class ExportController
         $project = $this->verifyProject($request);
         $format = $request->getQuery('format', 'csv');
         $batchId = $request->getQuery('batch_id');
+        if ($batchId) {
+            // Make sure the batch belongs to this project, otherwise anyone could
+            // export points from any other org's import by guessing a UUID.
+            $batchProjectId = ImportedPoint::projectIdForBatch($batchId);
+            if ($batchProjectId !== $project['id']) {
+                Response::error('Batch not found in this project', 404);
+            }
+        }
         $points = $batchId ? ImportedPoint::getByBatch($batchId) : ImportedPoint::getByProject($project['id']);
 
         $customKeys = [];

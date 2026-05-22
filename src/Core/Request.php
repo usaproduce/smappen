@@ -7,6 +7,7 @@ class Request
     private string $path;
     private array $query;
     private ?array $body;
+    private string $rawBody = '';
     private array $headers;
     private array $params = [];
     public ?array $user = null;
@@ -19,15 +20,19 @@ class Request
         $this->query = $_GET;
         $this->headers = $this->parseHeaders();
 
+        // php://input can only be read once on some SAPIs — cache it.
         $raw = file_get_contents('php://input');
+        $this->rawBody = $raw === false ? '' : $raw;
         $contentType = $this->headers['Content-Type'] ?? '';
-        if (stripos($contentType, 'application/json') !== false && $raw !== '' && $raw !== false) {
-            $decoded = json_decode($raw, true);
+        if (stripos($contentType, 'application/json') !== false && $this->rawBody !== '') {
+            $decoded = json_decode($this->rawBody, true);
             $this->body = is_array($decoded) ? $decoded : null;
         } else {
             $this->body = $_POST ?: null;
         }
     }
+
+    public function getRawBody(): string { return $this->rawBody; }
 
     private function parseHeaders(): array
     {

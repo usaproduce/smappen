@@ -72,4 +72,13 @@ class ImportedPoint
         $r = Database::getInstance()->fetch('SELECT COUNT(*) AS c FROM imported_points WHERE import_batch_id = ?', [$batchId]);
         return (int)($r['c'] ?? 0);
     }
+
+    public static function projectIdForBatch(string $batchId): ?string
+    {
+        $r = Database::getInstance()->fetch(
+            'SELECT project_id FROM imported_points WHERE import_batch_id = ? LIMIT 1',
+            [$batchId]
+        );
+        return $r['project_id'] ?? null;
+    }
 }

@@ -4,6 +4,7 @@ namespace App\Controllers;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Database;
+use App\Core\PlanLimits;
 use App\Models\Project;
 use App\Models\ImportedPoint;
 use App\Services\GoogleMapsService;
@@ -62,6 +63,13 @@ class ImportController
         if (!$token) Response::error('import_token required');
         $info = CacheService::getJson('import:' . $token);
         if (!$info || $info['project_id'] !== $project['id']) Response::error('Invalid import token', 404);
+
+        // Plan limit: max_import_rows.
+        $plan = $request->user['plan'] ?? 'free';
+        $maxRows = PlanLimits::getLimit($plan, 'max_import_rows');
+        if ($maxRows !== -1 && (int)$info['total_rows'] > (int)$maxRows) {
+            Response::error("Import has {$info['total_rows']} rows but $plan plan allows max $maxRows. Upgrade to import more.", 403);
+        }
 
         $rows = $this->parseFile($info['file'], $info['ext']);
         $headers = array_shift($rows);
@@ -137,6 +145,7 @@ class ImportController
     public function status(Request $request): void
     {
         $batchId = $request->getParam('batchId');
+        $this->verifyBatchOwnership($request, $batchId);
         $count = ImportedPoint::countByBatch($batchId);
         Response::success(['batch_id' => $batchId, 'point_count' => $count]);
     }
@@ -144,8 +153,19 @@ class ImportController
     public function deleteImport(Request $request): void
     {
         $batchId = $request->getParam('batchId');
+        $this->verifyBatchOwnership($request, $batchId);
         $deleted = ImportedPoint::deleteBatch($batchId);
         Response::success(['batch_id' => $batchId, 'deleted' => $deleted]);
+    }
+
+    private function verifyBatchOwnership(Request $request, string $batchId): void
+    {
+        $projectId = ImportedPoint::projectIdForBatch($batchId);
+        if (!$projectId) Response::error('Batch not found', 404);
+        $project = Project::findById($projectId);
+        if (!$project || $project['organization_id'] !== $request->user['organization_id']) {
+            Response::error('Access denied', 403);
+        }
     }
 
     private function verifyProject(Request $request): array

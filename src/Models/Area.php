@@ -57,11 +57,14 @@ class Area
             $data['demographics_cached_at'] = null;
         }
 
+        // Drop any caller-supplied 'id' to keep it out of the SET clause and
+        // avoid a placeholder collision with the WHERE binding.
+        unset($data['id']);
         $sets = [];
         $params = [':where_id' => $id];
         foreach ($data as $k => $v) {
-            $sets[] = "`$k` = :$k";
-            $params[':' . $k] = $v;
+            $sets[] = "`$k` = :set_$k";
+            $params[':set_' . $k] = $v;
         }
         if ($geometry !== null) {
             $sets[] = 'geometry = ST_GeomFromText(:wkt, 4326)';

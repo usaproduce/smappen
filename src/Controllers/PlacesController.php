@@ -32,6 +32,13 @@ class PlacesController
 
         if ($areaId) {
             $area = Area::findById($areaId);
+            // Verify ownership so a caller can't poison another org's POI cache.
+            if ($area) {
+                $proj = Project::findById($area['project_id']);
+                if (!$proj || $proj['organization_id'] !== $request->user['organization_id']) {
+                    Response::error('Access denied', 403);
+                }
+            }
             if ($area && !empty($area['geometry'])) {
                 $polygon = $area['geometry'];
                 $places = array_values(array_filter($places, function ($p) use ($polygon) {
@@ -43,11 +50,8 @@ class PlacesController
                         $polygon
                     );
                 }));
-                POICache::store(
-                    md5("nearby:$areaId:$type:$keyword"),
-                    $areaId,
-                    $places
-                );
+                // Key matches what forArea/Reports/Exports read.
+                POICache::store(md5('area:' . $areaId), $areaId, $places);
             }
         }
         Response::success(['places' => $places, 'count' => count($places)]);
