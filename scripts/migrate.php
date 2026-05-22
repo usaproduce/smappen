@@ -35,7 +35,7 @@ foreach ($files as $file) {
             if ($stmt === '' || $stmt === ';') continue;
             $db->pdo()->exec($stmt);
         }
-        $db->insert('migrations', ['name' => $name, 'run_at' => date('Y-m-d H:i:s')]);
+        $db->query('INSERT INTO migrations (name, run_at) VALUES (?, ?)', [$name, date('Y-m-d H:i:s')]);
         echo "ok\n";
     } catch (\Throwable $e) {
         echo "FAILED: " . $e->getMessage() . "\n";
