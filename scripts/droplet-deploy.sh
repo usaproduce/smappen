@@ -215,6 +215,8 @@ cat > "/etc/apache2/sites-available/smappen.conf" <<EOF
         AllowOverride All
         Require all granted
         Options -Indexes +FollowSymLinks
+        # Pass Authorization header to PHP-FPM (mod_proxy_fcgi strips it by default).
+        CGIPassAuth On
     </Directory>
 
     <FilesMatch \.php\$>
