@@ -189,8 +189,9 @@ mkdir -p storage/cache storage/reports/maps storage/logs storage/exports storage
 chown -R www-data:www-data storage/ public/uploads/ public/app/ .env
 chmod -R 775 storage/ public/uploads/
 
-# Frontend build
-if [ ! -f "$APP_DIR/public/app/index.html" ]; then
+# Frontend build — always rebuild so config/vite changes propagate.
+# Set SMAPPEN_SKIP_FRONTEND=1 to skip this step on hot redeploys.
+if [ -z "${SMAPPEN_SKIP_FRONTEND:-}" ]; then
   log "Building frontend…"
   cd frontend
   cat > .env <<EOF
