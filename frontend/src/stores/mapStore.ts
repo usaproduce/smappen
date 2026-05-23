@@ -12,6 +12,7 @@ interface MapState {
   showHeatmap: boolean;
   heatmapMetric: HeatmapMetric;
   heatmapLevel: HeatmapLevelOverride;
+  heatmapPaletteId: string;
   /** Value of the currently-hovered tract for the gradient-position marker. */
   hoveredHeatmapValue: number | null;
   hoveredHeatmapName: string | null;
@@ -28,6 +29,7 @@ interface MapState {
   toggleHeatmap: () => void;
   setHeatmapMetric: (m: HeatmapMetric) => void;
   setHeatmapLevel: (l: HeatmapLevelOverride) => void;
+  setHeatmapPaletteId: (id: string) => void;
   setHoveredHeatmap: (value: number | null, name: string | null) => void;
   setPoiResults: (places: any[]) => void;
   setPendingIsochrone: (data: any | null) => void;
@@ -44,6 +46,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   showHeatmap: false,
   heatmapMetric: 'population_density',
   heatmapLevel: 'auto',
+  heatmapPaletteId: 'smappen-pastel',
   hoveredHeatmapValue: null,
   hoveredHeatmapName: null,
   showPOIs: true,
@@ -59,6 +62,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   toggleHeatmap: () => set((s) => ({ showHeatmap: !s.showHeatmap })),
   setHeatmapMetric: (heatmapMetric) => set({ heatmapMetric }),
   setHeatmapLevel: (heatmapLevel) => set({ heatmapLevel }),
+  setHeatmapPaletteId: (heatmapPaletteId) => set({ heatmapPaletteId }),
   setHoveredHeatmap: (hoveredHeatmapValue, hoveredHeatmapName) =>
     set({ hoveredHeatmapValue, hoveredHeatmapName }),
   setPoiResults: (poiResults) => set({ poiResults }),

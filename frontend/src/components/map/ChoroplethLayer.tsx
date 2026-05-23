@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useMapStore } from '../../stores/mapStore';
 import { heatmapApi, type HeatmapMetric, type HeatmapResponse } from '../../api/heatmap';
-import { colorForValue } from '../../utils/heatmapColors';
+import { colorForValueWith, paletteById } from '../../utils/heatmapColors';
 
 interface Props {
   metric: HeatmapMetric;
@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
-  const { mapInstance, heatmapLevel, setHoveredHeatmap } = useMapStore();
+  const { mapInstance, heatmapLevel, heatmapPaletteId, setHoveredHeatmap } = useMapStore();
   const dataLayerRef = useRef<google.maps.Data | null>(null);
   const rangeRef = useRef<{ min: number; max: number; breaks?: number[] }>({ min: 0, max: 1 });
   const fetchTokenRef = useRef(0);
@@ -22,11 +22,12 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
     const layer = new google.maps.Data({ map: mapInstance });
     dataLayerRef.current = layer;
 
+    const palette = paletteById(heatmapPaletteId);
     function applyStyle() {
       layer.setStyle((f) => {
         const v = f.getProperty('value') as number | null;
         return {
-          fillColor: colorForValue(v, rangeRef.current.min, rangeRef.current.max, rangeRef.current.breaks),
+          fillColor: colorForValueWith(palette, v, rangeRef.current.min, rangeRef.current.max, rangeRef.current.breaks),
           fillOpacity: 0.6,
           strokeColor: '#ffffff',
           strokeWeight: 0.5,
@@ -102,7 +103,7 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
       layer.setMap(null);
       dataLayerRef.current = null;
     };
-  }, [mapInstance, metric, heatmapLevel]);
+  }, [mapInstance, metric, heatmapLevel, heatmapPaletteId]);
 
   return null;
 }

@@ -1,47 +1,13 @@
-// Smappen-style choropleth gradient.
-// 10 anchor colors with EXPLICIT stop positions — Smappen compresses the cool
-// and hot extremes and gives the green→yellow→orange middle most of the visual
-// real estate. We mirror that exactly so the bar and polygon coloring agree.
-// Pastel / soft palette matching Smappen — Tailwind 300-400 saturation range
-// (lighter, more friendly than the deep 500-700 we had before).
-export const HEATMAP_STOPS = [
-  '#A78BFA', // violet-400 (soft lavender)
-  '#60A5FA', // blue-400  (soft blue)
-  '#38BDF8', // sky-400
-  '#22D3EE', // cyan-400
-  '#34D399', // emerald-400 (mint)
-  '#A3E635', // lime-400
-  '#FDE047', // yellow-300 (soft sunny)
-  '#FB923C', // orange-400 (peach)
-  '#F87171', // red-400 (coral)
-  '#F472B6', // pink-400 (soft pink)
-];
+import { paletteById, gradientCss, type Palette } from './palettes';
 
-/**
- * Positions of each anchor color on the [0,1] gradient.
- * Cool (purple → cyan): first 18% only.
- * Middle (green → orange): 18% → 80% (most of the bar).
- * Hot (red → pink): last 20%.
- */
-export const HEATMAP_STOP_POSITIONS = [
-  0.00,  // violet
-  0.06,  // blue
-  0.12,  // sky
-  0.18,  // cyan
-  0.30,  // emerald (big jump — green starts here)
-  0.48,  // lime
-  0.62,  // yellow
-  0.78,  // orange
-  0.90,  // red
-  1.00,  // pink
-];
+export { PALETTES, paletteById, gradientCss, DEFAULT_PALETTE_ID } from './palettes';
+export type { Palette } from './palettes';
 
-export const HEATMAP_GRADIENT_CSS =
-  'linear-gradient(to right, ' +
-  HEATMAP_STOPS
-    .map((c, i) => `${c} ${(HEATMAP_STOP_POSITIONS[i] * 100).toFixed(1)}%`)
-    .join(', ') +
-  ')';
+/** Legacy export — kept for any callers still importing it. Resolves to default palette stops. */
+export const HEATMAP_STOPS = paletteById('smappen-pastel').stops;
+
+/** CSS gradient for the default palette. Most callers should use gradientCss(activePalette). */
+export const HEATMAP_GRADIENT_CSS = gradientCss(paletteById('smappen-pastel'));
 
 function hexToRgb(hex: string): [number, number, number] {
   const m = hex.replace('#', '');
@@ -53,36 +19,47 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
 
-/** RGB-space color at t∈[0,1] using HEATMAP_STOP_POSITIONS as anchor positions. */
-function interpolate(t: number): string {
+/** RGB-space color at t∈[0,1] using a palette's stops + positions. */
+export function interpolatePalette(palette: Palette, t: number): string {
   t = Math.max(0, Math.min(1, t));
-  // Find which segment t falls into based on stop positions.
-  const positions = HEATMAP_STOP_POSITIONS;
+  const stops = palette.stops;
+  const positions = palette.positions ?? stops.map((_, i) => i / (stops.length - 1));
   for (let i = 0; i < positions.length - 1; i++) {
     if (t <= positions[i + 1]) {
       const segLo = positions[i];
       const segHi = positions[i + 1];
       const segT = segHi === segLo ? 0 : (t - segLo) / (segHi - segLo);
-      const [r1, g1, b1] = hexToRgb(HEATMAP_STOPS[i]);
-      const [r2, g2, b2] = hexToRgb(HEATMAP_STOPS[i + 1]);
+      const [r1, g1, b1] = hexToRgb(stops[i]);
+      const [r2, g2, b2] = hexToRgb(stops[i + 1]);
       const r = Math.round(lerp(r1, r2, segT));
       const g = Math.round(lerp(g1, g2, segT));
       const b = Math.round(lerp(b1, b2, segT));
       return `rgb(${r},${g},${b})`;
     }
   }
-  return HEATMAP_STOPS[HEATMAP_STOPS.length - 1];
+  return stops[stops.length - 1];
 }
 
-/** Continuous color for a value (uses quantile breaks when provided). */
-export function colorForValue(
+/** Color for a value using a specific palette (quantile-aware). */
+export function colorForValueWith(
+  palette: Palette,
   value: number | null | undefined,
   min: number,
   max: number,
   breaks?: number[]
 ): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '#cccccc';
-  return interpolate(valueToFraction(value, min, max, breaks));
+  return interpolatePalette(palette, valueToFraction(value, min, max, breaks));
+}
+
+/** Backward-compatible default-palette color picker. */
+export function colorForValue(
+  value: number | null | undefined,
+  min: number,
+  max: number,
+  breaks?: number[]
+): string {
+  return colorForValueWith(paletteById('smappen-pastel'), value, min, max, breaks);
 }
 
 /**
