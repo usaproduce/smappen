@@ -117,10 +117,15 @@ class TerritoryGenerator
             $maxLng, $maxLat, $minLng, $maxLat, $minLng, $minLat
         );
 
+        // MySQL 8 refuses ST_Centroid on geographic SRS (3618). Relabel the
+        // geometry as planar via ST_SRID(g, 0) — the numeric coords stay in
+        // lng/lat; we just bypass the "this isn't planar" guard. For tract-
+        // sized polygons the planar centroid is indistinguishable from the
+        // geographic one at k-means resolution.
         $rows = Database::getInstance()->fetchAll(
             "SELECT ct.geoid,
-                    ST_Y(ST_Centroid(ct.geometry)) AS lat,
-                    ST_X(ST_Centroid(ct.geometry)) AS lng,
+                    ST_Y(ST_Centroid(ST_SRID(ct.geometry, 0))) AS lat,
+                    ST_X(ST_Centroid(ST_SRID(ct.geometry, 0))) AS lng,
                     COALESCE(d.total_population, 0)         AS pop,
                     d.median_household_income               AS income,
                     COALESCE(d.housing_units_total, 0)      AS housing
@@ -129,9 +134,6 @@ class TerritoryGenerator
              WHERE ST_Intersects(ct.geometry, ST_GeomFromText(?, 4326))",
             [$envelope]
         );
-
-        // Skip MySQL coord-swap concerns — ST_X / ST_Y already return canonical lng/lat
-        // for SRID-4326 columns since 8.0.12+ (driver respects axis order).
         $out = [];
         foreach ($rows as $r) {
             $pop = (float)$r['pop'];

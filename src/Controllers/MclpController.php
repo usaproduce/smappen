@@ -62,6 +62,11 @@ class MclpController
         // tract centroids — much cheaper than ST_Intersects against polygons.
         $candidateCoverage = [];
         foreach ($candidates as $idx => $c) {
+            // Two MySQL 8 quirks compounded here:
+            //   - ST_Centroid does not work on geographic SRS → relabel with ST_SRID(g, 0)
+            //   - The centroid then loses its SRID, so ST_Distance_Sphere
+            //     would reject it; we re-tag it with SRID 4326 before the
+            //     distance check. The numeric coords are preserved.
             $rows = Database::getInstance()->fetchAll(
                 "SELECT ct.geoid,
                         CASE ?
@@ -73,8 +78,10 @@ class MclpController
                         END AS w
                  FROM census_tracts ct
                  LEFT JOIN census_demographics d ON d.geoid = ct.geoid
-                 WHERE ST_Distance_Sphere(ST_Centroid(ct.geometry),
-                                          ST_GeomFromText(?, 4326)) <= ?",
+                 WHERE ST_Distance_Sphere(
+                         ST_SRID(ST_Centroid(ST_SRID(ct.geometry, 0)), 4326),
+                         ST_GeomFromText(?, 4326)
+                       ) <= ?",
                 [$metric, "POINT({$c['lng']} {$c['lat']})", $radiusKm * 1000]
             );
             $cov = [];

@@ -203,9 +203,13 @@ class CompetitorScanner
     private function resolveCenter(array $monitor): array
     {
         if (!empty($monitor['area_id'])) {
+            // ST_Centroid is not implemented for geographic SRS in MySQL 8 —
+            // ST_SRID(g, 0) relabels the geometry as planar so we can fall
+            // back to center_lat/center_lng if those columns are populated.
             $row = Database::getInstance()->fetch(
                 "SELECT center_lat, center_lng,
-                        ST_X(ST_Centroid(geometry)) AS cx, ST_Y(ST_Centroid(geometry)) AS cy
+                        ST_X(ST_Centroid(ST_SRID(geometry, 0))) AS cx,
+                        ST_Y(ST_Centroid(ST_SRID(geometry, 0))) AS cy
                  FROM areas WHERE id = ?",
                 [$monitor['area_id']]
             );
