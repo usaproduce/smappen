@@ -168,30 +168,36 @@ class HeatmapController
     private static function fetchCounties(string $metric, string $wkt, int $limit): array
     {
         $expr = self::METRICS_AGG[$metric];
-        $sql = "SELECT g.geoid AS id,
-                       g.name AS name,
-                       ST_AsGeoJSON(g.geometry) AS geom,
-                       ($expr) AS metric_value
-                FROM census_counties g
-                WHERE ST_Intersects(g.geometry, ST_GeomFromText(?, 4326))
-                  AND ($expr) IS NOT NULL
-                ORDER BY metric_value DESC
-                LIMIT $limit";
+        // Sort/limit first on small columns, then fetch the heavy geometry — keeps
+        // MySQL's sort buffer happy when county polygons are large.
+        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(ST_Simplify(g.geometry, 0.005)) AS geom, q.metric_value
+                FROM (
+                  SELECT g.geoid AS id, g.name AS name, ($expr) AS metric_value
+                  FROM census_counties g
+                  WHERE ST_Intersects(g.geometry, ST_GeomFromText(?, 4326))
+                    AND ($expr) IS NOT NULL
+                  ORDER BY metric_value DESC
+                  LIMIT $limit
+                ) q
+                JOIN census_counties g ON g.geoid = q.id";
         return Database::getInstance()->fetchAll($sql, [$wkt]);
     }
 
     private static function fetchStates(string $metric, string $wkt, int $limit): array
     {
         $expr = self::METRICS_AGG[$metric];
-        $sql = "SELECT g.state_fips AS id,
-                       g.name AS name,
-                       ST_AsGeoJSON(g.geometry) AS geom,
-                       ($expr) AS metric_value
-                FROM census_states g
-                WHERE ST_Intersects(g.geometry, ST_GeomFromText(?, 4326))
-                  AND ($expr) IS NOT NULL
-                ORDER BY metric_value DESC
-                LIMIT $limit";
+        // Same pattern — and simplify state geometries aggressively since they're
+        // huge and we only need them at zoom ≤ 7.
+        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(ST_Simplify(g.geometry, 0.05)) AS geom, q.metric_value
+                FROM (
+                  SELECT g.state_fips AS id, g.name AS name, ($expr) AS metric_value
+                  FROM census_states g
+                  WHERE ST_Intersects(g.geometry, ST_GeomFromText(?, 4326))
+                    AND ($expr) IS NOT NULL
+                  ORDER BY metric_value DESC
+                  LIMIT $limit
+                ) q
+                JOIN census_states g ON g.state_fips = q.id";
         return Database::getInstance()->fetchAll($sql, [$wkt]);
     }
 
