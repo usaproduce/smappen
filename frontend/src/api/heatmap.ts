@@ -23,6 +23,7 @@ export interface HeatmapResponse {
     count: number;
     min: number;
     max: number;
+    breaks?: number[];
     unit: string;
     note?: string;
   };

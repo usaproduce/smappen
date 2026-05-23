@@ -3,7 +3,7 @@ import { useProjectStore } from '../../stores/projectStore';
 import { useMapStore } from '../../stores/mapStore';
 import { areasApi } from '../../api/areas';
 import AreaList from '../areas/AreaList';
-import { Plus, Upload, PenSquare } from 'lucide-react';
+import { Plus, Upload, PenSquare, Folder } from 'lucide-react';
 
 interface Props {
   onCreateArea: () => void;
@@ -33,30 +33,45 @@ export default function LeftPanel({ onCreateArea, onImport }: Props) {
 
   if (!currentProject) {
     return (
-      <aside className="w-[300px] bg-white border-r border-slate-200 p-4">
+      <aside className="w-[300px] bg-white border-r border-slate-200 p-4 shadow-panel-left">
         <p className="text-sm text-slate-500">Create a project to get started.</p>
       </aside>
     );
   }
 
   return (
-    <aside className="w-[300px] bg-white border-r border-slate-200 flex flex-col">
-      <div className="p-3 border-b border-slate-100">
-        <div className="font-semibold text-sm" style={{ color: '#1A1A2E' }}>{currentProject.name}</div>
-        <div className="text-xs text-slate-500">{areas.length} area{areas.length === 1 ? '' : 's'}</div>
+    <aside className="w-[300px] bg-white border-r border-slate-200 flex flex-col shadow-panel-left">
+      {/* "Create new area" CTA matches Smappen's prominent purple button */}
+      <div className="p-3 pb-2">
+        <button
+          className="btn btn-primary w-full justify-center text-sm py-2.5 h-auto"
+          onClick={onCreateArea}
+        >
+          <Plus size={14} /> Create new area
+        </button>
       </div>
+
+      {/* Project label */}
+      <div className="px-3 pb-2">
+        <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
+          <Folder size={11} /> {currentProject.name}
+        </div>
+        <div className="text-[11px] text-slate-400 mt-0.5">
+          {areas.length} area{areas.length === 1 ? '' : 's'}
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto">
         <AreaList />
       </div>
-      <div className="p-3 border-t border-slate-100 grid grid-cols-3 gap-2">
-        <button className="btn btn-primary justify-center" onClick={onCreateArea}>
-          <Plus size={14} /> Area
+
+      {/* Secondary actions */}
+      <div className="p-2 border-t border-slate-100 grid grid-cols-2 gap-2">
+        <button className="btn btn-secondary justify-center text-xs h-9" onClick={onImport}>
+          <Upload size={12} /> Import
         </button>
-        <button className="btn btn-secondary justify-center" onClick={onImport}>
-          <Upload size={14} /> Import
-        </button>
-        <button className="btn btn-secondary justify-center" onClick={() => startDrawing('polygon')}>
-          <PenSquare size={14} /> Draw
+        <button className="btn btn-secondary justify-center text-xs h-9" onClick={() => startDrawing('polygon')}>
+          <PenSquare size={12} /> Draw
         </button>
       </div>
     </aside>

@@ -11,7 +11,7 @@ interface Props {
 export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
   const { mapInstance } = useMapStore();
   const dataLayerRef = useRef<google.maps.Data | null>(null);
-  const rangeRef = useRef<{ min: number; max: number }>({ min: 0, max: 1 });
+  const rangeRef = useRef<{ min: number; max: number; breaks?: number[] }>({ min: 0, max: 1 });
   const fetchTokenRef = useRef(0);
   const debounceRef = useRef<number | null>(null);
 
@@ -25,7 +25,7 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
       layer.setStyle((f) => {
         const v = f.getProperty('value') as number | null;
         return {
-          fillColor: colorForValue(v, rangeRef.current.min, rangeRef.current.max),
+          fillColor: colorForValue(v, rangeRef.current.min, rangeRef.current.max, rangeRef.current.breaks),
           fillOpacity: 0.55,
           strokeColor: '#ffffff',
           strokeWeight: 0.5,
@@ -49,7 +49,7 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
         layer.forEach((f) => snapshot.push(f));
         snapshot.forEach((f) => layer.remove(f));
         if (res.features.length > 0) {
-          rangeRef.current = { min: res.meta.min, max: res.meta.max };
+          rangeRef.current = { min: res.meta.min, max: res.meta.max, breaks: res.meta.breaks };
           layer.addGeoJson({ type: 'FeatureCollection', features: res.features });
           applyStyle();
         }

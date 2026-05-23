@@ -103,6 +103,9 @@ class HeatmapController
 
         $min = $values ? min($values) : 0;
         $max = $values ? max($values) : 0;
+        // 10 decile breaks so the frontend can color by quantile bucket instead of linear range.
+        // This fixes the "all purple" rendering when a few outliers blow out the linear scale.
+        $breaks = self::computeQuantileBreaks($values, 10);
 
         Response::success([
             'type' => 'FeatureCollection',
@@ -112,9 +115,23 @@ class HeatmapController
                 'count' => count($features),
                 'min' => $min,
                 'max' => $max,
+                'breaks' => $breaks,
                 'unit' => self::unitFor($metric),
             ],
         ]);
+    }
+
+    private static function computeQuantileBreaks(array $values, int $buckets): array
+    {
+        if (count($values) < 2 || $buckets < 2) return [];
+        sort($values);
+        $n = count($values);
+        $breaks = [];
+        for ($i = 1; $i < $buckets; $i++) {
+            $idx = (int) floor(($i / $buckets) * ($n - 1));
+            $breaks[] = $values[$idx];
+        }
+        return $breaks;
     }
 
     /**
