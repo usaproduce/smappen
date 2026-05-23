@@ -210,17 +210,6 @@ export default function Header() {
           <Share2 size={15} /> Share
         </button>
 
-        <span
-          className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide"
-          style={{
-            background: user?.plan === 'free' ? '#F3F3F7' : '#EDE5F7',
-            color: user?.plan === 'free' ? '#6B6B7B' : '#5C2D91',
-          }}
-          title={`${user?.plan} plan`}
-        >
-          {user?.plan}
-        </span>
-
         <div className="relative">
           <button
             className="ml-1 inline-flex items-center gap-1.5 text-slate-600 hover:bg-slate-50 px-2 py-1.5 rounded text-sm font-semibold"
@@ -242,10 +231,7 @@ export default function Header() {
                 <div className="text-xs text-slate-500">{user?.email}</div>
               </div>
               <Link to="/settings/billing" className="block px-3 py-2 hover:bg-slate-50 text-sm flex items-center gap-2" onClick={() => setShowUserMenu(false)}>
-                <Settings size={14} /> Billing & settings
-              </Link>
-              <Link to="/pricing" className="block px-3 py-2 hover:bg-slate-50 text-sm flex items-center gap-2" onClick={() => setShowUserMenu(false)}>
-                <ChevronRight size={14} /> Pricing
+                <Settings size={14} /> Account settings
               </Link>
               <button
                 className="block w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-t border-slate-100 flex items-center gap-2 text-red-600"

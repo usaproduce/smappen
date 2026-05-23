@@ -33,23 +33,28 @@ export default function AreaList() {
 
   return (
     <div className="py-1">
-      <div className="px-3 mb-2 relative">
-        <Search size={13} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-        <input
-          className="input pl-7 pr-7 h-9 text-sm"
-          placeholder="Search areas or folder…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        {search && (
-          <button
-            className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-0.5"
-            onClick={() => setSearch('')}
-            title="Clear"
-          >
-            <X size={12} />
-          </button>
-        )}
+      <div className="px-3 mb-2">
+        <div className="relative">
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none flex items-center">
+            <Search size={14} />
+          </span>
+          <input
+            className="w-full h-10 pl-9 pr-9 text-sm rounded-lg border border-slate-300 bg-white focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100 transition"
+            style={{ color: 'var(--ink)' }}
+            placeholder="Search areas or folder…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {search && (
+            <button
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-100 transition"
+              onClick={() => setSearch('')}
+              title="Clear"
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center gap-1 px-3 pb-1">

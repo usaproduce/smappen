@@ -47,9 +47,13 @@ html, body, #root {
   font-size: 14px;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: background-color 0.15s ease, transform 0.05s ease;
+  transition: background-color 0.18s ease, color 0.18s ease,
+              transform 0.08s ease, box-shadow 0.18s ease;
 }
-.btn:active { transform: scale(0.98); }
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0) scale(0.98); }
+.btn-primary:hover { box-shadow: 0 4px 12px rgba(120, 72, 187, 0.25); }
+.btn-cta:hover { box-shadow: 0 4px 12px rgba(229, 57, 53, 0.25); }
 .btn-primary { background: var(--brand); color: white; }
 .btn-primary:hover { background: var(--brand-dark); }
 .btn-primary:disabled { background: #A78BDA; cursor: not-allowed; }
@@ -117,6 +121,32 @@ html, body, #root {
 .shadow-panel-right { box-shadow: -2px 0 8px rgba(0, 0, 0, 0.08); }
 .shadow-float { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); }
 
+/* Floating panels slide in from their edge */
+aside.absolute.left-4 { animation: slideInLeft 0.28s cubic-bezier(0.32, 0.72, 0, 1) both; }
+aside.absolute.right-4,
+aside.absolute.right-20 { animation: slideInRight 0.28s cubic-bezier(0.32, 0.72, 0, 1) both; }
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Modal scale-in */
+.fixed.inset-0 > div[class*="rounded"] {
+  animation: modalIn 0.2s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Smoother hover anywhere */
+button, a, .clickable { transition: background-color 0.18s ease, color 0.18s ease, opacity 0.18s ease, transform 0.08s ease; }
+
 .skeleton {
   background: linear-gradient(90deg, #F3F3F7 25%, #E8E8EE 50%, #F3F3F7 75%);
   background-size: 200% 100%;
@@ -150,11 +180,16 @@ html, body, #root {
   gap: 8px;
   padding: 8px 16px;
   cursor: pointer;
-  transition: background-color 0.12s;
+  transition: background-color 0.18s ease, padding-left 0.18s ease;
+  animation: areaRowIn 0.25s ease-out;
 }
-.area-row:hover { background: var(--brand-50); }
+.area-row:hover { background: var(--brand-50); padding-left: 18px; }
 .area-row.selected {
   background: var(--brand-light);
+}
+@keyframes areaRowIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 .area-row.selected .area-name { font-weight: 700; }
 .area-color-dot {

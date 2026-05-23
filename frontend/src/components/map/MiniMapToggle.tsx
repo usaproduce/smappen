@@ -2,15 +2,13 @@ import { useMapStore } from '../../stores/mapStore';
 import { HEATMAP_GRADIENT_CSS } from '../../utils/heatmapColors';
 
 /**
- * Small 64×64 toggle at the bottom-left of the map.
- * Click → flips the heatmap on/off, matching Smappen's pattern.
- * Shows a gradient thumbnail when heatmap is off (preview of what you'd get),
- * a tiny map thumbnail when it's on (preview of going back to plain map).
+ * Bottom-left mini-map toggle. Positioned to the right of the heatmap panel
+ * when the panel is open (heatmap card is 340px wide at left-4), otherwise
+ * sits at the panel's would-be position.
  */
 export default function MiniMapToggle() {
   const { showHeatmap, toggleHeatmap, mapInstance } = useMapStore();
 
-  // Pull a small static thumbnail of the current viewport for the "back to map" state.
   function thumbnailBg(): string {
     if (!mapInstance) return '#F0F0F0';
     const c = mapInstance.getCenter();
@@ -22,10 +20,14 @@ export default function MiniMapToggle() {
     return `center / cover no-repeat url("${url}")`;
   }
 
+  // When the heatmap panel is open, slide the toggle to its right side
+  // (panel width 340px + left margin 16px + gap 8px = 364px from left edge).
+  const leftPosition = showHeatmap ? 'left-[364px]' : 'left-4';
+
   return (
     <button
       onClick={toggleHeatmap}
-      className="absolute bottom-4 left-4 w-16 h-16 rounded-lg shadow-float border-2 border-white overflow-hidden z-30 hover:scale-105 transition-transform"
+      className={`absolute bottom-4 ${leftPosition} w-16 h-16 rounded-xl shadow-float border-2 border-white overflow-hidden z-30 transition-all duration-300 ease-out hover:scale-105 active:scale-95`}
       title={showHeatmap ? 'Hide heatmap (show plain map)' : 'Show population density heatmap'}
       style={{
         background: showHeatmap ? thumbnailBg() : HEATMAP_GRADIENT_CSS,

@@ -39,7 +39,7 @@ export default function HeatmapPanel({ meta }: Props) {
     : null;
 
   return (
-    <div className="absolute bottom-4 left-24 bg-white rounded-xl shadow-float p-4 w-[340px] z-30 border border-slate-200">
+    <div className="absolute bottom-4 left-4 bg-white rounded-xl shadow-float p-4 w-[340px] z-30 border border-slate-200 transition-all duration-200">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 font-bold text-base" style={{ color: '#1A1A2E' }}>
           <MapIcon size={18} style={{ color: '#7848BB' }} /> Heatmap
