@@ -61,9 +61,9 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
       const bbox: [number, number, number, number] = [sw.lng(), sw.lat(), ne.lng(), ne.lat()];
       const token = ++fetchTokenRef.current;
       try {
-        // 50K is well above the data we have loaded; effectively no truncation.
-        // Server-side 7-day cache makes repeat fetches instant regardless of payload size.
-        const res = await heatmapApi.tracts(bbox, metric, zoom, 50000, heatmapLevel);
+        // 10K is well above our ~4,400-tract dataset → effectively no truncation,
+        // and matches the backend cap so memory stays bounded.
+        const res = await heatmapApi.tracts(bbox, metric, zoom, 10000, heatmapLevel);
         if (token !== fetchTokenRef.current) return; // stale response from a previous pan
         const snapshot: google.maps.Data.Feature[] = [];
         layer.forEach((f) => snapshot.push(f));

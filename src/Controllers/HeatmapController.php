@@ -40,15 +40,17 @@ class HeatmapController
 
     public function tracts(Request $request): void
     {
+        // Heatmap responses for wide bboxes can be 5-15MB encoded — bump the
+        // per-request memory budget so json_encode doesn't OOM at 128M default.
+        ini_set('memory_limit', '512M');
+
         $bbox = $request->getQuery('bbox', '');
         $metric = $request->getQuery('metric', 'population_density');
         $zoom = (float) $request->getQuery('zoom', 10);
         $levelOverride = $request->getQuery('level'); // 'state' | 'county' | 'tract' | null
-        // Effectively no truncation — cap at 50K to be safe but allow every tract
-        // in view to render. ORDER BY metric DESC means low-density rural tracts
-        // would otherwise be dropped first → ugly visual holes. Server-side 7-day
-        // cache makes the larger payload a one-time cost per viewport.
-        $maxFeatures = min(50000, max(1, (int)$request->getQuery('limit', 20000)));
+        // 10K is well above our 4,425-tract dataset; effectively no truncation but
+        // keeps memory bounded. ST_AsGeoJSON precision=4 (~11m) keeps payload small.
+        $maxFeatures = min(10000, max(1, (int)$request->getQuery('limit', 8000)));
 
         if (!isset(self::METRICS_TRACT[$metric])) {
             Response::error('Unknown metric: ' . $metric, 422);
@@ -166,7 +168,7 @@ class HeatmapController
         $expr = self::METRICS_TRACT[$metric];
         // Same sort/limit-first, JOIN-for-geometry pattern as counties/states.
         // Otherwise MySQL sort buffer can't hold 2K geom strings ordered by metric.
-        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(ct.geometry) AS geom, q.metric_value
+        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(ct.geometry, 4) AS geom, q.metric_value
                 FROM (
                   SELECT ct.geoid AS id, ct.name AS name, ($expr) AS metric_value
                   FROM census_tracts ct
@@ -186,7 +188,7 @@ class HeatmapController
         $expr = self::METRICS_AGG[$metric];
         // Cap subquery to a sane number — county zoom rarely needs >300 in view.
         $limit = min($limit, 300);
-        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(g.geometry) AS geom, q.metric_value
+        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(g.geometry, 4) AS geom, q.metric_value
                 FROM (
                   SELECT g.geoid AS id, g.name AS name, ($expr) AS metric_value
                   FROM census_counties g
@@ -205,7 +207,7 @@ class HeatmapController
         $expr = self::METRICS_AGG[$metric];
         // State zoom: max ~50 states ever; clamp aggressively.
         $limit = min($limit, 60);
-        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(g.geometry) AS geom, q.metric_value
+        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(g.geometry, 4) AS geom, q.metric_value
                 FROM (
                   SELECT g.state_fips AS id, g.name AS name, ($expr) AS metric_value
                   FROM census_states g
