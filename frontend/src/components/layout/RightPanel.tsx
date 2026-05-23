@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, MapPin, Car, Bike, Footprints, Hexagon } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 import { useProjectStore } from '../../stores/projectStore';
@@ -28,11 +28,21 @@ export default function RightPanel() {
   const [exportOpen, setExportOpen] = useState(false);
 
   const area = areas.find((a) => a.id === selectedAreaId);
+
+  // Esc closes the panel.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && selectedAreaId) selectArea(null);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedAreaId, selectArea]);
+
   if (!area) return null;
   const ModeIcon = modeIcon[area.travel_mode ?? ''] ?? Hexagon;
 
   return (
-    <aside className="w-[360px] bg-white border-l border-slate-200 flex flex-col shadow-panel-right">
+    <aside className="w-[300px] md:w-[340px] lg:w-[360px] bg-white border-l border-slate-200 flex flex-col shadow-panel-right shrink-0">
       {/* Header */}
       <div className="px-4 pt-3 pb-3 border-b border-slate-100">
         <div className="flex items-start justify-between gap-2">

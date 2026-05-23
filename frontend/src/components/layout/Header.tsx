@@ -15,11 +15,29 @@ export default function Header() {
   const [projects, setProjects] = useState<any[]>([]);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const [switcherQuery, setSwitcherQuery] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [renameVal, setRenameVal] = useState('');
   const renameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { load(); }, []);
+
+  // Cmd/Ctrl+K opens project switcher
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setProjectDropdownOpen(true);
+        setSwitcherQuery('');
+      }
+      if (e.key === 'Escape') {
+        setProjectDropdownOpen(false);
+        setShowUserMenu(false);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   async function load() {
     try {
       const r = await projectsApi.list();
@@ -133,25 +151,39 @@ export default function Header() {
           )}
 
           {projectDropdownOpen && (
-            <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[260px] z-40 py-1">
-              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold text-slate-500">Projects</div>
-              {projects.map((p) => (
-                <button
-                  key={p.id}
-                  className={`block w-full text-left px-3 py-2 hover:bg-slate-50 text-sm flex items-center justify-between ${p.id === currentProject?.id ? 'bg-violet-50' : ''}`}
-                  onClick={() => { setCurrentProject(p); setProjectDropdownOpen(false); }}
-                >
-                  <span className="font-medium">{p.name}</span>
-                  <span className="text-slate-400 text-xs">{p.area_count ?? 0} {p.area_count === 1 ? 'area' : 'areas'}</span>
-                </button>
-              ))}
+            <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[300px] z-40 py-1">
+              <div className="px-2 py-1.5">
+                <input
+                  autoFocus
+                  className="input h-8 text-sm"
+                  placeholder="Search projects…"
+                  value={switcherQuery}
+                  onChange={(e) => setSwitcherQuery(e.target.value)}
+                />
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                {projects.filter((p) => !switcherQuery || p.name.toLowerCase().includes(switcherQuery.toLowerCase())).map((p) => (
+                  <button
+                    key={p.id}
+                    className={`block w-full text-left px-3 py-2 hover:bg-slate-50 text-sm flex items-center justify-between ${p.id === currentProject?.id ? 'bg-violet-50' : ''}`}
+                    onClick={() => { setCurrentProject(p); setProjectDropdownOpen(false); }}
+                  >
+                    <span className="font-medium truncate">{p.name}</span>
+                    <span className="text-slate-400 text-xs ml-2 shrink-0">{p.area_count ?? 0} {p.area_count === 1 ? 'area' : 'areas'}</span>
+                  </button>
+                ))}
+              </div>
               <button
-                className="block w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-t border-slate-100 mt-1 font-semibold"
+                className="block w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-t border-slate-100 mt-1 font-semibold flex items-center gap-2"
                 style={{ color: '#7848BB' }}
                 onClick={() => { setProjectDropdownOpen(false); newProject(); }}
               >
-                <Plus size={14} className="inline mr-1" /> New project
+                <Plus size={14} /> New project
               </button>
+              <div className="px-3 py-1.5 border-t border-slate-100 text-[10px] text-slate-400 flex items-center justify-between">
+                <span>Switch with <kbd className="bg-slate-100 px-1 py-0.5 rounded">⌘K</kbd></span>
+                <span>Esc to close</span>
+              </div>
             </div>
           )}
         </div>

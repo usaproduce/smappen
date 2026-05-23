@@ -10,6 +10,7 @@ use App\Controllers\GeocodingController;
 use App\Controllers\PlacesController;
 use App\Controllers\DemographicsController;
 use App\Controllers\HeatmapController;
+use App\Controllers\ReachController;
 use App\Controllers\ImportController;
 use App\Controllers\ExportController;
 use App\Controllers\ReportController;
@@ -50,6 +51,10 @@ return function (Router $r) {
 
     // Heatmap viewport tracts (choropleth)
     $r->get('/api/heatmap/tracts', [HeatmapController::class, 'tracts'], $auth);
+
+    // Smart area sizing + live demographics preview
+    $r->post('/api/areas/reach', [ReachController::class, 'calculate'], $auth);
+    $r->post('/api/demographics/preview', [ReachController::class, 'preview'], $auth);
 
     // Isochrone
     $r->post('/api/isochrone/calculate', [IsochroneController::class, 'calculate'], $auth);
