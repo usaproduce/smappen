@@ -2,17 +2,19 @@
 // 10 anchor colors with EXPLICIT stop positions — Smappen compresses the cool
 // and hot extremes and gives the green→yellow→orange middle most of the visual
 // real estate. We mirror that exactly so the bar and polygon coloring agree.
+// Pastel / soft palette matching Smappen — Tailwind 300-400 saturation range
+// (lighter, more friendly than the deep 500-700 we had before).
 export const HEATMAP_STOPS = [
-  '#5E18B7', // violet-700
-  '#2563EB', // blue-600
-  '#0EA5E9', // sky-500
-  '#06B6D4', // cyan-500
-  '#10B981', // emerald-500
-  '#84CC16', // lime-500
-  '#FACC15', // yellow-400
-  '#FB923C', // orange-400
-  '#EF4444', // red-500
-  '#EC4899', // pink-500
+  '#A78BFA', // violet-400 (soft lavender)
+  '#60A5FA', // blue-400  (soft blue)
+  '#38BDF8', // sky-400
+  '#22D3EE', // cyan-400
+  '#34D399', // emerald-400 (mint)
+  '#A3E635', // lime-400
+  '#FDE047', // yellow-300 (soft sunny)
+  '#FB923C', // orange-400 (peach)
+  '#F87171', // red-400 (coral)
+  '#F472B6', // pink-400 (soft pink)
 ];
 
 /**

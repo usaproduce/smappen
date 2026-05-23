@@ -27,7 +27,7 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
         const v = f.getProperty('value') as number | null;
         return {
           fillColor: colorForValue(v, rangeRef.current.min, rangeRef.current.max, rangeRef.current.breaks),
-          fillOpacity: 0.7,
+          fillOpacity: 0.6,
           strokeColor: '#ffffff',
           strokeWeight: 0.5,
           clickable: true,
