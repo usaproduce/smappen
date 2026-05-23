@@ -1,9 +1,17 @@
 // Smappen-style choropleth gradient: cool → hot.
-// 10 anchor colors interpolated continuously between deciles.
+// Bright, saturated rainbow — violet → blue → cyan → green → yellow → orange → red → pink.
+// Calibrated against Smappen's reference legend bar (vibrant Tailwind 500-ish stops).
 export const HEATMAP_STOPS = [
-  '#4A148C', '#283593', '#1565C0', '#00838F',
-  '#2E7D32', '#558B2F', '#9E9D24', '#F9A825',
-  '#EF6C00', '#D32F2F',
+  '#5E18B7', // violet-700
+  '#2563EB', // blue-600
+  '#0EA5E9', // sky-500
+  '#06B6D4', // cyan-500
+  '#10B981', // emerald-500
+  '#84CC16', // lime-500
+  '#FACC15', // yellow-400
+  '#FB923C', // orange-400
+  '#EF4444', // red-500
+  '#EC4899', // pink-500
 ];
 
 export const HEATMAP_GRADIENT_CSS =
