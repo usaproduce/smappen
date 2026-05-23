@@ -80,13 +80,18 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
     if (!useLat || !useLng) return toast.error('Address or pin required');
 
     setLoading(true);
+    const loadToast = toast.loading(
+      time > 30
+        ? `Calculating ${time}-min isochrone (may take 10-15s)…`
+        : `Calculating ${time}-min isochrone…`
+    );
     try {
       const r = await isochroneApi.calculate({ lat: useLat, lng: useLng, time_minutes: time, travel_mode: mode });
       setPreview(r);
       fitBoundsToArea(r.geojson);
-      toast.success(`~${r.area_sq_km.toFixed(1)} sq km`);
+      toast.success(`~${r.area_sq_km.toFixed(1)} sq km`, { id: loadToast });
     } catch (e: any) {
-      toast.error(e?.response?.data?.error ?? 'Isochrone failed');
+      toast.error(e?.response?.data?.error ?? 'Isochrone failed', { id: loadToast });
     } finally {
       setLoading(false);
     }

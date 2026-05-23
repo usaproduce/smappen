@@ -13,7 +13,8 @@ class IsochroneService
         if (!in_array($travelMode, self::VALID_MODES, true)) {
             throw new \InvalidArgumentException('Invalid travel mode');
         }
-        $cacheKey = 'iso:' . md5("{$lat},{$lng},{$timeMinutes},{$travelMode}");
+        // v2 prefix invalidates pre-smoothing=0 cached results.
+        $cacheKey = 'iso:v2:' . md5("{$lat},{$lng},{$timeMinutes},{$travelMode}");
         $cached = CacheService::getJson($cacheKey);
         if ($cached) return $cached;
 
@@ -23,11 +24,16 @@ class IsochroneService
         }
 
         $url = self::ENDPOINT . $travelMode;
+        // smoothing=0 → max detail, polygon hugs the road network.
+        // attributes: area + reachfactor for UI display.
+        // area_units: km for consistency with our display.
         $payload = [
             'locations' => [[$lng, $lat]],
             'range' => [$timeMinutes * 60],
             'range_type' => 'time',
-            'smoothing' => 25,
+            'smoothing' => 0,
+            'attributes' => ['area', 'reachfactor'],
+            'area_units' => 'km',
         ];
 
         $ch = curl_init($url);
@@ -41,7 +47,9 @@ class IsochroneService
                 // ORS only serves application/geo+json — asking for application/json gives 406.
                 'Accept: application/geo+json, application/json',
             ],
-            CURLOPT_TIMEOUT => 30,
+            // smoothing=0 + long travel times can take 30-60s on the public ORS endpoint.
+            CURLOPT_TIMEOUT => 90,
+            CURLOPT_CONNECTTIMEOUT => 15,
         ]);
         $response = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
