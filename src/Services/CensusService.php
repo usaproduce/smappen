@@ -82,20 +82,32 @@ class CensusService
         if (!$this->apiKey) {
             throw new \RuntimeException('CENSUS_API_KEY not configured');
         }
-        $vars = implode(',', array_values(self::VARIABLES));
-        $url = "{$this->baseUrl}/{$this->acsYear}/{$this->acsDataset}?get=NAME,{$vars}&for=tract:*&in=state:{$stateFips}&key={$this->apiKey}";
-        $resp = $this->httpGet($url);
-        $data = json_decode($resp, true);
-        if (!is_array($data) || count($data) < 2) return [];
-        $headers = array_shift($data);
-        $out = [];
-        foreach ($data as $row) {
-            $rec = array_combine($headers, $row);
-            $geoid = $rec['state'] . $rec['county'] . $rec['tract'];
-            $rec['geoid'] = $geoid;
-            $out[] = $rec;
+        // Census API: max 50 variables per call (including NAME), so chunk and merge.
+        $allVars = array_values(self::VARIABLES);
+        $chunks = array_chunk($allVars, 49);
+
+        $merged = [];
+        foreach ($chunks as $chunk) {
+            $vars = implode(',', $chunk);
+            $url = "{$this->baseUrl}/{$this->acsYear}/{$this->acsDataset}"
+                 . "?get=NAME,{$vars}&for=tract:*&in=state:{$stateFips}&key={$this->apiKey}";
+            $resp = $this->httpGet($url);
+            $data = json_decode($resp, true);
+            if (!is_array($data) || count($data) < 2) continue;
+            $headers = array_shift($data);
+            foreach ($data as $row) {
+                $rec = array_combine($headers, $row);
+                $geoid = $rec['state'] . $rec['county'] . $rec['tract'];
+                if (!isset($merged[$geoid])) {
+                    $merged[$geoid] = ['geoid' => $geoid];
+                }
+                // Drop the state/county/tract location keys before merging vars in.
+                unset($rec['state'], $rec['county'], $rec['tract']);
+                $merged[$geoid] = array_merge($merged[$geoid], $rec);
+            }
+            usleep(200_000); // throttle a bit between calls
         }
-        return $out;
+        return array_values($merged);
     }
 
     public function getDemographicsForArea(string $areaId): ?array
