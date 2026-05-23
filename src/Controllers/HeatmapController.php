@@ -165,15 +165,16 @@ class HeatmapController
                   LIMIT $limit
                 ) q
                 JOIN census_tracts ct ON ct.geoid = q.id";
+        self::bumpSortBuffer();
         return Database::getInstance()->fetchAll($sql, [$wkt]);
     }
 
     private static function fetchCounties(string $metric, string $wkt, int $limit): array
     {
         $expr = self::METRICS_AGG[$metric];
-        // Sort/limit first on small columns, then fetch the heavy geometry — keeps
-        // MySQL's sort buffer happy when county polygons are large.
-        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(ST_Simplify(g.geometry, 0.005)) AS geom, q.metric_value
+        // Cap subquery to a sane number — county zoom rarely needs >300 in view.
+        $limit = min($limit, 300);
+        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(g.geometry) AS geom, q.metric_value
                 FROM (
                   SELECT g.geoid AS id, g.name AS name, ($expr) AS metric_value
                   FROM census_counties g
@@ -183,15 +184,16 @@ class HeatmapController
                   LIMIT $limit
                 ) q
                 JOIN census_counties g ON g.geoid = q.id";
+        self::bumpSortBuffer();
         return Database::getInstance()->fetchAll($sql, [$wkt]);
     }
 
     private static function fetchStates(string $metric, string $wkt, int $limit): array
     {
         $expr = self::METRICS_AGG[$metric];
-        // Same pattern — and simplify state geometries aggressively since they're
-        // huge and we only need them at zoom ≤ 7.
-        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(ST_Simplify(g.geometry, 0.05)) AS geom, q.metric_value
+        // State zoom: max ~50 states ever; clamp aggressively.
+        $limit = min($limit, 60);
+        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(g.geometry) AS geom, q.metric_value
                 FROM (
                   SELECT g.state_fips AS id, g.name AS name, ($expr) AS metric_value
                   FROM census_states g
@@ -201,7 +203,20 @@ class HeatmapController
                   LIMIT $limit
                 ) q
                 JOIN census_states g ON g.state_fips = q.id";
+        self::bumpSortBuffer();
         return Database::getInstance()->fetchAll($sql, [$wkt]);
+    }
+
+    /**
+     * State/county GeoJSON polygons are huge and MySQL's default sort buffer
+     * (256KB) can't hold even a small number of them when ordering by metric.
+     * Bump to 64MB for this session only — applied before each big-geom query.
+     */
+    private static function bumpSortBuffer(): void
+    {
+        try {
+            Database::getInstance()->pdo()->exec('SET SESSION sort_buffer_size = 67108864'); // 64MB
+        } catch (\Throwable $e) {}
     }
 
     private static function levelForZoom(float $zoom): string
