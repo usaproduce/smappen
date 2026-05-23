@@ -83,10 +83,16 @@ class HeatmapController
         foreach ($rows as $r) {
             $val = $r['metric_value'] === null ? null : (float)$r['metric_value'];
             if ($val !== null) $values[] = $val;
+            $geom = $r['geom'] ? json_decode($r['geom'], true) : null;
+            // MySQL 8 ST_AsGeoJSON for SRID 4326 returns coords in [lat, lng] order,
+            // but the GeoJSON spec + Google Maps Data layer both expect [lng, lat]. Swap.
+            if ($geom && isset($geom['coordinates'])) {
+                $geom['coordinates'] = self::swapCoords($geom['coordinates']);
+            }
             $features[] = [
                 'type' => 'Feature',
                 'id' => $r['geoid'],
-                'geometry' => $r['geom'] ? json_decode($r['geom'], true) : null,
+                'geometry' => $geom,
                 'properties' => [
                     'geoid' => $r['geoid'],
                     'name' => $r['name'],
@@ -109,6 +115,22 @@ class HeatmapController
                 'unit' => self::unitFor($metric),
             ],
         ]);
+    }
+
+    /**
+     * Recursively swap nested coordinate pairs [a,b] → [b,a].
+     * Works for Polygon (3 levels) and MultiPolygon (4 levels).
+     */
+    private static function swapCoords($coords)
+    {
+        if (!is_array($coords) || empty($coords)) return $coords;
+        // Leaf coordinate pair? [number, number]
+        if (count($coords) === 2 && is_numeric($coords[0]) && is_numeric($coords[1])) {
+            return [$coords[1], $coords[0]];
+        }
+        $out = [];
+        foreach ($coords as $c) $out[] = self::swapCoords($c);
+        return $out;
     }
 
     private static function unitFor(string $metric): string

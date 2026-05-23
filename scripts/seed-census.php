@@ -102,12 +102,18 @@ switch ($cmd) {
             }
             $wkt = GeoUtils::geoJsonToWkt($geom);
             try {
-                $sql = "INSERT IGNORE INTO census_tracts (geoid, state_fips, county_fips, tract_id, name, geometry)
-                        VALUES (?, ?, ?, ?, ?, ST_GeomFromText(?, 4326))";
+                $aland = isset($props['ALAND']) ? (float)$props['ALAND'] : null;
+                $awater = isset($props['AWATER']) ? (float)$props['AWATER'] : null;
+                $sql = "INSERT INTO census_tracts (geoid, state_fips, county_fips, tract_id, name, geometry, land_area_sqm, water_area_sqm)
+                        VALUES (?, ?, ?, ?, ?, ST_GeomFromText(?, 4326), ?, ?)
+                        ON DUPLICATE KEY UPDATE
+                          geometry = VALUES(geometry),
+                          land_area_sqm = VALUES(land_area_sqm),
+                          water_area_sqm = VALUES(water_area_sqm)";
                 $db->query($sql, [
                     $geoid, $stateFips, $countyFips, $tractId,
                     $props['NAME'] ?? $props['NAMELSAD'] ?? null,
-                    $wkt,
+                    $wkt, $aland, $awater,
                 ]);
             } catch (\Throwable $e) {
                 fwrite(STDERR, "Tract $geoid failed: " . $e->getMessage() . "\n");
