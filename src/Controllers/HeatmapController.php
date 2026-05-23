@@ -152,16 +152,19 @@ class HeatmapController
     private static function fetchTracts(string $metric, string $wkt, int $limit): array
     {
         $expr = self::METRICS_TRACT[$metric];
-        $sql = "SELECT ct.geoid AS id,
-                       ct.name AS name,
-                       ST_AsGeoJSON(ct.geometry) AS geom,
-                       ($expr) AS metric_value
-                FROM census_tracts ct
-                LEFT JOIN census_demographics d ON d.geoid = ct.geoid
-                WHERE ST_Intersects(ct.geometry, ST_GeomFromText(?, 4326))
-                  AND ($expr) IS NOT NULL
-                ORDER BY metric_value DESC
-                LIMIT $limit";
+        // Same sort/limit-first, JOIN-for-geometry pattern as counties/states.
+        // Otherwise MySQL sort buffer can't hold 2K geom strings ordered by metric.
+        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(ct.geometry) AS geom, q.metric_value
+                FROM (
+                  SELECT ct.geoid AS id, ct.name AS name, ($expr) AS metric_value
+                  FROM census_tracts ct
+                  LEFT JOIN census_demographics d ON d.geoid = ct.geoid
+                  WHERE ST_Intersects(ct.geometry, ST_GeomFromText(?, 4326))
+                    AND ($expr) IS NOT NULL
+                  ORDER BY metric_value DESC
+                  LIMIT $limit
+                ) q
+                JOIN census_tracts ct ON ct.geoid = q.id";
         return Database::getInstance()->fetchAll($sql, [$wkt]);
     }
 
