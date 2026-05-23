@@ -222,7 +222,9 @@ CREATE TABLE IF NOT EXISTS tracked_places (
     is_gone TINYINT(1) NOT NULL DEFAULT 0,
     UNIQUE KEY uniq_tp_monitor_place (monitor_id, place_id),
     INDEX idx_tp_monitor (monitor_id, is_gone),
-    SPATIAL INDEX idx_tp_location (location),
+    -- No spatial index: MySQL SPATIAL INDEX requires NOT NULL but Places API
+    -- can legitimately return places with no location. Within-monitor lookups
+    -- are by FK + place_id, not geometry.
     CONSTRAINT fk_tp_monitor FOREIGN KEY (monitor_id) REFERENCES competitor_monitors(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
