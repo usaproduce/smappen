@@ -44,15 +44,16 @@ class HeatmapController
             $minLng, $minLat, $maxLng, $maxLat
         );
 
-        // MySQL 8 / MariaDB default SRID 4326 axis order is lat-long. Force long-lat
-        // so our (lng, lat) WKT is interpreted correctly.
+        // This MySQL 8 build interprets SRID 4326 as long-lat by default (verified empirically
+        // against TIGER tracts loaded via ogr2ogr). Passing the explicit 'axis-order=long-lat'
+        // hint actually inverts the coords here, so we omit it.
         $sql = "SELECT ct.geoid,
                        ct.name,
                        ST_AsGeoJSON(ct.geometry) AS geom,
                        ($metricExpr) AS metric_value
                 FROM census_tracts ct
                 LEFT JOIN census_demographics d ON d.geoid = ct.geoid
-                WHERE ST_Intersects(ct.geometry, ST_GeomFromText(?, 4326, 'axis-order=long-lat'))
+                WHERE ST_Intersects(ct.geometry, ST_GeomFromText(?, 4326))
                   AND ($metricExpr) IS NOT NULL
                 ORDER BY metric_value DESC
                 LIMIT $maxFeatures";
