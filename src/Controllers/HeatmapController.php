@@ -80,11 +80,16 @@ class HeatmapController
         $cached = self::cacheGet($cacheKey);
         if ($cached !== null) {
             self::cacheBump($cacheKey);
-            $body = json_decode($cached, true);
-            if (is_array($body)) {
-                $body['meta']['cached'] = true;
-                Response::success($body);
-            }
+            // Stream the cached JSON straight to the client — avoid decode+encode
+            // round-trip on a 10MB string. Just inject the cached flag.
+            header('Cache-Control: private, max-age=3600');
+            header('Content-Type: application/json; charset=utf-8');
+            \App\Core\Response::corsHeaders();
+            // The cached string is `{"type":"FeatureCollection","features":[...],"meta":{...}}`
+            // Splice "cached":true into the meta object cheaply via str_replace.
+            $patched = str_replace('"meta":{"metric"', '"meta":{"cached":true,"metric"', $cached);
+            echo '{"success":true,"data":' . $patched . '}';
+            exit;
         }
 
         $wkt = sprintf(
@@ -160,6 +165,7 @@ class HeatmapController
         ];
 
         self::cacheSet($cacheKey, $metric, $level, json_encode($body), 86400 * 7);
+        header('Cache-Control: private, max-age=3600'); // 1h browser cache
         Response::success($body);
     }
 

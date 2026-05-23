@@ -28,6 +28,7 @@ export default function HeatmapPanel({ meta }: Props) {
     heatmapMetric, setHeatmapMetric,
     heatmapLevel, setHeatmapLevel,
     heatmapPaletteId, setHeatmapPaletteId,
+    heatmapLoading,
     toggleHeatmap,
     hoveredHeatmapValue, hoveredHeatmapName,
   } = useMapStore();
@@ -48,6 +49,12 @@ export default function HeatmapPanel({ meta }: Props) {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 font-bold text-base" style={{ color: '#1A1A2E' }}>
           <MapIcon size={18} style={{ color: '#7848BB' }} /> Heatmap
+          {heatmapLoading && (
+            <span
+              className="inline-block w-3.5 h-3.5 border-2 border-slate-300 border-t-violet-600 rounded-full animate-spin ml-1"
+              title="Loading polygons…"
+            />
+          )}
         </div>
         <button onClick={toggleHeatmap} className="text-slate-400 hover:text-slate-700" title="Close heatmap">
           <X size={16} />

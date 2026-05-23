@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
-  const { mapInstance, heatmapLevel, heatmapPaletteId, setHoveredHeatmap } = useMapStore();
+  const { mapInstance, heatmapLevel, heatmapPaletteId, setHoveredHeatmap, setHeatmapLoading } = useMapStore();
   const dataLayerRef = useRef<google.maps.Data | null>(null);
   const rangeRef = useRef<{ min: number; max: number; breaks?: number[] }>({ min: 0, max: 1 });
   const fetchTokenRef = useRef(0);
@@ -60,6 +60,7 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
       const zoom = mapInstance!.getZoom() ?? 10;
       const bbox: [number, number, number, number] = [sw.lng(), sw.lat(), ne.lng(), ne.lat()];
       const token = ++fetchTokenRef.current;
+      setHeatmapLoading(true);
       try {
         // 10K is well above our ~4,400-tract dataset → effectively no truncation,
         // and matches the backend cap so memory stays bounded.
@@ -82,6 +83,8 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
         }, 1000);
       } catch {
         /* soft-fail */
+      } finally {
+        if (token === fetchTokenRef.current) setHeatmapLoading(false);
       }
     }
 
