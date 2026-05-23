@@ -32,18 +32,24 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
   const addressRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // Re-run when the API loads (typeof google check guards against pre-load mount).
     if (!addressRef.current || typeof google === 'undefined' || !google.maps?.places) return;
     const ac = new google.maps.places.Autocomplete(addressRef.current, {
       fields: ['geometry', 'formatted_address'],
     });
-    ac.addListener('place_changed', () => {
+    const listener = ac.addListener('place_changed', () => {
       const place = ac.getPlace();
       if (!place.geometry?.location) return;
       setLat(place.geometry.location.lat());
       setLng(place.geometry.location.lng());
       setAddress(place.formatted_address ?? '');
     });
-  }, []);
+    return () => {
+      google.maps.event.removeListener(listener);
+      // Clean up the .pac-container Google injects into <body>.
+      document.querySelectorAll('.pac-container').forEach((el) => el.remove());
+    };
+  }, [typeof google !== 'undefined' && !!google.maps?.places]);
 
   useEffect(() => {
     if (pendingIsochrone && placePinFor === 'isochrone' && pendingIsochrone.lat) {

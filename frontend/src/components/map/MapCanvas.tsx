@@ -7,7 +7,6 @@ import AreaCenterPins from './AreaCenterPins';
 import POIMarkers from './POIMarkers';
 import ImportedMarkers from './ImportedMarkers';
 import DrawingTools from './DrawingTools';
-import HeatmapLayer from './HeatmapLayer';
 import ChoroplethLayer from './ChoroplethLayer';
 import HeatmapPanel from './HeatmapPanel';
 import { SMAPPEN_MAP_STYLE } from '../../utils/mapStyle';

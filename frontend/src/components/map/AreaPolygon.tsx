@@ -13,7 +13,8 @@ export default function AreaPolygon({ area, heatmapOn = false }: { area: Area; h
   const path = geoJsonToGooglePath(area.geometry);
 
   // In heatmap mode, fill becomes invisible and stroke flips to white per Smappen styling.
-  const strokeColor = heatmapOn ? '#FFFFFF' : (area.stroke_color || area.fill_color);
+  const fillColor = area.fill_color || '#7848BB';
+  const strokeColor = heatmapOn ? '#FFFFFF' : (area.stroke_color || fillColor);
   const strokeWeight = heatmapOn ? 3 : (isSelected ? 3 : (area.stroke_weight ?? 2));
   const fillOpacity = heatmapOn ? 0 : (isSelected ? Math.min(0.5, (area.fill_opacity ?? 0.2) + 0.1) : (area.fill_opacity ?? 0.2));
 
@@ -22,7 +23,7 @@ export default function AreaPolygon({ area, heatmapOn = false }: { area: Area; h
       <Polygon
         path={path}
         options={{
-          fillColor: area.fill_color,
+          fillColor,
           fillOpacity,
           strokeColor,
           strokeWeight,

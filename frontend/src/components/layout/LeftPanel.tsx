@@ -1,21 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useMapStore } from '../../stores/mapStore';
 import { areasApi } from '../../api/areas';
 import AreaList from '../areas/AreaList';
-import AreaCreator from '../areas/AreaCreator';
-import ImportWizard from '../data/ImportWizard';
-import { Plus, Upload, PenSquare, MapPin } from 'lucide-react';
+import { Plus, Upload, PenSquare } from 'lucide-react';
 
-export default function LeftPanel() {
+interface Props {
+  onCreateArea: () => void;
+  onImport: () => void;
+}
+
+export default function LeftPanel({ onCreateArea, onImport }: Props) {
   const { currentProject, setAreas, areas } = useProjectStore();
   const { startDrawing, fitBoundsToArea } = useMapStore();
-  const [creatorOpen, setCreatorOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     if (!currentProject) return;
+    let cancelled = false;
     areasApi.listForProject(currentProject.id).then((fc) => {
+      if (cancelled) return;
       const items = fc.features.map((f: any) => ({
         id: f.id,
         project_id: currentProject.id,
@@ -25,6 +28,7 @@ export default function LeftPanel() {
       setAreas(items);
       if (items.length > 0 && items[0].geometry) fitBoundsToArea(items[0].geometry);
     });
+    return () => { cancelled = true; };
   }, [currentProject?.id]);
 
   if (!currentProject) {
@@ -38,25 +42,23 @@ export default function LeftPanel() {
   return (
     <aside className="w-[300px] bg-white border-r border-slate-200 flex flex-col">
       <div className="p-3 border-b border-slate-100">
-        <div className="font-semibold text-sm" style={{ color: '#1e3a5f' }}>{currentProject.name}</div>
+        <div className="font-semibold text-sm" style={{ color: '#1A1A2E' }}>{currentProject.name}</div>
         <div className="text-xs text-slate-500">{areas.length} area{areas.length === 1 ? '' : 's'}</div>
       </div>
       <div className="flex-1 overflow-y-auto">
         <AreaList />
       </div>
       <div className="p-3 border-t border-slate-100 grid grid-cols-3 gap-2">
-        <button className="btn btn-primary justify-center" onClick={() => setCreatorOpen(true)}>
+        <button className="btn btn-primary justify-center" onClick={onCreateArea}>
           <Plus size={14} /> Area
         </button>
-        <button className="btn btn-secondary justify-center" onClick={() => setImportOpen(true)}>
+        <button className="btn btn-secondary justify-center" onClick={onImport}>
           <Upload size={14} /> Import
         </button>
         <button className="btn btn-secondary justify-center" onClick={() => startDrawing('polygon')}>
           <PenSquare size={14} /> Draw
         </button>
       </div>
-      {creatorOpen && <AreaCreator onClose={() => setCreatorOpen(false)} />}
-      {importOpen && <ImportWizard onClose={() => setImportOpen(false)} />}
     </aside>
   );
 }

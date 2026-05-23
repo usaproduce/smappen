@@ -44,13 +44,15 @@ class HeatmapController
             $minLng, $minLat, $maxLng, $maxLat
         );
 
+        // MySQL 8 / MariaDB default SRID 4326 axis order is lat-long. Force long-lat
+        // so our (lng, lat) WKT is interpreted correctly.
         $sql = "SELECT ct.geoid,
                        ct.name,
                        ST_AsGeoJSON(ct.geometry) AS geom,
                        ($metricExpr) AS metric_value
                 FROM census_tracts ct
                 LEFT JOIN census_demographics d ON d.geoid = ct.geoid
-                WHERE ST_Intersects(ct.geometry, ST_GeomFromText(?, 4326))
+                WHERE ST_Intersects(ct.geometry, ST_GeomFromText(?, 4326, 'axis-order=long-lat'))
                   AND ($metricExpr) IS NOT NULL
                 ORDER BY metric_value DESC
                 LIMIT $maxFeatures";
@@ -58,13 +60,21 @@ class HeatmapController
         try {
             $rows = Database::getInstance()->fetchAll($sql, [$wkt]);
         } catch (\Throwable $e) {
-            // census_tracts table empty or missing — return empty collection so UI
-            // can show a friendly "no data" hint instead of an error.
+            // census_tracts table empty/missing OR the long-lat hint not supported by this
+            // MySQL build — return empty collection so UI shows a friendly hint.
             Response::success([
                 'type' => 'FeatureCollection',
                 'features' => [],
-                'meta' => ['metric' => $metric, 'note' => 'No census data loaded. Run scripts/seed-census.php on the server.'],
+                'meta' => [
+                    'metric' => $metric,
+                    'count' => 0,
+                    'min' => 0,
+                    'max' => 0,
+                    'unit' => self::unitFor($metric),
+                    'note' => 'No census data loaded. Run scripts/seed-census.php on the server.',
+                ],
             ]);
+            return;
         }
 
         $features = [];

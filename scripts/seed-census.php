@@ -28,6 +28,16 @@ function nullable_int($v): ?int {
     return (int)$v;
 }
 
+function sum_ranges(array $row, array $keys): ?int {
+    $sum = 0;
+    $hadAny = false;
+    foreach ($keys as $k) {
+        $v = nullable_int($row[$k] ?? null);
+        if ($v !== null) { $sum += $v; $hadAny = true; }
+    }
+    return $hadAny ? $sum : null;
+}
+
 function seed_state(string $stateFips): void {
     $svc = new CensusService();
     $db = Database::getInstance();
@@ -46,6 +56,10 @@ function seed_state(string $stateFips): void {
                 'unemployed_total' => nullable_int($r['B23025_005E'] ?? null),
                 'housing_units_total' => nullable_int($r['B25001_001E'] ?? null),
                 'age_under_18' => nullable_int($r['B09001_001E'] ?? null),
+                'age_18_to_34' => sum_ranges($r, ['B01001_007E','B01001_008E','B01001_009E','B01001_010E','B01001_011E','B01001_012E','B01001_031E','B01001_032E','B01001_033E','B01001_034E','B01001_035E','B01001_036E']),
+                'age_35_to_54' => sum_ranges($r, ['B01001_013E','B01001_014E','B01001_015E','B01001_016E','B01001_037E','B01001_038E','B01001_039E','B01001_040E']),
+                'age_55_to_64' => sum_ranges($r, ['B01001_017E','B01001_018E','B01001_019E','B01001_041E','B01001_042E','B01001_043E']),
+                'age_65_plus' => sum_ranges($r, ['B01001_020E','B01001_021E','B01001_022E','B01001_023E','B01001_024E','B01001_025E','B01001_044E','B01001_045E','B01001_046E','B01001_047E','B01001_048E','B01001_049E']),
                 'data_year' => 2023,
                 'updated_at' => date('Y-m-d H:i:s'),
             ];

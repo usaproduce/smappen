@@ -1,5 +1,9 @@
-@import "tailwindcss";
+/* Fonts must @import BEFORE Tailwind, since @import rules have to come first. */
 @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+/* Tell Tailwind v4 where to look for utility class usage. */
+@source "../**/*.{ts,tsx,html}";
 
 :root {
   /* Smappen brand purple — replaces the old violet */
@@ -174,4 +178,10 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/* Google Places Autocomplete dropdown — must sit above any modal overlay. */
+.pac-container {
+  z-index: 99999 !important;
+  font-family: 'Nunito', sans-serif;
 }

@@ -11,26 +11,29 @@ interface Props {
 export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
   const { mapInstance } = useMapStore();
   const dataLayerRef = useRef<google.maps.Data | null>(null);
+  const rangeRef = useRef<{ min: number; max: number }>({ min: 0, max: 1 });
   const fetchTokenRef = useRef(0);
+  const debounceRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!mapInstance) return;
+    if (!mapInstance || typeof google === 'undefined') return;
 
     const layer = new google.maps.Data({ map: mapInstance });
     dataLayerRef.current = layer;
 
-    let min = 0, max = 1;
-    layer.setStyle((f) => {
-      const v = f.getProperty('value') as number | null;
-      const color = colorForValue(v, min, max);
-      return {
-        fillColor: color,
-        fillOpacity: 0.55,
-        strokeColor: '#ffffff',
-        strokeWeight: 0.5,
-        clickable: false,
-      };
-    });
+    function applyStyle() {
+      layer.setStyle((f) => {
+        const v = f.getProperty('value') as number | null;
+        return {
+          fillColor: colorForValue(v, rangeRef.current.min, rangeRef.current.max),
+          fillOpacity: 0.55,
+          strokeColor: '#ffffff',
+          strokeWeight: 0.5,
+          clickable: false,
+        };
+      });
+    }
+    applyStyle();
 
     async function load() {
       const bounds = mapInstance!.getBounds();
@@ -42,25 +45,34 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
       try {
         const res = await heatmapApi.tracts(bbox, metric);
         if (token !== fetchTokenRef.current) return;
-        layer.forEach((f) => layer.remove(f));
-        if (res.features.length === 0) {
-          onMetaChange?.(res.meta);
-          return;
+        const snapshot: google.maps.Data.Feature[] = [];
+        layer.forEach((f) => snapshot.push(f));
+        snapshot.forEach((f) => layer.remove(f));
+        if (res.features.length > 0) {
+          rangeRef.current = { min: res.meta.min, max: res.meta.max };
+          layer.addGeoJson({ type: 'FeatureCollection', features: res.features });
+          applyStyle();
         }
-        min = res.meta.min;
-        max = res.meta.max;
-        layer.addGeoJson({ type: 'FeatureCollection', features: res.features });
         onMetaChange?.(res.meta);
-      } catch (e) {
-        // soft-fail; the panel will show "no data"
+      } catch {
+        /* soft-fail */
       }
     }
 
-    const idleListener = mapInstance.addListener('idle', load);
+    function scheduleLoad() {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+      debounceRef.current = window.setTimeout(load, 300);
+    }
+
+    const idleListener = mapInstance.addListener('idle', scheduleLoad);
     load();
 
     return () => {
       google.maps.event.removeListener(idleListener);
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+      const snapshot: google.maps.Data.Feature[] = [];
+      layer.forEach((f) => snapshot.push(f));
+      snapshot.forEach((f) => layer.remove(f));
       layer.setMap(null);
       dataLayerRef.current = null;
     };
