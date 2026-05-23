@@ -44,10 +44,11 @@ class HeatmapController
         $metric = $request->getQuery('metric', 'population_density');
         $zoom = (float) $request->getQuery('zoom', 10);
         $levelOverride = $request->getQuery('level'); // 'state' | 'county' | 'tract' | null
-        // Bumped 1000→5000 so wide tract-level bboxes don't have silent gaps for
-        // tracts past the limit. ORDER BY metric DESC means we'd otherwise drop
-        // the least-dense rural tracts first → big visual holes in the map.
-        $maxFeatures = min(5000, max(1, (int)$request->getQuery('limit', 3000)));
+        // Effectively no truncation — cap at 50K to be safe but allow every tract
+        // in view to render. ORDER BY metric DESC means low-density rural tracts
+        // would otherwise be dropped first → ugly visual holes. Server-side 7-day
+        // cache makes the larger payload a one-time cost per viewport.
+        $maxFeatures = min(50000, max(1, (int)$request->getQuery('limit', 20000)));
 
         if (!isset(self::METRICS_TRACT[$metric])) {
             Response::error('Unknown metric: ' . $metric, 422);
