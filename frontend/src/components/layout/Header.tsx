@@ -97,18 +97,24 @@ export default function Header() {
   }
 
   return (
-    <header className="bg-white border-b border-slate-200 h-12 flex items-center justify-between px-3 sticky top-0 z-30">
-      <div className="flex items-center gap-2">
+    <header className="bg-white border-b border-slate-200 h-14 flex items-center justify-between px-4 sticky top-0 z-30">
+      <div className="flex items-center gap-3">
         <Link
           to="/"
-          className="flex items-center gap-1.5 font-extrabold text-[15px] tracking-tight pr-3"
+          className="flex items-center gap-2 font-extrabold text-[17px] tracking-tight pr-2"
           style={{ color: '#1A1A2E' }}
         >
-          <MapPin size={18} color="#7848BB" />
-          Smappen
+          {/* Colorful logo mark — gradient like Smappen */}
+          <span
+            className="inline-flex items-center justify-center w-9 h-9 rounded-lg text-white font-extrabold text-lg shadow-sm"
+            style={{ background: 'linear-gradient(135deg, #F57C00 0%, #E53935 50%, #7848BB 100%)' }}
+          >
+            S
+          </span>
+          smappen
         </Link>
 
-        <div className="h-6 w-px bg-slate-200 mx-1" />
+        <div className="h-7 w-px bg-slate-200 mx-1" />
 
         {/* Editable project name / breadcrumb */}
         <div className="relative flex items-center gap-1">
@@ -132,7 +138,7 @@ export default function Header() {
           ) : (
             <>
               <button
-                className="text-[15px] font-semibold hover:bg-slate-50 px-2 py-1 rounded inline-flex items-center gap-1"
+                className="text-[16px] font-semibold hover:bg-slate-50 px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1.5"
                 style={{ color: '#1A1A2E' }}
                 onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
                 title="Switch project"

@@ -1,7 +1,7 @@
 import { X, Map as MapIcon } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 import type { HeatmapMetric, HeatmapResponse } from '../../api/heatmap';
-import { HEATMAP_STOPS } from '../../utils/heatmapColors';
+import { HEATMAP_GRADIENT_CSS, valueToFraction } from '../../utils/heatmapColors';
 
 const METRICS: { value: HeatmapMetric; label: string }[] = [
   { value: 'population_density', label: 'Population density' },
@@ -23,13 +23,23 @@ const formatValue = (n: number | null | undefined, metric: HeatmapMetric): strin
 interface Props { meta: HeatmapResponse['meta'] | null }
 
 export default function HeatmapPanel({ meta }: Props) {
-  const { heatmapMetric, setHeatmapMetric, heatmapLevel, setHeatmapLevel, toggleHeatmap } = useMapStore();
+  const {
+    heatmapMetric, setHeatmapMetric,
+    heatmapLevel, setHeatmapLevel,
+    toggleHeatmap,
+    hoveredHeatmapValue, hoveredHeatmapName,
+  } = useMapStore();
+
   const labelFor = (m: HeatmapMetric) => METRICS.find((x) => x.value === m)?.label ?? m;
   const hasData = meta && (meta.count ?? 0) > 0;
   const breaks = meta?.breaks ?? [];
 
+  const markerT = hasData && hoveredHeatmapValue !== null && hoveredHeatmapValue !== undefined
+    ? valueToFraction(hoveredHeatmapValue, meta!.min, meta!.max, breaks)
+    : null;
+
   return (
-    <div className="absolute bottom-4 left-4 bg-white rounded-xl shadow-float p-4 w-[320px] z-30 border border-slate-200">
+    <div className="absolute bottom-4 left-24 bg-white rounded-xl shadow-float p-4 w-[340px] z-30 border border-slate-200">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 font-bold text-base" style={{ color: '#1A1A2E' }}>
           <MapIcon size={18} style={{ color: '#7848BB' }} /> Heatmap
@@ -74,11 +84,25 @@ export default function HeatmapPanel({ meta }: Props) {
         {labelFor(heatmapMetric)} {meta?.unit ? <span className="text-slate-500 font-normal">({meta.unit})</span> : null}
       </div>
 
-      {/* 10 discrete decile bins so the gradient stays readable */}
-      <div className="flex h-2 w-full rounded-full overflow-hidden">
-        {HEATMAP_STOPS.map((c) => (
-          <div key={c} className="flex-1" style={{ background: c }} />
-        ))}
+      {/* Continuous smooth gradient bar */}
+      <div className="relative h-3 w-full rounded-full" style={{ background: HEATMAP_GRADIENT_CSS }}>
+        {markerT !== null && (
+          <>
+            <div
+              className="absolute -top-3 w-0 h-0 -translate-x-1/2"
+              style={{
+                left: `${markerT * 100}%`,
+                borderLeft: '5px solid transparent',
+                borderRight: '5px solid transparent',
+                borderTop: '7px solid #1A1A2E',
+              }}
+            />
+            <div
+              className="absolute -top-0.5 -bottom-0.5 w-0.5 -translate-x-1/2 bg-white"
+              style={{ left: `${markerT * 100}%`, boxShadow: '0 0 0 1px #1A1A2E' }}
+            />
+          </>
+        )}
       </div>
 
       <div className="flex justify-between text-[11px] text-slate-600 mt-1.5 font-medium">
@@ -86,7 +110,18 @@ export default function HeatmapPanel({ meta }: Props) {
         <span>{hasData ? formatValue(meta!.max, heatmapMetric) : '—'}</span>
       </div>
 
-      {hasData && breaks.length >= 9 && (
+      {markerT !== null && (
+        <div className="mt-2 text-xs flex items-center justify-between bg-slate-50 border border-slate-200 rounded px-2 py-1.5">
+          <span className="text-slate-600 truncate" title={hoveredHeatmapName ?? ''}>
+            {hoveredHeatmapName ?? 'hovered'}
+          </span>
+          <span className="font-bold" style={{ color: '#1A1A2E' }}>
+            {formatValue(hoveredHeatmapValue, heatmapMetric)}
+          </span>
+        </div>
+      )}
+
+      {hasData && breaks.length >= 9 && markerT === null && (
         <div className="flex justify-between text-[10px] text-slate-500 mt-1.5">
           <span>p25 · {formatValue(breaks[1], heatmapMetric)}</span>
           <span>median · {formatValue(breaks[4], heatmapMetric)}</span>

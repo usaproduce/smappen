@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
-  const { mapInstance, heatmapLevel } = useMapStore();
+  const { mapInstance, heatmapLevel, setHoveredHeatmap } = useMapStore();
   const dataLayerRef = useRef<google.maps.Data | null>(null);
   const rangeRef = useRef<{ min: number; max: number; breaks?: number[] }>({ min: 0, max: 1 });
   const fetchTokenRef = useRef(0);
@@ -30,11 +30,26 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
           fillOpacity: 0.55,
           strokeColor: '#ffffff',
           strokeWeight: 0.5,
-          clickable: false,
+          clickable: true,
         };
       });
     }
     applyStyle();
+
+    // Hover handlers — surface the hovered tract's value to the HeatmapPanel so it
+    // can draw a position marker on the legend gradient.
+    const overListener = layer.addListener('mouseover', (e: any) => {
+      const f = e.feature as google.maps.Data.Feature;
+      const v = f.getProperty('value') as number | null;
+      const name = (f.getProperty('name') as string | null) ?? (f.getProperty('geoid') as string | null);
+      setHoveredHeatmap(v, name);
+      // Subtle hover highlight
+      layer.overrideStyle(f, { strokeWeight: 2, strokeColor: '#1A1A2E' });
+    });
+    const outListener = layer.addListener('mouseout', (e: any) => {
+      setHoveredHeatmap(null, null);
+      layer.revertStyle(e.feature);
+    });
 
     async function load() {
       const bounds = mapInstance!.getBounds();
@@ -77,6 +92,8 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
 
     return () => {
       google.maps.event.removeListener(idleListener);
+      google.maps.event.removeListener(overListener);
+      google.maps.event.removeListener(outListener);
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
       if (prefetchTimerRef.current) window.clearTimeout(prefetchTimerRef.current);
       const snapshot: google.maps.Data.Feature[] = [];

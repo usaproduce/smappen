@@ -1,4 +1,7 @@
-import { Clock, MapPin, Building, BarChart3, Upload, Star, ZoomIn, ZoomOut, MessageCircle, Map as MapIcon } from 'lucide-react';
+import {
+  PieChart, MapPin, Building, ClipboardList, DatabaseZap, Star,
+  ZoomIn, ZoomOut, MessageCircle, Map as MapIcon,
+} from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 
 interface Props {
@@ -7,7 +10,7 @@ interface Props {
 }
 
 export default function RightToolbar({ onCreateArea, onImport }: Props) {
-  const { mapInstance, showHeatmap, toggleHeatmap } = useMapStore();
+  const { mapInstance, showHeatmap, toggleHeatmap, selectArea } = useMapStore();
 
   function zoom(by: number) {
     if (!mapInstance) return;
@@ -15,16 +18,16 @@ export default function RightToolbar({ onCreateArea, onImport }: Props) {
   }
 
   return (
-    <aside className="w-12 bg-white flex flex-col items-center py-2 gap-1 border-l border-slate-200">
-      <button className="toolbar-btn" title="Create isochrone area" onClick={onCreateArea}>
-        <Clock size={20} />
+    <aside className="absolute top-4 right-4 w-12 max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col items-center py-2 gap-0.5 z-20">
+      <button className="toolbar-btn" title="Overview" onClick={() => selectArea(null)}>
+        <PieChart size={20} />
       </button>
-      <button className="toolbar-btn" title="Place pin" onClick={onCreateArea}>
+      <button className="toolbar-btn" title="Address / pin" onClick={onCreateArea}>
         <MapPin size={20} />
       </button>
       <button
         className={`toolbar-btn ${showHeatmap ? 'active' : ''}`}
-        title="Toggle population density heatmap"
+        title="Population density heatmap"
         onClick={toggleHeatmap}
       >
         <MapIcon size={20} />
@@ -32,13 +35,13 @@ export default function RightToolbar({ onCreateArea, onImport }: Props) {
       <button className="toolbar-btn" title="Demographics">
         <Building size={20} />
       </button>
-      <button className="toolbar-btn" title="Analytics">
-        <BarChart3 size={20} />
+      <button className="toolbar-btn" title="Reports">
+        <ClipboardList size={20} />
       </button>
-      <button className="toolbar-btn" title="Import" onClick={onImport}>
-        <Upload size={20} />
+      <button className="toolbar-btn" title="Add data" onClick={onImport}>
+        <DatabaseZap size={20} />
       </button>
-      <button className="toolbar-btn" title="Saved">
+      <button className="toolbar-btn" title="Favorites">
         <Star size={20} />
       </button>
 

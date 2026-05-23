@@ -130,17 +130,17 @@ html, body, #root {
 
 /* Right toolbar icon button */
 .toolbar-btn {
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--body);
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: background-color 0.15s;
+  transition: background-color 0.15s, color 0.15s;
 }
-.toolbar-btn:hover { background: var(--bg-panel); }
+.toolbar-btn:hover { background: var(--bg-panel); color: var(--ink); }
 .toolbar-btn.active { background: var(--brand-light); color: var(--brand); }
 
 /* Area list row */
@@ -164,8 +164,8 @@ html, body, #root {
 }
 .area-name {
   font-size: 14px;
-  color: var(--body);
-  font-weight: 400;
+  color: var(--ink);  /* darker for readability */
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -33,14 +33,14 @@ export default function LeftPanel({ onCreateArea, onImport }: Props) {
 
   if (!currentProject) {
     return (
-      <aside className="w-[300px] bg-white border-r border-slate-200 p-4 shadow-panel-left">
+      <aside className="absolute top-4 left-4 w-[300px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 p-4 z-20">
         <p className="text-sm text-slate-500">Create a project to get started.</p>
       </aside>
     );
   }
 
   return (
-    <aside className="w-[300px] bg-white border-r border-slate-200 flex flex-col shadow-panel-left">
+    <aside className="absolute top-4 left-4 w-[300px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20">
       {/* "Create new area" CTA matches Smappen's prominent purple button */}
       <div className="p-3 pb-2">
         <button
