@@ -99,6 +99,13 @@ export default function HeatmapPanel({ meta }: Props) {
           {meta?.note ?? 'No data in this view. Pan to a covered area (DC / MD / VA / WV).'}
         </div>
       )}
+
+      {hasData && meta?.truncated && (
+        <div className="mt-3 text-xs p-2 rounded bg-amber-50 text-amber-800 border border-amber-200">
+          Showing {meta.count.toLocaleString()} polygons (cap reached). Some tracts hidden —
+          zoom in or pick a coarser <b>boundary level</b> to see full coverage.
+        </div>
+      )}
     </div>
   );
 }

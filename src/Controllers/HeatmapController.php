@@ -44,7 +44,10 @@ class HeatmapController
         $metric = $request->getQuery('metric', 'population_density');
         $zoom = (float) $request->getQuery('zoom', 10);
         $levelOverride = $request->getQuery('level'); // 'state' | 'county' | 'tract' | null
-        $maxFeatures = min(2000, max(1, (int)$request->getQuery('limit', 1000)));
+        // Bumped 1000→5000 so wide tract-level bboxes don't have silent gaps for
+        // tracts past the limit. ORDER BY metric DESC means we'd otherwise drop
+        // the least-dense rural tracts first → big visual holes in the map.
+        $maxFeatures = min(5000, max(1, (int)$request->getQuery('limit', 3000)));
 
         if (!isset(self::METRICS_TRACT[$metric])) {
             Response::error('Unknown metric: ' . $metric, 422);
@@ -134,6 +137,7 @@ class HeatmapController
         $max = $values ? max($values) : 0;
         $breaks = self::computeQuantileBreaks($values, 10);
 
+        $truncated = count($features) >= $maxFeatures;
         $body = [
             'type' => 'FeatureCollection',
             'features' => $features,
@@ -146,6 +150,9 @@ class HeatmapController
                 'unit' => self::unitFor($metric),
                 'cached' => false,
                 'bbox_q' => $qbbox,
+                // True if we hit the row cap — UI can suggest zooming in / coarser level.
+                'truncated' => $truncated,
+                'limit' => $maxFeatures,
             ],
         ];
 

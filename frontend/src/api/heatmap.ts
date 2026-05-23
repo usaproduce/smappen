@@ -30,6 +30,8 @@ export interface HeatmapResponse {
     unit: string;
     cached?: boolean;
     bbox_q?: number[];
+    truncated?: boolean;
+    limit?: number;
     note?: string;
   };
 }
