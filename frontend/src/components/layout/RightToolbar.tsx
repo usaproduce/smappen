@@ -1,15 +1,17 @@
 import {
   PieChart, MapPin, Building, ClipboardList, DatabaseZap, Star,
-  ZoomIn, ZoomOut, MessageCircle, Map as MapIcon,
+  ZoomIn, ZoomOut, MessageCircle, Map as MapIcon, Sparkles,
 } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 
 interface Props {
   onCreateArea: () => void;
   onImport: () => void;
+  onOpenAdvanced?: () => void;
+  advancedOpen?: boolean;
 }
 
-export default function RightToolbar({ onCreateArea, onImport }: Props) {
+export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, advancedOpen }: Props) {
   const { mapInstance, showHeatmap, toggleHeatmap, selectArea } = useMapStore();
 
   function zoom(by: number) {
@@ -43,6 +45,13 @@ export default function RightToolbar({ onCreateArea, onImport }: Props) {
       </button>
       <button className="toolbar-btn" title="Favorites">
         <Star size={20} />
+      </button>
+      <button
+        className={`toolbar-btn ${advancedOpen ? 'active' : ''}`}
+        title="Advanced: territories, segments, competitors, field…"
+        onClick={onOpenAdvanced}
+      >
+        <Sparkles size={20} />
       </button>
 
       <div className="flex-1" />

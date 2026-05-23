@@ -6,6 +6,17 @@ import { Toaster } from 'react-hot-toast';
 import App from './App';
 import './styles.css';
 
+// Register the service worker so the mobile field PWA can install and queue
+// offline note submissions. Skipped during dev (Vite serves on a different
+// origin and would 404 on /app/sw.js).
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).catch(() => {
+      // Silent — SW is non-critical
+    });
+  });
+}
+
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
 });

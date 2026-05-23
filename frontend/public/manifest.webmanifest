@@ -1,0 +1,19 @@
+{
+  "name": "Smappen Field",
+  "short_name": "Smappen",
+  "description": "Territory mapping & on-site notes",
+  "start_url": "/app/",
+  "scope": "/app/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#7848BB",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='32' fill='%237848BB'/%3E%3Cpath fill='white' d='M96 36c-22 0-40 17-40 40 0 28 40 76 40 76s40-48 40-76c0-23-18-40-40-40zm0 56a16 16 0 1 1 0-32 16 16 0 0 1 0 32z'/%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

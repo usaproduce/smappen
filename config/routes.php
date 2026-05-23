@@ -15,6 +15,15 @@ use App\Controllers\ImportController;
 use App\Controllers\ExportController;
 use App\Controllers\ReportController;
 use App\Controllers\BillingController;
+use App\Controllers\TrafficIsochroneController;
+use App\Controllers\CannibalizationController;
+use App\Controllers\TerritoryController;
+use App\Controllers\MclpController;
+use App\Controllers\SegmentationController;
+use App\Controllers\CollaborationController;
+use App\Controllers\NotificationController;
+use App\Controllers\CompetitorController;
+use App\Controllers\FieldNoteController;
 
 return function (Router $r) {
     $auth = [Middleware::auth()];
@@ -89,4 +98,70 @@ return function (Router $r) {
     $r->get('/api/billing/subscription', [BillingController::class, 'subscription'], $auth);
     $r->post('/api/billing/portal', [BillingController::class, 'portal'], $auth);
     $r->post('/api/billing/cancel', [BillingController::class, 'cancel'], $auth);
+
+    // Traffic-aware isochrones
+    $r->post('/api/isochrone/traffic', [TrafficIsochroneController::class, 'calculate'], $auth);
+    $r->post('/api/isochrone/traffic/grid', [TrafficIsochroneController::class, 'grid'], $auth);
+
+    // Cannibalization
+    $r->get('/api/projects/{projectId}/cannibalization', [CannibalizationController::class, 'analyze'], $auth);
+
+    // Territory generation
+    $r->post('/api/projects/{projectId}/territories/generate', [TerritoryController::class, 'generate'], $auth);
+    $r->get('/api/projects/{projectId}/territories/jobs', [TerritoryController::class, 'listJobs'], $auth);
+
+    // Multi-location optimization (MCLP)
+    $r->post('/api/projects/{projectId}/optimize/locations', [MclpController::class, 'optimize'], $auth);
+
+    // Segmentation
+    $r->get('/api/segmentation/segments', [SegmentationController::class, 'catalog'], $auth);
+    $r->get('/api/areas/{id}/segments', [SegmentationController::class, 'forArea'], $auth);
+    $r->post('/api/projects/{projectId}/segments', [SegmentationController::class, 'forProject'], $auth);
+    $r->post('/api/segmentation/recompute', [SegmentationController::class, 'recompute'], $auth);
+
+    // Collaboration — versions
+    $r->post('/api/projects/{projectId}/versions', [CollaborationController::class, 'snapshotVersion'], $auth);
+    $r->get('/api/projects/{projectId}/versions', [CollaborationController::class, 'listVersions'], $auth);
+    $r->get('/api/versions/{id}', [CollaborationController::class, 'showVersion'], $auth);
+
+    // Collaboration — comments
+    $r->get('/api/projects/{projectId}/comments', [CollaborationController::class, 'listComments'], $auth);
+    $r->post('/api/projects/{projectId}/comments', [CollaborationController::class, 'createComment'], $auth);
+    $r->post('/api/comments/{id}/resolve', [CollaborationController::class, 'resolveComment'], $auth);
+    $r->delete('/api/comments/{id}', [CollaborationController::class, 'deleteComment'], $auth);
+
+    // Collaboration — change log
+    $r->get('/api/projects/{projectId}/changes', [CollaborationController::class, 'listChanges'], $auth);
+
+    // Collaboration — collaborators
+    $r->get('/api/projects/{projectId}/collaborators', [CollaborationController::class, 'listCollaborators'], $auth);
+    $r->post('/api/projects/{projectId}/collaborators', [CollaborationController::class, 'addCollaborator'], $auth);
+    $r->delete('/api/projects/{projectId}/collaborators/{userId}', [CollaborationController::class, 'removeCollaborator'], $auth);
+
+    // Collaboration — approvals
+    $r->post('/api/projects/{projectId}/approvals', [CollaborationController::class, 'createApproval'], $auth);
+    $r->get('/api/projects/{projectId}/approvals', [CollaborationController::class, 'listApprovals'], $auth);
+    $r->post('/api/approvals/{id}/decide', [CollaborationController::class, 'decideApproval'], $auth);
+
+    // Notifications
+    $r->get('/api/notifications', [NotificationController::class, 'index'], $auth);
+    $r->post('/api/notifications/{id}/read', [NotificationController::class, 'markRead'], $auth);
+    $r->post('/api/notifications/read-all', [NotificationController::class, 'markAllRead'], $auth);
+
+    // Competitor monitoring
+    $r->get('/api/projects/{projectId}/competitor-monitors', [CompetitorController::class, 'index'], $auth);
+    $r->post('/api/projects/{projectId}/competitor-monitors', [CompetitorController::class, 'create'], $auth);
+    $r->get('/api/competitor-monitors/{id}', [CompetitorController::class, 'show'], $auth);
+    $r->put('/api/competitor-monitors/{id}', [CompetitorController::class, 'update'], $auth);
+    $r->delete('/api/competitor-monitors/{id}', [CompetitorController::class, 'destroy'], $auth);
+    $r->post('/api/competitor-monitors/{id}/scan', [CompetitorController::class, 'scanNow'], $auth);
+    $r->get('/api/competitor-monitors/{id}/places', [CompetitorController::class, 'listPlaces'], $auth);
+    $r->get('/api/competitor-monitors/{id}/alerts', [CompetitorController::class, 'listAlerts'], $auth);
+    $r->post('/api/competitor-alerts/{id}/read', [CompetitorController::class, 'markAlertRead'], $auth);
+
+    // Field notes (mobile PWA)
+    $r->get('/api/projects/{projectId}/field-notes', [FieldNoteController::class, 'index'], $auth);
+    $r->post('/api/projects/{projectId}/field-notes', [FieldNoteController::class, 'create'], $auth);
+    $r->delete('/api/field-notes/{id}', [FieldNoteController::class, 'destroy'], $auth);
+    $r->get('/api/projects/{projectId}/where-am-i', [FieldNoteController::class, 'whereAmI'], $auth);
 };

@@ -8,6 +8,7 @@ import MapCanvas from '../map/MapCanvas';
 import AreaCreator from '../areas/AreaCreator';
 import ImportWizard from '../data/ImportWizard';
 import MiniMapToggle from '../map/MiniMapToggle';
+import AdvancedPanel from '../advanced/AdvancedPanel';
 import { useMapStore } from '../../stores/mapStore';
 
 const LIBRARIES: ('drawing' | 'visualization' | 'geometry' | 'places')[] = [
@@ -18,6 +19,7 @@ export default function AppLayout() {
   const { selectedAreaId } = useMapStore();
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [stuckLoading, setStuckLoading] = useState(false);
   const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY ?? '';
 
@@ -71,8 +73,11 @@ export default function AppLayout() {
             <RightToolbar
               onCreateArea={() => setCreatorOpen(true)}
               onImport={() => setImportOpen(true)}
+              onOpenAdvanced={() => setAdvancedOpen((v) => !v)}
+              advancedOpen={advancedOpen}
             />
             <MiniMapToggle />
+            {advancedOpen && <AdvancedPanel onClose={() => setAdvancedOpen(false)} />}
           </>
         )}
       </div>
