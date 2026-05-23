@@ -31,6 +31,20 @@ class ReachController
         if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) Response::error('Invalid coordinates');
         if ($target < self::MIN_TARGET) Response::error('target_population must be at least ' . self::MIN_TARGET);
 
+        // Cache by 3-decimal coordinates (~110m granularity) + target snapped to 500.
+        $latR = round($lat, 3);
+        $lngR = round($lng, 3);
+        $targetSnap = (int) round($target / 500) * 500;
+        $cacheKey = "reach:{$latR}:{$lngR}:{$targetSnap}";
+        $cached = self::reachCacheGet($cacheKey);
+        if ($cached !== null) {
+            $hit = json_decode($cached, true);
+            if (is_array($hit)) {
+                $hit['cached'] = true;
+                Response::success($hit);
+            }
+        }
+
         // Expanding bracket: start tiny, grow until pop >= target.
         $radius = 0.5;
         $popAt = 0;
@@ -64,7 +78,7 @@ class ReachController
         $popAt = self::populationInCircle($lat, $lng, $finalRadius);
         $geom = GeoUtils::generateCirclePolygon($lat, $lng, $finalRadius);
 
-        Response::success([
+        $result = [
             'geometry' => $geom,
             'center' => ['lat' => $lat, 'lng' => $lng],
             'radius_km' => $finalRadius,
@@ -72,7 +86,36 @@ class ReachController
             'area_sq_km' => round(M_PI * $finalRadius * $finalRadius, 2),
             'population' => $popAt,
             'target_population' => $target,
-        ]);
+            'cached' => false,
+        ];
+        self::reachCacheSet($cacheKey, json_encode($result), 86400 * 30); // 30 days
+        Response::success($result);
+    }
+
+    private static function reachCacheGet(string $key): ?string
+    {
+        try {
+            $row = Database::getInstance()->fetch(
+                'SELECT response FROM reach_cache WHERE cache_key = ? AND expires_at > NOW()',
+                [$key]
+            );
+            if ($row) {
+                Database::getInstance()->query('UPDATE reach_cache SET hits = hits + 1 WHERE cache_key = ?', [$key]);
+                return $row['response'];
+            }
+        } catch (\Throwable $e) {}
+        return null;
+    }
+
+    private static function reachCacheSet(string $key, string $body, int $ttlSeconds): void
+    {
+        try {
+            Database::getInstance()->query(
+                'REPLACE INTO reach_cache (cache_key, response, hits, created_at, expires_at)
+                 VALUES (?, ?, 0, NOW(), DATE_ADD(NOW(), INTERVAL ? SECOND))',
+                [$key, $body, $ttlSeconds]
+            );
+        } catch (\Throwable $e) {}
     }
 
     public function preview(Request $request): void

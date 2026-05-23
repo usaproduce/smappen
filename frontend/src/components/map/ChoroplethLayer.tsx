@@ -14,6 +14,7 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
   const rangeRef = useRef<{ min: number; max: number; breaks?: number[] }>({ min: 0, max: 1 });
   const fetchTokenRef = useRef(0);
   const debounceRef = useRef<number | null>(null);
+  const prefetchTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!mapInstance || typeof google === 'undefined') return;
@@ -40,11 +41,12 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
       if (!bounds) return;
       const ne = bounds.getNorthEast();
       const sw = bounds.getSouthWest();
+      const zoom = mapInstance!.getZoom() ?? 10;
       const bbox: [number, number, number, number] = [sw.lng(), sw.lat(), ne.lng(), ne.lat()];
       const token = ++fetchTokenRef.current;
       try {
-        const res = await heatmapApi.tracts(bbox, metric);
-        if (token !== fetchTokenRef.current) return;
+        const res = await heatmapApi.tracts(bbox, metric, zoom);
+        if (token !== fetchTokenRef.current) return; // stale response from a previous pan
         const snapshot: google.maps.Data.Feature[] = [];
         layer.forEach((f) => snapshot.push(f));
         snapshot.forEach((f) => layer.remove(f));
@@ -54,6 +56,12 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
           applyStyle();
         }
         onMetaChange?.(res.meta);
+
+        // Once the user idles for ~1s, warm the cache with surrounding viewports.
+        if (prefetchTimerRef.current) window.clearTimeout(prefetchTimerRef.current);
+        prefetchTimerRef.current = window.setTimeout(() => {
+          heatmapApi.prefetchAdjacent(bbox, metric, zoom);
+        }, 1000);
       } catch {
         /* soft-fail */
       }
@@ -61,7 +69,7 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
 
     function scheduleLoad() {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
-      debounceRef.current = window.setTimeout(load, 300);
+      debounceRef.current = window.setTimeout(load, 250);
     }
 
     const idleListener = mapInstance.addListener('idle', scheduleLoad);
@@ -70,6 +78,7 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
     return () => {
       google.maps.event.removeListener(idleListener);
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
+      if (prefetchTimerRef.current) window.clearTimeout(prefetchTimerRef.current);
       const snapshot: google.maps.Data.Feature[] = [];
       layer.forEach((f) => snapshot.push(f));
       snapshot.forEach((f) => layer.remove(f));

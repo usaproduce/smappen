@@ -49,8 +49,16 @@ export default function HeatmapPanel({ meta }: Props) {
       </select>
 
       <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Boundary level</div>
-      <div className="w-full h-10 px-3 text-sm border border-slate-300 rounded-lg bg-slate-50 mb-3 flex items-center text-slate-700">
-        Census tract
+      <div className="w-full h-10 px-3 text-sm border border-slate-300 rounded-lg bg-slate-50 mb-3 flex items-center justify-between text-slate-700">
+        <span>
+          {meta?.level === 'state' ? 'State (zoomed out)'
+            : meta?.level === 'county' ? 'County'
+            : 'Census tract'}
+          <span className="text-[10px] text-slate-400 ml-1.5">auto · zoom-based</span>
+        </span>
+        {meta?.cached && (
+          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">cached</span>
+        )}
       </div>
 
       <div className="text-xs font-semibold mb-2" style={{ color: '#1A1A2E' }}>
