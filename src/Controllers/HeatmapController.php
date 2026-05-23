@@ -43,6 +43,7 @@ class HeatmapController
         $bbox = $request->getQuery('bbox', '');
         $metric = $request->getQuery('metric', 'population_density');
         $zoom = (float) $request->getQuery('zoom', 10);
+        $levelOverride = $request->getQuery('level'); // 'state' | 'county' | 'tract' | null
         $maxFeatures = min(2000, max(1, (int)$request->getQuery('limit', 1000)));
 
         if (!isset(self::METRICS_TRACT[$metric])) {
@@ -53,7 +54,10 @@ class HeatmapController
         [$minLng, $minLat, $maxLng, $maxLat] = $parts;
         if ($minLng >= $maxLng || $minLat >= $maxLat) Response::error('Invalid bbox', 422);
 
-        $level = self::levelForZoom($zoom);
+        // Explicit level override wins; otherwise zoom decides.
+        $level = in_array($levelOverride, ['state', 'county', 'tract'], true)
+            ? $levelOverride
+            : self::levelForZoom($zoom);
 
         // Quantize bbox so neighboring pans collide in cache.
         $q = self::quantizationFor($level);

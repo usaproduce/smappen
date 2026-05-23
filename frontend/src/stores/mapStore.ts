@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
-import type { HeatmapMetric } from '../api/heatmap';
+import type { HeatmapMetric, HeatmapLevel } from '../api/heatmap';
+export type HeatmapLevelOverride = 'auto' | HeatmapLevel;
 
 interface MapState {
   center: { lat: number; lng: number };
@@ -10,6 +11,7 @@ interface MapState {
   placePinFor: 'isochrone' | null;
   showHeatmap: boolean;
   heatmapMetric: HeatmapMetric;
+  heatmapLevel: HeatmapLevelOverride;
   showPOIs: boolean;
   showImportedPoints: boolean;
   poiResults: any[];
@@ -22,6 +24,7 @@ interface MapState {
   toggleLayer: (k: 'showHeatmap' | 'showPOIs' | 'showImportedPoints') => void;
   toggleHeatmap: () => void;
   setHeatmapMetric: (m: HeatmapMetric) => void;
+  setHeatmapLevel: (l: HeatmapLevelOverride) => void;
   setPoiResults: (places: any[]) => void;
   setPendingIsochrone: (data: any | null) => void;
   setMapInstance: (m: google.maps.Map | null) => void;
@@ -36,6 +39,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   placePinFor: null,
   showHeatmap: false,
   heatmapMetric: 'population_density',
+  heatmapLevel: 'auto',
   showPOIs: true,
   showImportedPoints: true,
   poiResults: [],
@@ -48,6 +52,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   toggleLayer: (k) => set((s) => ({ [k]: !s[k] } as any)),
   toggleHeatmap: () => set((s) => ({ showHeatmap: !s.showHeatmap })),
   setHeatmapMetric: (heatmapMetric) => set({ heatmapMetric }),
+  setHeatmapLevel: (heatmapLevel) => set({ heatmapLevel }),
   setPoiResults: (poiResults) => set({ poiResults }),
   setPendingIsochrone: (pendingIsochrone) => set({ pendingIsochrone }),
   setMapInstance: (mapInstance) => set({ mapInstance }),

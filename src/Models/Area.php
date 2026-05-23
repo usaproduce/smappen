@@ -37,7 +37,10 @@ class Area
         );
         if (!$row) return null;
         if (!empty($row['geometry_geojson'])) {
-            $row['geometry'] = json_decode($row['geometry_geojson'], true);
+            // MySQL 8 ST_AsGeoJSON returns [lat, lng] for SRID 4326 even though
+            // we stored WKT in [lng, lat] — swap back to GeoJSON spec / Google Maps.
+            $geom = json_decode($row['geometry_geojson'], true);
+            $row['geometry'] = GeoUtils::swapGeometry($geom);
         }
         unset($row['geometry_geojson']);
         if (!empty($row['demographics_cache'])) {
@@ -97,7 +100,10 @@ class Area
         $sql = "SELECT *, ST_AsGeoJSON(geometry) AS geometry_geojson FROM areas WHERE $where ORDER BY created_at DESC";
         $rows = Database::getInstance()->fetchAll($sql, $params);
         foreach ($rows as &$r) {
-            if (!empty($r['geometry_geojson'])) $r['geometry'] = json_decode($r['geometry_geojson'], true);
+            if (!empty($r['geometry_geojson'])) {
+                $geom = json_decode($r['geometry_geojson'], true);
+                $r['geometry'] = GeoUtils::swapGeometry($geom);
+            }
             if (!empty($r['demographics_cache'])) $r['demographics_cache'] = json_decode($r['demographics_cache'], true);
             unset($r['geometry_geojson']);
         }

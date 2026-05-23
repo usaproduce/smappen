@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
-  const { mapInstance } = useMapStore();
+  const { mapInstance, heatmapLevel } = useMapStore();
   const dataLayerRef = useRef<google.maps.Data | null>(null);
   const rangeRef = useRef<{ min: number; max: number; breaks?: number[] }>({ min: 0, max: 1 });
   const fetchTokenRef = useRef(0);
@@ -45,7 +45,7 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
       const bbox: [number, number, number, number] = [sw.lng(), sw.lat(), ne.lng(), ne.lat()];
       const token = ++fetchTokenRef.current;
       try {
-        const res = await heatmapApi.tracts(bbox, metric, zoom);
+        const res = await heatmapApi.tracts(bbox, metric, zoom, 1000, heatmapLevel);
         if (token !== fetchTokenRef.current) return; // stale response from a previous pan
         const snapshot: google.maps.Data.Feature[] = [];
         layer.forEach((f) => snapshot.push(f));
@@ -60,7 +60,7 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
         // Once the user idles for ~1s, warm the cache with surrounding viewports.
         if (prefetchTimerRef.current) window.clearTimeout(prefetchTimerRef.current);
         prefetchTimerRef.current = window.setTimeout(() => {
-          heatmapApi.prefetchAdjacent(bbox, metric, zoom);
+          heatmapApi.prefetchAdjacent(bbox, metric, zoom, heatmapLevel);
         }, 1000);
       } catch {
         /* soft-fail */
@@ -85,7 +85,7 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
       layer.setMap(null);
       dataLayerRef.current = null;
     };
-  }, [mapInstance, metric]);
+  }, [mapInstance, metric, heatmapLevel]);
 
   return null;
 }

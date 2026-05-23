@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import Header from './Header';
-import FreeBanner from './FreeBanner';
 import LeftPanel from './LeftPanel';
 import RightPanel from './RightPanel';
 import RightToolbar from './RightToolbar';
@@ -38,7 +37,6 @@ export default function AppLayout() {
   return (
     <div className="flex flex-col h-screen">
       <Header />
-      <FreeBanner />
       <div className="flex flex-1 min-h-0">
         <LeftPanel
           onCreateArea={() => setCreatorOpen(true)}

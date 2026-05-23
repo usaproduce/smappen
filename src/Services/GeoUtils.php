@@ -141,6 +141,32 @@ class GeoUtils
         return $out;
     }
 
+    /**
+     * Recursively swap nested coordinate pairs [a,b] → [b,a].
+     * Works for Point (1 level), Polygon (3 levels) and MultiPolygon (4 levels).
+     *
+     * MySQL 8 with SRID 4326 returns ST_AsGeoJSON coords in [lat, lng] order
+     * even though our WKT was stored in [lng, lat] order — this swap fixes
+     * the output to match the GeoJSON spec (and what Google Maps expects).
+     */
+    public static function swapGeoJsonCoords($coords)
+    {
+        if (!is_array($coords) || empty($coords)) return $coords;
+        if (count($coords) === 2 && is_numeric($coords[0]) && is_numeric($coords[1])) {
+            return [$coords[1], $coords[0]];
+        }
+        $out = [];
+        foreach ($coords as $c) $out[] = self::swapGeoJsonCoords($c);
+        return $out;
+    }
+
+    public static function swapGeometry(?array $geom): ?array
+    {
+        if (!$geom || !isset($geom['coordinates'])) return $geom;
+        $geom['coordinates'] = self::swapGeoJsonCoords($geom['coordinates']);
+        return $geom;
+    }
+
     public static function encodePath(array $coords): string
     {
         // Google polyline encoding

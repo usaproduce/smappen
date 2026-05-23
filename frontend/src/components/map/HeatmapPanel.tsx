@@ -23,7 +23,7 @@ const formatValue = (n: number | null | undefined, metric: HeatmapMetric): strin
 interface Props { meta: HeatmapResponse['meta'] | null }
 
 export default function HeatmapPanel({ meta }: Props) {
-  const { heatmapMetric, setHeatmapMetric, toggleHeatmap } = useMapStore();
+  const { heatmapMetric, setHeatmapMetric, heatmapLevel, setHeatmapLevel, toggleHeatmap } = useMapStore();
   const labelFor = (m: HeatmapMetric) => METRICS.find((x) => x.value === m)?.label ?? m;
   const hasData = meta && (meta.count ?? 0) > 0;
   const breaks = meta?.breaks ?? [];
@@ -49,16 +49,25 @@ export default function HeatmapPanel({ meta }: Props) {
       </select>
 
       <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Boundary level</div>
-      <div className="w-full h-10 px-3 text-sm border border-slate-300 rounded-lg bg-slate-50 mb-3 flex items-center justify-between text-slate-700">
-        <span>
-          {meta?.level === 'state' ? 'State (zoomed out)'
-            : meta?.level === 'county' ? 'County'
-            : 'Census tract'}
-          <span className="text-[10px] text-slate-400 ml-1.5">auto · zoom-based</span>
-        </span>
+      <div className="flex gap-2 items-stretch mb-1">
+        <select
+          className="flex-1 h-10 px-3 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-violet-600"
+          value={heatmapLevel}
+          onChange={(e) => setHeatmapLevel(e.target.value as any)}
+        >
+          <option value="auto">Auto (zoom-based)</option>
+          <option value="state">State</option>
+          <option value="county">County</option>
+          <option value="tract">Census tract</option>
+        </select>
         {meta?.cached && (
-          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">cached</span>
+          <span className="self-center text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded">cached</span>
         )}
+      </div>
+      <div className="text-[10px] text-slate-400 mb-3">
+        Showing <b className="text-slate-600">{meta?.level ?? '—'}</b>
+        {heatmapLevel === 'auto' && ' · auto-switches as you zoom'}
+        {meta?.count !== undefined && ` · ${meta.count.toLocaleString()} polygons`}
       </div>
 
       <div className="text-xs font-semibold mb-2" style={{ color: '#1A1A2E' }}>

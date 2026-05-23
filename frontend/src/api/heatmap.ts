@@ -68,15 +68,19 @@ export const heatmapApi = {
     bbox: [number, number, number, number],
     metric: HeatmapMetric,
     zoom: number,
-    limit = 1000
+    limit = 1000,
+    levelOverride?: HeatmapLevel | 'auto'
   ) {
-    const key = quantizedKey(bbox, metric, zoom, limit);
+    // If user manually picks a level, bake it into the cache key so we don't
+    // collide with the auto-zoom result for the same viewport.
+    const keyExtra = levelOverride && levelOverride !== 'auto' ? `:lvl=${levelOverride}` : '';
+    const key = quantizedKey(bbox, metric, zoom, limit) + keyExtra;
     const cached = memCache.get(key);
     if (cached) return cached.data;
 
-    const { data } = await api.get('/api/heatmap/tracts', {
-      params: { bbox: bbox.join(','), metric, zoom, limit },
-    });
+    const params: Record<string, any> = { bbox: bbox.join(','), metric, zoom, limit };
+    if (levelOverride && levelOverride !== 'auto') params.level = levelOverride;
+    const { data } = await api.get('/api/heatmap/tracts', { params });
     const result = data.data as HeatmapResponse;
 
     memCache.set(key, { ts: Date.now(), data: result });
@@ -91,7 +95,8 @@ export const heatmapApi = {
   prefetchAdjacent(
     bbox: [number, number, number, number],
     metric: HeatmapMetric,
-    zoom: number
+    zoom: number,
+    levelOverride?: HeatmapLevel | 'auto'
   ): void {
     const [w, s, e, n] = bbox;
     const dx = e - w;
@@ -106,10 +111,11 @@ export const heatmapApi = {
       [w - dx, s - dy, w, s],
       [e, s - dy, e + dx, s],
     ];
+    const extra = levelOverride && levelOverride !== 'auto' ? `:lvl=${levelOverride}` : '';
     for (const b of neighbors) {
-      const key = quantizedKey(b, metric, zoom, 1000);
+      const key = quantizedKey(b, metric, zoom, 1000) + extra;
       if (memCache.has(key)) continue;
-      this.tracts(b, metric, zoom).catch(() => {});
+      this.tracts(b, metric, zoom, 1000, levelOverride).catch(() => {});
     }
   },
 
