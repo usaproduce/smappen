@@ -107,7 +107,10 @@ class ReachController
 
     /**
      * Weighted population + population-weighted median income for tracts intersecting $wkt.
-     * Returns [pop => float, median_income => ?float, tracts => int].
+     *
+     * NOTE: ST_Intersection of two polygons that share only an edge returns a
+     * GEOMETRYCOLLECTION, which ST_Area rejects with "unexpected type" (MySQL 3516).
+     * We filter by ST_GeometryType so only real-area overlaps contribute.
      */
     private static function statsForWkt(string $wkt): array
     {
@@ -122,16 +125,21 @@ class ReachController
               COUNT(*) AS tracts
             FROM (
               SELECT ct.geoid,
-                     ST_Area(ST_Intersection(ct.geometry, ST_GeomFromText(?, 4326)))
-                     / NULLIF(ST_Area(ct.geometry), 0) AS overlap_pct
+                     CASE
+                       WHEN ST_GeometryType(ST_Intersection(ct.geometry, ST_GeomFromText(?, 4326)))
+                            IN ('Polygon', 'MultiPolygon')
+                         THEN ST_Area(ST_Intersection(ct.geometry, ST_GeomFromText(?, 4326)))
+                              / NULLIF(ST_Area(ct.geometry), 0)
+                       ELSE 0
+                     END AS overlap_pct
               FROM census_tracts ct
               WHERE ST_Intersects(ct.geometry, ST_GeomFromText(?, 4326))
             ) inter
             JOIN census_demographics d ON d.geoid = inter.geoid
-            WHERE inter.overlap_pct IS NOT NULL AND inter.overlap_pct > 0
+            WHERE inter.overlap_pct > 0
         ";
         try {
-            $row = Database::getInstance()->fetch($sql, [$wkt, $wkt]);
+            $row = Database::getInstance()->fetch($sql, [$wkt, $wkt, $wkt]);
             return [
                 'pop' => (float)($row['pop'] ?? 0),
                 'median_income' => isset($row['median_income']) && $row['median_income'] !== null
@@ -139,6 +147,7 @@ class ReachController
                 'tracts' => (int)($row['tracts'] ?? 0),
             ];
         } catch (\Throwable $e) {
+            error_log('ReachController statsForWkt: ' . $e->getMessage());
             return ['pop' => 0, 'median_income' => null, 'tracts' => 0];
         }
     }
