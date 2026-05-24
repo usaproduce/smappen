@@ -31,6 +31,7 @@ use App\Controllers\PublicShareController;
 use App\Controllers\AiScoringController;
 use App\Controllers\OpenApiController;
 use App\Controllers\UsageController;
+use App\Controllers\UploadController;
 
 return function (Router $r) {
     $auth = [Middleware::auth()];
@@ -141,6 +142,9 @@ return function (Router $r) {
     $r->get('/api/usage/days', [UsageController::class, 'days'], $auth);
     $r->get('/api/usage/pricing', [UsageController::class, 'pricing'], $auth);
 
+    // Generic file upload (field-note photos, future area/profile media)
+    $r->post('/api/uploads', [UploadController::class, 'upload'], $auth);
+
     // Cannibalization
     $r->get('/api/projects/{projectId}/cannibalization', [CannibalizationController::class, 'analyze'], $auth);
 
@@ -214,6 +218,7 @@ return function (Router $r) {
     $r->put('/api/webhooks/{id}', [WebhookSubscriptionController::class, 'update'], $auth);
     $r->delete('/api/webhooks/{id}', [WebhookSubscriptionController::class, 'destroy'], $auth);
     $r->post('/api/webhooks/{id}/test', [WebhookSubscriptionController::class, 'test'], $auth);
+    $r->get('/api/webhooks/{id}/deliveries', [WebhookSubscriptionController::class, 'deliveries'], $auth);
 
     // Public share (#45) — no auth, validates share_token
     $r->get('/api/public/projects/{token}', [PublicShareController::class, 'show']);
@@ -221,6 +226,7 @@ return function (Router $r) {
 
     // AI site scoring (#41) — uses ANTHROPIC_API_KEY if set
     $r->post('/api/areas/{id}/ai-score', [AiScoringController::class, 'score'], $auth);
+    $r->post('/api/projects/{projectId}/ai-rankings', [AiScoringController::class, 'rank'], $auth);
 
     // OpenAPI docs (#47)
     $r->get('/api/openapi.json', [OpenApiController::class, 'spec']);

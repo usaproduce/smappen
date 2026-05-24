@@ -172,10 +172,51 @@ class ExportController
 
     private function areasToKml(array $areas): string
     {
+        // Build a Style per unique fill color so Google Earth renders the
+        // areas with the same color the user sees in Smappen. KML colors are
+        // AABBGGRR (note: alpha first, then BLUE-GREEN-RED — not RGBA).
+        $styles = [];
+        foreach ($areas as $a) {
+            $hex = ltrim($a['fill_color'] ?? '#7848BB', '#');
+            if (strlen($hex) !== 6) $hex = '7848BB';
+            $styles[$hex] = true;
+        }
+        $styleXml = '';
+        foreach (array_keys($styles) as $hex) {
+            $r = substr($hex, 0, 2);
+            $g = substr($hex, 2, 2);
+            $b = substr($hex, 4, 2);
+            $fillKml = '99' . $b . $g . $r;   // 99 ≈ 60% alpha
+            $lineKml = 'FF' . $b . $g . $r;   // opaque outline
+            $styleXml .= '<Style id="s_' . $hex . '">'
+                . '<LineStyle><color>' . $lineKml . '</color><width>2</width></LineStyle>'
+                . '<PolyStyle><color>' . $fillKml . '</color><fill>1</fill><outline>1</outline></PolyStyle>'
+                . '</Style>';
+        }
+
         $kml = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
         $kml .= '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>';
+        $kml .= '<name>Smappen Areas</name>';
+        $kml .= $styleXml;
         foreach ($areas as $a) {
-            $kml .= '<Placemark><name>' . htmlspecialchars($a['name']) . '</name>';
+            $hex = strtoupper(ltrim($a['fill_color'] ?? '#7848BB', '#'));
+            if (strlen($hex) !== 6) $hex = '7848BB';
+            $desc = '';
+            $dc = $a['demographics_cache'] ?? [];
+            if (is_array($dc)) {
+                $pop = $dc['population']['total'] ?? $dc['population'] ?? null;
+                $inc = $dc['income']['median_household'] ?? $dc['median_household_income'] ?? null;
+                if ($pop || $inc) {
+                    $desc = '<description><![CDATA['
+                        . ($pop ? '<b>Population:</b> ' . number_format((int)$pop) . '<br>' : '')
+                        . ($inc ? '<b>Median income:</b> $' . number_format((int)$inc) : '')
+                        . ']]></description>';
+                }
+            }
+            $kml .= '<Placemark>'
+                . '<name>' . htmlspecialchars($a['name']) . '</name>'
+                . $desc
+                . '<styleUrl>#s_' . $hex . '</styleUrl>';
             if (!empty($a['geometry']['coordinates'][0])) {
                 $coords = [];
                 foreach ($a['geometry']['coordinates'][0] as $p) {

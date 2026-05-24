@@ -80,8 +80,13 @@ class AreaController
         $body = $request->getBody() ?? [];
         $update = [];
         foreach (['name', 'folder_id', 'fill_color', 'fill_opacity', 'stroke_color', 'stroke_weight', 'notes',
-                  'travel_mode', 'travel_time_minutes', 'travel_distance_km', 'center_address'] as $f) {
-            if (array_key_exists($f, $body)) $update[$f] = $body[$f];
+                  'travel_mode', 'travel_time_minutes', 'travel_distance_km', 'center_address',
+                  'is_favorite'] as $f) {
+            if (array_key_exists($f, $body)) {
+                // Coerce booleans on the favorite flag so the JSON `true/false`
+                // → MySQL 1/0 round-trips cleanly.
+                $update[$f] = $f === 'is_favorite' ? ($body[$f] ? 1 : 0) : $body[$f];
+            }
         }
         // folder_id must belong to the same project as the area (no cross-project moves).
         if (!empty($update['folder_id'])) {

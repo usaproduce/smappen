@@ -15,6 +15,7 @@ import IntegrationsSettings from './components/settings/IntegrationsSettings';
 import ApiKeySettings from './components/settings/ApiKeySettings';
 import WebhookSettings from './components/settings/WebhookSettings';
 import SharedProjectPage from './components/share/SharedProjectPage';
+import EmbedProjectPage from './components/share/EmbedProjectPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useTheme } from './hooks/useTheme';
 
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route path="/pricing" element={<PricingPage />} />
         <Route path="/share/:token" element={<SharedProjectPage />} />
+        <Route path="/embed/:token" element={<EmbedProjectPage />} />
         <Route path="/settings" element={<ProtectedRoute><SettingsLayout /></ProtectedRoute>}>
           <Route index element={<Navigate to="profile" replace />} />
           <Route path="profile" element={<ProfileSettings />} />

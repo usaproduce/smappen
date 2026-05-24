@@ -23,9 +23,19 @@ class HealthController
         $started = microtime(true);
         $dbOk = false;
         $dbError = null;
+        $connections = ['current' => null, 'max' => null];
         try {
             Database::getInstance()->fetch('SELECT 1 AS ok');
             $dbOk = true;
+            // Expose MySQL connection pressure so external monitors can alert
+            // before the ceiling. SHOW STATUS / SHOW VARIABLES need no perms
+            // beyond what the app user already has.
+            try {
+                $cur = Database::getInstance()->fetch("SHOW STATUS LIKE 'Threads_connected'");
+                $max = Database::getInstance()->fetch("SHOW VARIABLES LIKE 'max_connections'");
+                $connections['current'] = isset($cur['Value']) ? (int) $cur['Value'] : null;
+                $connections['max'] = isset($max['Value']) ? (int) $max['Value'] : null;
+            } catch (\Throwable $_) {}
         } catch (\Throwable $e) {
             $dbError = $e->getMessage();
         }
@@ -37,6 +47,7 @@ class HealthController
             'environment' => Config::isDevelopment() ? 'development' : 'production',
             'now' => date('c'),
             'elapsed_ms' => (int) round((microtime(true) - $started) * 1000),
+            'connections' => $connections,
         ];
         if ($dbError && Config::isDevelopment()) {
             $payload['db_error'] = $dbError;

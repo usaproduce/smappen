@@ -38,6 +38,19 @@ class ReportController
 
         $mapUrl = $this->buildStaticMapUrl($area);
         $mapPath = $this->downloadStaticMap($mapUrl, $area['id']);
+        // Static Maps is a billed Google API ($0.002/call) — log so it shows
+        // up in the cost widget alongside the geocode/places spend.
+        if ($mapPath) {
+            try {
+                \App\Core\Database::getInstance()->query(
+                    'INSERT INTO api_usage_log
+                       (user_id, api_name, endpoint, request_count, estimated_cost_usd, created_at)
+                     VALUES (?, ?, ?, 1, ?, NOW())',
+                    [$request->user['id'], 'static_map', '/api/areas/' . $area['id'] . '/report',
+                     \App\Services\GooglePricing::costFor('static_map')]
+                );
+            } catch (\Throwable $e) {}
+        }
 
         ob_start();
         $reportData = [
@@ -107,7 +120,9 @@ class ReportController
         $key = Config::get('GOOGLE_API_KEY', '');
         $ring = $area['geometry']['coordinates'][0] ?? [];
         if (empty($ring)) return '';
-        // simplify if too many points
+        // Static Maps URL has a ~8KB length cap. Douglas-Peucker would be ideal
+        // but a uniform step keeps things simple and still keeps the polygon
+        // shape recognizable. Cap at 80 points which fits well under the limit.
         if (count($ring) > 80) {
             $step = (int)ceil(count($ring) / 80);
             $simplified = [];
@@ -116,9 +131,19 @@ class ReportController
             $ring = $simplified;
         }
         $encoded = GeoUtils::encodePath($ring);
-        $path = 'fillcolor:0x6B4EFF33|color:0x6B4EFFFF|weight:2|enc:' . $encoded;
-        return 'https://maps.googleapis.com/maps/api/staticmap?size=800x500&maptype=roadmap&path='
-             . urlencode($path) . '&key=' . $key;
+        // Use the area's actual color so the report matches what the user sees
+        // on the live map. fill_color is `#RRGGBB`; Static Maps wants `0xRRGGBB`.
+        $hex = ltrim($area['fill_color'] ?? '#7848BB', '#');
+        $fill = '0x' . $hex . '33';  // 33 ≈ 20% alpha
+        $stroke = '0x' . $hex . 'FF'; // opaque outline
+        $path = 'fillcolor:' . $fill . '|color:' . $stroke . '|weight:3|enc:' . $encoded;
+        // Drop a colored pin at the centroid so the user can locate the area.
+        $markers = '';
+        if (!empty($area['center_lat']) && !empty($area['center_lng'])) {
+            $markers = '&markers=' . urlencode('color:0x' . $hex . '|' . $area['center_lat'] . ',' . $area['center_lng']);
+        }
+        return 'https://maps.googleapis.com/maps/api/staticmap?size=800x500&maptype=roadmap&scale=2&path='
+             . urlencode($path) . $markers . '&key=' . $key;
     }
 
     private function downloadStaticMap(string $url, string $areaId): ?string

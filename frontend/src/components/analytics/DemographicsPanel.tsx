@@ -86,6 +86,24 @@ export default function DemographicsPanel({ areaId }: { areaId: string }) {
       </div>
 
       {data.meta?.note && <div className="text-xs text-amber-700 bg-amber-50 p-2 rounded">{data.meta.note}</div>}
+
+      {/* Data-freshness footer — builds user trust by showing vintage. The
+          data_year field comes from census_demographics; we treat anything
+          older than 18 months as "stale" with an amber pill, otherwise quiet. */}
+      <DataFreshnessFooter dataYear={data.meta?.data_year ?? (data as any).data_year} />
+    </div>
+  );
+}
+
+function DataFreshnessFooter({ dataYear }: { dataYear?: number | null }) {
+  if (!dataYear) return null;
+  const monthsOld = (new Date().getFullYear() - dataYear) * 12;
+  const stale = monthsOld > 18;
+  return (
+    <div className={`text-[10px] flex items-center gap-1.5 px-2 py-1.5 rounded-md ${stale ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'text-slate-400'}`}>
+      <span className="font-semibold">Source:</span>
+      <span>US Census ACS {dataYear} (5-year estimates)</span>
+      {stale && <span className="ml-auto font-bold uppercase tracking-wider">stale · {Math.round(monthsOld / 12)}y old</span>}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Trash2, Send, Plus } from 'lucide-react';
+import { Trash2, Send, Plus, History, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../../api/client';
 
 interface Webhook {
@@ -114,21 +114,96 @@ export default function WebhookSettings() {
         {hooks.length === 0 && <div className="text-sm text-slate-500">No webhooks yet.</div>}
         <ul className="divide-y divide-slate-100">
           {hooks.map((h) => (
-            <li key={h.id} className="py-2.5 flex items-center gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold truncate" style={{ color: '#1A1A2E' }}>{h.target_url}</div>
-                <div className="text-xs text-slate-500">{(h.events || []).join(', ')}</div>
-                <div className="text-[11px] text-slate-400">
-                  {h.last_delivery_at ? `Last delivered ${new Date(h.last_delivery_at).toLocaleString()} · status ${h.last_status_code ?? '—'}` : 'No deliveries yet'}
-                  {h.failure_count > 0 && <span className="text-rose-600 ml-2">{h.failure_count} failures</span>}
-                </div>
-              </div>
-              <button className="text-slate-500 hover:text-violet-700 p-1" onClick={() => test(h.id)} title="Send a test event"><Send size={14} /></button>
-              <button className="text-slate-400 hover:text-rose-600 p-1" onClick={() => remove(h.id)} title="Delete"><Trash2 size={14} /></button>
-            </li>
+            <WebhookRow key={h.id} h={h} onTest={() => test(h.id)} onRemove={() => remove(h.id)} />
           ))}
         </ul>
       </section>
     </div>
+  );
+}
+
+/**
+ * One row in the webhook list. Expandable to show the last 50 deliveries
+ * (status code, event type, response excerpt, retry count, timestamp) —
+ * essential for debugging "my receiver isn't getting events".
+ */
+function WebhookRow({ h, onTest, onRemove }: { h: Webhook; onTest: () => void; onRemove: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [deliveries, setDeliveries] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && deliveries === null) {
+      setLoading(true);
+      try {
+        const { data } = await api.get(`/api/webhooks/${h.id}/deliveries`);
+        setDeliveries(data.data.deliveries);
+      } catch (e: any) {
+        toast.error(e?.response?.data?.error ?? 'Could not load log');
+      } finally { setLoading(false); }
+    }
+  }
+
+  return (
+    <li className="py-2.5">
+      <div className="flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold truncate" style={{ color: '#1A1A2E' }}>{h.target_url}</div>
+          <div className="text-xs text-slate-500">{(h.events || []).join(', ')}</div>
+          <div className="text-[11px] text-slate-400">
+            {h.last_delivery_at
+              ? `Last delivered ${new Date(h.last_delivery_at).toLocaleString()} · status ${h.last_status_code ?? '—'}`
+              : 'No deliveries yet'}
+            {h.failure_count > 0 && <span className="text-rose-600 ml-2">{h.failure_count} failures</span>}
+          </div>
+        </div>
+        <button className="text-slate-500 hover:text-violet-700 p-1" onClick={toggle} title={open ? 'Hide log' : 'Show delivery log'}>
+          {open ? <ChevronUp size={14} /> : <History size={14} />}
+        </button>
+        <button className="text-slate-500 hover:text-violet-700 p-1" onClick={onTest} title="Send a test event"><Send size={14} /></button>
+        <button className="text-slate-400 hover:text-rose-600 p-1" onClick={onRemove} title="Delete"><Trash2 size={14} /></button>
+      </div>
+      {open && (
+        <div className="mt-2 ml-1 border-l-2 border-violet-200 pl-3">
+          {loading && <div className="text-xs text-slate-400 py-2">Loading log…</div>}
+          {!loading && deliveries && deliveries.length === 0 && (
+            <div className="text-xs text-slate-400 italic py-2">No deliveries yet.</div>
+          )}
+          {!loading && deliveries && deliveries.length > 0 && (
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="text-left text-slate-400">
+                  <th className="py-1 pr-2">When</th>
+                  <th className="py-1 pr-2">Event</th>
+                  <th className="py-1 pr-2">Status</th>
+                  <th className="py-1">Response excerpt</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deliveries.map((d) => {
+                  const ok = d.status_code && d.status_code >= 200 && d.status_code < 300;
+                  return (
+                    <tr key={d.id} className="border-t border-slate-100">
+                      <td className="py-1 pr-2 text-slate-500 whitespace-nowrap">
+                        {new Date(d.created_at).toLocaleString()}
+                      </td>
+                      <td className="py-1 pr-2 text-slate-700 font-medium">{d.event_type}</td>
+                      <td className={`py-1 pr-2 font-bold tabular-nums ${ok ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {d.status_code ?? '—'}
+                      </td>
+                      <td className="py-1 text-slate-600 font-mono truncate max-w-[300px]" title={d.response_excerpt}>
+                        {d.response_excerpt || ''}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </li>
   );
 }

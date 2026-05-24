@@ -10,6 +10,7 @@ import ImportWizard from '../data/ImportWizard';
 import MiniMapToggle from '../map/MiniMapToggle';
 import AdvancedPanel from '../advanced/AdvancedPanel';
 import TimeMachinePanel from '../map/TimeMachinePanel';
+import ShortcutsModal from '../common/ShortcutsModal';
 import ErrorBoundary from '../ErrorBoundary';
 import { useMapStore } from '../../stores/mapStore';
 import { useProjectStore } from '../../stores/projectStore';
@@ -136,6 +137,7 @@ export default function AppLayout() {
           <ImportWizard onClose={() => setImportOpen(false)} />
         </ErrorBoundary>
       )}
+      <ShortcutsModal />
     </div>
   );
 }

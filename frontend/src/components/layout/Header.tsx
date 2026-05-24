@@ -12,6 +12,7 @@ import toast from 'react-hot-toast';
 import { notificationApi, type Notification } from '../../api/advanced';
 import { usageApi, formatUsd } from '../../api/usage';
 import { useCostStore } from '../../stores/costStore';
+import { useUndoStore } from '../../stores/undoStore';
 
 export default function Header() {
   const { user, logout } = useAuthStore();
@@ -249,8 +250,7 @@ export default function Header() {
 
       <div className="flex items-center gap-1">
         {/* Undo/Redo placeholders — disabled until we wire history */}
-        <button className="text-slate-300 p-1.5 cursor-not-allowed" title="Undo (coming soon)" disabled><Undo2 size={16} /></button>
-        <button className="text-slate-300 p-1.5 cursor-not-allowed" title="Redo (coming soon)" disabled><Redo2 size={16} /></button>
+        <UndoRedoButtons />
 
         <div className="h-6 w-px bg-slate-200 mx-1" />
 
@@ -398,5 +398,60 @@ export default function Header() {
         </div>
       </div>
     </header>
+  );
+}
+
+/**
+ * Undo/Redo header buttons. Reads from the undoStore + listens for Cmd+Z /
+ * Cmd+Shift+Z. Renders dim when nothing to undo/redo, active when there is.
+ * Hover tooltip shows the next action's label.
+ */
+function UndoRedoButtons() {
+  const past = useUndoStore((s) => s.past);
+  const future = useUndoStore((s) => s.future);
+  const busy = useUndoStore((s) => s.busy);
+  const undo = useUndoStore((s) => s.undo);
+  const redo = useUndoStore((s) => s.redo);
+  const canU = past.length > 0 && !busy;
+  const canR = future.length > 0 && !busy;
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const isInput = (e.target as HTMLElement)?.tagName === 'INPUT'
+        || (e.target as HTMLElement)?.tagName === 'TEXTAREA'
+        || (e.target as HTMLElement)?.isContentEditable;
+      if (isInput) return;
+      const cmd = e.metaKey || e.ctrlKey;
+      if (cmd && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        if (canU) undo().catch(() => {});
+      } else if (cmd && (e.key.toLowerCase() === 'z' && e.shiftKey) || (cmd && e.key.toLowerCase() === 'y')) {
+        e.preventDefault();
+        if (canR) redo().catch(() => {});
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [canU, canR, undo, redo]);
+
+  return (
+    <>
+      <button
+        className={canU ? 'text-slate-600 hover:bg-slate-50 p-1.5 rounded' : 'text-slate-300 p-1.5 cursor-not-allowed'}
+        title={canU ? `Undo: ${past[past.length - 1].label} (⌘Z)` : 'Nothing to undo'}
+        onClick={() => canU && undo()}
+        disabled={!canU}
+      >
+        <Undo2 size={16} />
+      </button>
+      <button
+        className={canR ? 'text-slate-600 hover:bg-slate-50 p-1.5 rounded' : 'text-slate-300 p-1.5 cursor-not-allowed'}
+        title={canR ? `Redo: ${future[future.length - 1].label} (⇧⌘Z)` : 'Nothing to redo'}
+        onClick={() => canR && redo()}
+        disabled={!canR}
+      >
+        <Redo2 size={16} />
+      </button>
+    </>
   );
 }

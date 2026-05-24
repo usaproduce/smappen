@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, MapPin, Car, Bike, Footprints, Hexagon, Clock } from 'lucide-react';
+import { X, MapPin, Car, Bike, Footprints, Clock } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 import { useProjectStore } from '../../stores/projectStore';
 import DemographicsPanel from '../analytics/DemographicsPanel';
@@ -39,7 +39,9 @@ export default function RightPanel() {
   }, [selectedAreaId, selectArea]);
 
   if (!area) return null;
-  const ModeIcon = modeIcon[area.travel_mode ?? ''] ?? Hexagon;
+  // Fall back to MapPin (a neutral generic pin) for radius/manual areas that
+  // have no travel_mode, instead of the old Hexagon which looked unrelated.
+  const ModeIcon = modeIcon[area.travel_mode ?? ''] ?? MapPin;
 
   return (
     <aside className="absolute top-4 right-20 w-[300px] md:w-[340px] lg:w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20">

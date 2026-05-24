@@ -17,6 +17,59 @@ use App\Core\Response;
  */
 class AiScoringController
 {
+    /**
+     * Score every area in a project and rank them. Returns ordered list with
+     * the cached score for each area (recomputes any that are missing). The
+     * AI calls — when ANTHROPIC_API_KEY is set — are expensive, so we hit the
+     * existing 24h per-area cache aggressively.
+     */
+    public function rank(Request $request): void
+    {
+        $projectId = $request->getParam('projectId');
+        if (!$projectId) Response::error('projectId required');
+        $project = Database::getInstance()->fetch(
+            'SELECT id FROM projects WHERE id = ? AND organization_id = ?',
+            [$projectId, $request->user['organization_id']]
+        );
+        if (!$project) Response::error('Project not found', 404);
+
+        $areas = Database::getInstance()->fetchAll(
+            "SELECT a.*, ST_AsText(a.geometry) AS wkt
+             FROM areas a WHERE a.project_id = ?",
+            [$projectId]
+        );
+        if (count($areas) > 50) Response::error('Too many areas to rank in one pass (max 50)');
+
+        // Soft time + memory ceilings — AI calls are slow.
+        set_time_limit(180);
+        ini_set('memory_limit', '512M');
+
+        $results = [];
+        foreach ($areas as $area) {
+            $cacheKey = 'ai_score:' . $area['id'] . ':' . substr(md5($area['wkt']), 0, 12);
+            $cached = self::cacheGet($cacheKey);
+            if ($cached) {
+                $results[] = json_decode($cached, true);
+                continue;
+            }
+            $facts = self::gatherFacts($area);
+            $res = self::haveAnthropicKey()
+                ? self::scoreWithClaude($area, $facts)
+                : self::scoreLocal($area, $facts);
+            $res['area_id'] = $area['id'];
+            $res['area_name'] = $area['name'];
+            self::cacheSet($cacheKey, json_encode($res), 86400);
+            $results[] = $res;
+        }
+        // Sort by score desc — best site opportunity first.
+        usort($results, fn($a, $b) => ($b['score'] ?? 0) - ($a['score'] ?? 0));
+        Response::success([
+            'project_id' => $projectId,
+            'count' => count($results),
+            'rankings' => $results,
+        ]);
+    }
+
     public function score(Request $request): void
     {
         $areaId = $request->getParam('id');

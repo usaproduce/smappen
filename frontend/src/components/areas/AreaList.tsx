@@ -1,13 +1,16 @@
 import { useState } from 'react';
-import { Search, X, Filter } from 'lucide-react';
+import { Search, X, Filter, Map as MapIcon } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
+import { useMapStore } from '../../stores/mapStore';
 import AreaCard from './AreaCard';
+import EmptyState from '../common/EmptyState';
 
 type Sort = 'recent' | 'name' | 'time' | 'population';
 type TypeFilter = 'all' | 'isochrone' | 'radius' | 'manual';
 
 export default function AreaList() {
   const { areas } = useProjectStore();
+  const favoritesOnly = useMapStore((s) => s.favoritesOnly);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<Sort>('recent');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
@@ -15,12 +18,17 @@ export default function AreaList() {
 
   const filtered = areas
     .filter((a) => !search || a.name.toLowerCase().includes(search.toLowerCase()))
+    .filter((a) => !favoritesOnly || (a as any).is_favorite)
     .filter((a) => {
       if (typeFilter === 'all') return true;
       if (typeFilter === 'isochrone') return a.area_type === 'isochrone' || a.area_type === 'isodistance';
       return a.area_type === typeFilter;
     })
     .sort((a, b) => {
+      // Favorites always float to the top, regardless of the selected sort.
+      const af = (a as any).is_favorite ? 1 : 0;
+      const bf = (b as any).is_favorite ? 1 : 0;
+      if (af !== bf) return bf - af;
       if (sort === 'name') return a.name.localeCompare(b.name);
       if (sort === 'time') return (a.travel_time_minutes ?? 0) - (b.travel_time_minutes ?? 0);
       if (sort === 'population') {
@@ -110,11 +118,16 @@ export default function AreaList() {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="text-sm text-slate-400 text-center py-8 px-4">
-          {search || typeFilter !== 'all'
-            ? <>No areas match these filters.</>
-            : <>No areas yet. Click <b>Create new area</b> above.</>}
-        </div>
+        <EmptyState
+          icon={<MapIcon size={32} />}
+          title={search || typeFilter !== 'all' || favoritesOnly ? 'No matches' : 'No areas yet'}
+          subtitle={
+            search || typeFilter !== 'all' || favoritesOnly
+              ? 'Try clearing your filters.'
+              : 'Draw a polygon, drop a pin, or import a CSV to start mapping your territories.'
+          }
+          compact
+        />
       ) : (
         <div>
           {filtered.map((a) => <AreaCard key={a.id} area={a} />)}

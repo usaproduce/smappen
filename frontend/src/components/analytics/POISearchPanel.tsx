@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
+import { Building, Search as SearchIcon } from 'lucide-react';
 import { placesApi } from '../../api/places';
 import { useMapStore } from '../../stores/mapStore';
+import EmptyState from '../common/EmptyState';
 import type { Area, Place } from '../../types';
 
 const CATEGORIES = ['', 'restaurant', 'cafe', 'store', 'pharmacy', 'gym', 'school', 'hospital', 'bank', 'gas_station'];
@@ -41,7 +43,25 @@ export default function POISearchPanel({ area }: { area: Area }) {
           {loading ? 'Searching…' : 'Search'}
         </button>
       </div>
-      {results.length > 0 && (
+      {loading && (
+        // Skeleton cards while the Places API request is in flight — better
+        // than a single spinner because users see the result shape forming.
+        <div className="space-y-2">
+          <div className="skeleton h-3 w-20" />
+          <div className="skeleton h-16" />
+          <div className="skeleton h-16" />
+          <div className="skeleton h-16" />
+        </div>
+      )}
+      {!loading && results.length === 0 && (
+        <EmptyState
+          icon={<Building size={28} />}
+          title="No businesses yet"
+          subtitle="Pick a category or enter a keyword, then Search to find businesses inside this area."
+          compact
+        />
+      )}
+      {!loading && results.length > 0 && (
         <>
           <div className="text-xs font-semibold text-slate-500 uppercase">{results.length} found</div>
           <div className="space-y-2">

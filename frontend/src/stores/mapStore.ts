@@ -27,6 +27,8 @@ interface MapState {
   /** When set, AppLayout renders the TimeMachinePanel slide-up. Lets any
    *  surface (selected-area card, advanced panel, toolbar) open it the same way. */
   timeMachineRequest: { lat: number; lng: number; minutes: number; color: string } | null;
+  /** Left-panel filter: show only favorited areas. Toggled by the toolbar star. */
+  favoritesOnly: boolean;
   setCenter: (c: { lat: number; lng: number }) => void;
   setZoom: (z: number) => void;
   selectArea: (id: string | null) => void;
@@ -45,6 +47,7 @@ interface MapState {
   setTimeMachine: (tm: MapState['timeMachine']) => void;
   openTimeMachine: (opts?: Partial<NonNullable<MapState['timeMachineRequest']>>) => void;
   closeTimeMachine: () => void;
+  toggleFavoritesOnly: () => void;
 }
 
 export const useMapStore = create<MapState>((set, get) => ({
@@ -67,6 +70,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   mapInstance: null,
   timeMachine: null,
   timeMachineRequest: null,
+  favoritesOnly: false,
   setCenter: (center) => set({ center }),
   setZoom: (zoom) => set({ zoom }),
   selectArea: (id) => set({ selectedAreaId: id }),
@@ -96,6 +100,7 @@ export const useMapStore = create<MapState>((set, get) => ({
     set({ timeMachineRequest: { ...fallback, ...(opts ?? {}) } });
   },
   closeTimeMachine: () => set({ timeMachineRequest: null, timeMachine: null }),
+  toggleFavoritesOnly: () => set((s) => ({ favoritesOnly: !s.favoritesOnly })),
   fitBoundsToArea: (geometry) => {
     const map = get().mapInstance;
     if (!map || !geometry?.coordinates?.[0]) return;

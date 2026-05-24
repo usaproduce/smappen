@@ -35,16 +35,32 @@ export default function AreaPolygon({ area, heatmapOn = false }: { area: Area; h
         onMouseOver={() => setHover(true)}
         onMouseOut={() => setHover(false)}
       />
-      {hover && (
-        <InfoWindow position={polygonCentroid(area.geometry)} options={{ disableAutoPan: true }}>
-          <div className="text-sm">
-            <div className="font-semibold">{area.name}</div>
-            <div className="text-slate-500 text-xs">
-              {area.travel_mode} {area.travel_time_minutes ? `· ${area.travel_time_minutes} min` : ''}
+      {hover && (() => {
+        // Surface a one-line stat preview alongside the area name. Reads
+        // demographics_cache in both nested + flat shapes.
+        const dc: any = (area as any).demographics_cache ?? {};
+        const pop = typeof dc.population?.total === 'number' ? dc.population.total
+          : typeof dc.population === 'number' ? dc.population
+          : null;
+        const income = dc.income?.median_household_income ?? dc.median_household_income;
+        return (
+          <InfoWindow position={polygonCentroid(area.geometry)} options={{ disableAutoPan: true }}>
+            <div className="text-sm" style={{ minWidth: 160 }}>
+              <div className="font-semibold" style={{ color: '#1A1A2E' }}>{area.name}</div>
+              <div className="text-slate-500 text-xs">
+                {area.travel_mode} {area.travel_time_minutes ? `· ${area.travel_time_minutes} min` : ''}
+              </div>
+              {(pop || income) && (
+                <div className="text-xs text-slate-700 mt-1 font-medium">
+                  {pop != null && <>{pop.toLocaleString()} people</>}
+                  {income != null && pop != null ? ' · ' : ''}
+                  {income != null && <>${Math.round(income).toLocaleString()} med inc</>}
+                </div>
+              )}
             </div>
-          </div>
-        </InfoWindow>
-      )}
+          </InfoWindow>
+        );
+      })()}
     </>
   );
 }

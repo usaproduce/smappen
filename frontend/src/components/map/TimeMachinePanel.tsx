@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Pause, X, Clock, TrendingDown, ChevronDown, ChevronUp } from 'lucide-react';
+import { Play, Pause, X, Clock, TrendingDown, ChevronDown, ChevronUp, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useMapStore } from '../../stores/mapStore';
 import { api } from '../../api/client';
@@ -85,6 +85,26 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
     playRef.current = window.setInterval(() => setHour((h) => (h + 1) % 24), speed);
     return () => { if (playRef.current) window.clearInterval(playRef.current); };
   }, [playing, speed, data]);
+
+  // Keyboard controls when the strip is open. Space toggles play/pause,
+  // arrows scrub hours, brackets change speed. Disabled when focus is in
+  // an input so day/duration dropdowns aren't hijacked.
+  useEffect(() => {
+    if (!data) return;
+    const SPEEDS = [1200, 600, 300, 150];
+    function onKey(e: KeyboardEvent) {
+      const t = document.activeElement as HTMLElement | null;
+      const isTyping = t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA' || t?.tagName === 'SELECT' || t?.isContentEditable;
+      if (isTyping) return;
+      if (e.key === ' ') { e.preventDefault(); setPlaying((p) => !p); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); setPlaying(false); setHour((h) => (h + 23) % 24); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); setPlaying(false); setHour((h) => (h + 1) % 24); }
+      else if (e.key === '[') { e.preventDefault(); setSpeed((s) => SPEEDS[Math.min(SPEEDS.length - 1, SPEEDS.indexOf(s) + 1)] ?? s); }
+      else if (e.key === ']') { e.preventDefault(); setSpeed((s) => SPEEDS[Math.max(0, SPEEDS.indexOf(s) - 1)] ?? s); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [data]);
 
   async function load() {
     setLoading(true);
@@ -179,6 +199,15 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
 
         <div className="flex-1" />
 
+        {data && (
+          <button
+            onClick={() => exportCsv(data, lat, lng)}
+            className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-white"
+            title="Download 24-hour data as CSV"
+          >
+            <Download size={13} />
+          </button>
+        )}
         <button
           onClick={() => setCollapsed((c) => !c)}
           className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-white"
@@ -279,4 +308,38 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
       )}
     </aside>
   );
+}
+
+/**
+ * Export the loaded 24-hour reach table as CSV. Format matches what a
+ * spreadsheet user would expect — one row per hour with all the numbers
+ * needed to recompute the visualization offline.
+ */
+function exportCsv(data: DayResponse, lat: number, lng: number) {
+  const rows = [
+    ['day', 'hour', 'label', 'requested_minutes', 'adjusted_minutes', 'traffic_multiplier', 'area_sq_km'],
+    ...data.hours.map((h) => [
+      data.day_of_week,
+      String(h.hour),
+      h.label,
+      String(h.requested_minutes),
+      String(h.adjusted_minutes),
+      h.multiplier.toFixed(3),
+      h.area_sq_km != null ? h.area_sq_km.toFixed(2) : '',
+    ]),
+  ];
+  const csv = rows.map((r) => r.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `daypart-${data.day_of_week}-${data.requested_minutes}min-${lat.toFixed(4)}-${lng.toFixed(4)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function csvCell(s: string): string {
+  // Wrap any value containing comma/quote/newline; double up internal quotes.
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }

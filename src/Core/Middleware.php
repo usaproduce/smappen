@@ -110,7 +110,16 @@ class Middleware
                 [$request->user['id'], $apiName, $since]
             );
             $used = (int)($row['total'] ?? 0);
+            $remaining = max(0, $maxRequests - $used);
+            $resetAt = time() + $windowSeconds;
+            // Echo limit/remaining/reset headers on every call so API consumers
+            // can pace themselves before hitting the wall. Frontend reads these
+            // to warn the user when remaining drops low.
+            header('X-RateLimit-Limit: ' . $maxRequests);
+            header('X-RateLimit-Remaining: ' . max(0, $remaining - 1));
+            header('X-RateLimit-Reset: ' . $resetAt);
             if ($used >= $maxRequests) {
+                header('Retry-After: ' . max(1, $windowSeconds));
                 Response::error("Rate limit reached ($apiName: $used/$maxRequests). Try again later.", 429);
                 return false;
             }

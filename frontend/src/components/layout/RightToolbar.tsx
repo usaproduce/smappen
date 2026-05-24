@@ -3,6 +3,7 @@ import {
   ZoomIn, ZoomOut, MessageCircle, Map as MapIcon, Sparkles, Camera,
 } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
+import { useUiPrefsStore } from '../../stores/uiPrefsStore';
 
 interface Props {
   onCreateArea: () => void;
@@ -13,7 +14,7 @@ interface Props {
 }
 
 export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, advancedOpen, onScreenshot }: Props) {
-  const { mapInstance, showHeatmap, toggleHeatmap, selectArea } = useMapStore();
+  const { mapInstance, showHeatmap, toggleHeatmap, selectArea, favoritesOnly, toggleFavoritesOnly } = useMapStore();
 
   function zoom(by: number) {
     if (!mapInstance) return;
@@ -44,8 +45,12 @@ export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, a
       <button className="toolbar-btn" title="Add data" onClick={onImport}>
         <DatabaseZap size={20} />
       </button>
-      <button className="toolbar-btn" title="Favorites">
-        <Star size={20} />
+      <button
+        className={`toolbar-btn ${favoritesOnly ? 'active' : ''}`}
+        title={favoritesOnly ? 'Show all areas' : 'Show favorites only'}
+        onClick={toggleFavoritesOnly}
+      >
+        <Star size={20} fill={favoritesOnly ? 'currentColor' : 'none'} />
       </button>
       <button
         className={`toolbar-btn ${advancedOpen ? 'active' : ''}`}
@@ -66,7 +71,11 @@ export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, a
       <button className="toolbar-btn" title="Zoom out" onClick={() => zoom(-1)}>
         <ZoomOut size={20} />
       </button>
-      <button className="toolbar-btn" title="Help">
+      <button
+        className="toolbar-btn"
+        title="Keyboard shortcuts (?)"
+        onClick={() => useUiPrefsStore.getState().toggleShortcutsModal()}
+      >
         <MessageCircle size={20} />
       </button>
     </aside>

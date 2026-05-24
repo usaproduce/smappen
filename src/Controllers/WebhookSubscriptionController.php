@@ -129,6 +129,27 @@ class WebhookSubscriptionController
         Response::success($result);
     }
 
+    /**
+     * Recent delivery attempts for one webhook. Used by the Webhooks settings
+     * page to show a log of last 50 events — status code, response excerpt,
+     * timestamp — so operators can debug failing receivers.
+     */
+    public function deliveries(Request $request): void
+    {
+        $id = $request->getParam('id');
+        self::loadOwned($request, $id);
+        $rows = Database::getInstance()->fetchAll(
+            'SELECT id, event_type, status_code, attempt_count, delivered_at, next_retry_at,
+                    SUBSTRING(response_excerpt, 1, 500) AS response_excerpt, created_at
+             FROM webhook_deliveries
+             WHERE subscription_id = ?
+             ORDER BY created_at DESC
+             LIMIT 50',
+            [$id]
+        );
+        Response::success(['deliveries' => $rows]);
+    }
+
     private static function loadOwned(Request $request, string $id): array
     {
         $row = Database::getInstance()->fetch(

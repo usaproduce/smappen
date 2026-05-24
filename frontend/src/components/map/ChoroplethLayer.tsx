@@ -89,8 +89,11 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
     }
 
     function scheduleLoad() {
+      // Bump from 250ms → 400ms — during a pinch-zoom or scroll-wheel zoom
+      // the map fires many rapid bounds_changed events; the longer debounce
+      // means we only request the *final* viewport, not every frame.
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
-      debounceRef.current = window.setTimeout(load, 250);
+      debounceRef.current = window.setTimeout(load, 400);
     }
 
     const idleListener = mapInstance.addListener('idle', scheduleLoad);
