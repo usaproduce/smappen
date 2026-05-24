@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { X, MapPin, Car, Bike, Footprints, Hexagon } from 'lucide-react';
+import { X, MapPin, Car, Bike, Footprints, Hexagon, Clock } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 import { useProjectStore } from '../../stores/projectStore';
 import DemographicsPanel from '../analytics/DemographicsPanel';
 import POISearchPanel from '../analytics/POISearchPanel';
 import ReportButton from '../data/ReportButton';
 import ExportDialog from '../data/ExportDialog';
+import TimeMachinePanel from '../map/TimeMachinePanel';
 
 type Tab = 'overview' | 'demographics' | 'businesses' | 'data';
 
@@ -26,6 +27,7 @@ export default function RightPanel() {
   const { areas } = useProjectStore();
   const [tab, setTab] = useState<Tab>('overview');
   const [exportOpen, setExportOpen] = useState(false);
+  const [timeMachineOpen, setTimeMachineOpen] = useState(false);
 
   const area = areas.find((a) => a.id === selectedAreaId);
 
@@ -125,6 +127,24 @@ export default function RightPanel() {
               </button>
             </div>
 
+            {/* Time machine — only available for travel-time areas, since
+                the animation only makes sense if the polygon was originally
+                computed from a drive-time budget. */}
+            {area.area_type === 'isochrone' && area.center_lat != null && area.center_lng != null && (
+              <button
+                onClick={() => setTimeMachineOpen(true)}
+                className="w-full rounded-lg p-3 border-2 border-dashed border-violet-300 hover:border-violet-500 hover:bg-violet-50 transition flex items-center gap-3 text-left group"
+              >
+                <div className="w-9 h-9 rounded-full bg-violet-100 group-hover:bg-violet-200 flex items-center justify-center transition">
+                  <Clock size={18} style={{ color: '#7848BB' }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-sm" style={{ color: '#1A1A2E' }}>Drive-time over a full day</div>
+                  <div className="text-[11px] text-slate-500">Watch this area shrink & grow with traffic</div>
+                </div>
+              </button>
+            )}
+
             {area.notes && (
               <div className="rounded-lg p-3 bg-slate-50 border border-slate-200">
                 <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Notes</div>
@@ -147,6 +167,15 @@ export default function RightPanel() {
         )}
       </div>
       {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} areaId={area.id} />}
+      {timeMachineOpen && area.center_lat != null && area.center_lng != null && (
+        <TimeMachinePanel
+          lat={area.center_lat}
+          lng={area.center_lng}
+          defaultMinutes={area.travel_time_minutes ?? 15}
+          color={area.fill_color ?? '#7848BB'}
+          onClose={() => setTimeMachineOpen(false)}
+        />
+      )}
     </aside>
   );
 }

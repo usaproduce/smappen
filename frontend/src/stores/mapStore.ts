@@ -22,6 +22,8 @@ interface MapState {
   poiResults: any[];
   pendingIsochrone: any | null;
   mapInstance: google.maps.Map | null;
+  /** Active time-machine polygon. Set by TimeMachinePanel; MapCanvas draws it. */
+  timeMachine: { geometry: any; hour: number; label: string; areaSqKm: number | null; color: string } | null;
   setCenter: (c: { lat: number; lng: number }) => void;
   setZoom: (z: number) => void;
   selectArea: (id: string | null) => void;
@@ -37,6 +39,7 @@ interface MapState {
   setPendingIsochrone: (data: any | null) => void;
   setMapInstance: (m: google.maps.Map | null) => void;
   fitBoundsToArea: (geometry: any) => void;
+  setTimeMachine: (tm: MapState['timeMachine']) => void;
 }
 
 export const useMapStore = create<MapState>((set, get) => ({
@@ -57,6 +60,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   poiResults: [],
   pendingIsochrone: null,
   mapInstance: null,
+  timeMachine: null,
   setCenter: (center) => set({ center }),
   setZoom: (zoom) => set({ zoom }),
   selectArea: (id) => set({ selectedAreaId: id }),
@@ -72,6 +76,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   setPoiResults: (poiResults) => set({ poiResults }),
   setPendingIsochrone: (pendingIsochrone) => set({ pendingIsochrone }),
   setMapInstance: (mapInstance) => set({ mapInstance }),
+  setTimeMachine: (timeMachine) => set({ timeMachine }),
   fitBoundsToArea: (geometry) => {
     const map = get().mapInstance;
     if (!map || !geometry?.coordinates?.[0]) return;

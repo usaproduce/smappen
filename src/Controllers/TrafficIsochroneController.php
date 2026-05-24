@@ -57,6 +57,77 @@ class TrafficIsochroneController
         Response::success($result);
     }
 
+    /**
+     * 24-hour timeline for one origin: returns one isochrone per hour of a
+     * given day, ready to be animated as a "time machine" on the map.
+     *
+     * Caching strategy — without it, this is 24 ORS calls per request. The
+     * IsochroneService already keys on (lat, lng, adjustedMinutes, mode). At
+     * a 15-min request the multiplier table collapses 24 hours into ~6-8
+     * unique adjusted-minute values per day. So after warm-up, most hours
+     * hit cache. We also dedupe identical adjustedMinutes here so we make
+     * at most one fresh ORS call per unique minute value.
+     */
+    public function day(Request $request): void
+    {
+        $body = $request->getBody() ?? [];
+        $lat = (float)($body['lat'] ?? 0);
+        $lng = (float)($body['lng'] ?? 0);
+        $time = (int)($body['time_minutes'] ?? 0);
+        $mode = $body['travel_mode'] ?? 'driving-car';
+        $day = (string)($body['day_of_week'] ?? 'monday');
+
+        if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) Response::error('Invalid coordinates');
+        if ($time < 1 || $time > 60) Response::error('Time must be 1-60 minutes for the day view');
+
+        set_time_limit(120); // 24 ORS calls worst-case
+        ini_set('memory_limit', '512M');
+
+        $svc = new IsochroneService();
+        $byMinute = []; // adjustedMinutes → isochrone payload
+        $hours = [];
+        for ($h = 0; $h < 24; $h++) {
+            $adjusted = TrafficService::adjustedMinutes($time, $day, $h);
+            $mult = TrafficService::multiplier($day, $h);
+            if (!isset($byMinute[$adjusted])) {
+                try {
+                    $byMinute[$adjusted] = $svc->calculate($lat, $lng, $adjusted, $mode);
+                } catch (\Throwable $e) {
+                    $byMinute[$adjusted] = ['error' => $e->getMessage()];
+                }
+            }
+            $iso = $byMinute[$adjusted];
+            $hours[] = [
+                'hour' => $h,
+                'label' => str_pad((string)$h, 2, '0', STR_PAD_LEFT) . ':00',
+                'multiplier' => $mult,
+                'adjusted_minutes' => $adjusted,
+                'requested_minutes' => $time,
+                'area_sq_km' => $iso['area_sq_km'] ?? null,
+                'geometry' => $iso['geojson'] ?? null,
+                'bbox' => $iso['bbox'] ?? null,
+                'error' => $iso['error'] ?? null,
+            ];
+        }
+        $areas = array_filter(array_column($hours, 'area_sq_km'));
+        $peak = $areas ? min($areas) : null;
+        $freeflow = $areas ? max($areas) : null;
+        Response::success([
+            'origin' => ['lat' => $lat, 'lng' => $lng],
+            'day_of_week' => $day,
+            'requested_minutes' => $time,
+            'travel_mode' => $mode,
+            'unique_ors_calls' => count($byMinute),
+            'hours' => $hours,
+            'summary' => [
+                'best_hour_area_sq_km' => $freeflow,
+                'worst_hour_area_sq_km' => $peak,
+                'shrink_pct_at_peak' => ($freeflow && $peak && $freeflow > 0)
+                    ? round(100 * (1 - $peak / $freeflow), 1) : null,
+            ],
+        ]);
+    }
+
     public function grid(Request $request): void
     {
         $body = $request->getBody() ?? [];

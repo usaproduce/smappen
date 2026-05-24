@@ -25,7 +25,7 @@ class PlacesController
         try {
             $svc = new GoogleMapsService();
             $places = $svc->searchPlacesNearby($lat, $lng, $radius, $type, $keyword);
-            $svc->logApiUsage('places_nearby', $request->user['id']);
+            $svc->logApiUsage('places_nearby', $request->user['id'], 'places_nearby');
         } catch (\Throwable $e) {
             Response::error('Places search failed: ' . $e->getMessage(), 502);
         }
@@ -54,7 +54,14 @@ class PlacesController
                 POICache::store(md5('area:' . $areaId), $areaId, $places);
             }
         }
-        Response::success(['places' => $places, 'count' => count($places)]);
+        Response::success([
+            'places' => $places,
+            'count' => count($places),
+            '_meta' => [
+                'api_name' => 'places_nearby',
+                'estimated_cost_usd' => \App\Services\GooglePricing::costFor('places_nearby'),
+            ],
+        ]);
     }
 
     public function search(Request $request): void
@@ -69,8 +76,15 @@ class PlacesController
         try {
             $svc = new GoogleMapsService();
             $places = $svc->searchPlacesText($query, $lat, $lng, $radius);
-            $svc->logApiUsage('places_search', $request->user['id']);
-            Response::success(['places' => $places, 'count' => count($places)]);
+            $svc->logApiUsage('places_search', $request->user['id'], 'places_text');
+            Response::success([
+                'places' => $places,
+                'count' => count($places),
+                '_meta' => [
+                    'api_name' => 'places_text',
+                    'estimated_cost_usd' => \App\Services\GooglePricing::costFor('places_text'),
+                ],
+            ]);
         } catch (\Throwable $e) {
             Response::error('Places search failed: ' . $e->getMessage(), 502);
         }
@@ -82,6 +96,11 @@ class PlacesController
         try {
             $svc = new GoogleMapsService();
             $details = $svc->getPlaceDetails($placeId);
+            $svc->logApiUsage('place_details', $request->user['id'] ?? null, 'place_details');
+            $details['_meta'] = [
+                'api_name' => 'place_details',
+                'estimated_cost_usd' => \App\Services\GooglePricing::costFor('place_details'),
+            ];
             Response::success($details);
         } catch (\Throwable $e) {
             Response::error('Place details failed: ' . $e->getMessage(), 502);

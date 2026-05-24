@@ -6,10 +6,12 @@ import { useProjectStore } from '../../stores/projectStore';
 import { projectsApi } from '../../api/projects';
 import {
   LogOut, MapPin, Plus, Settings, ChevronDown, ChevronRight,
-  Share2, MoreHorizontal, Undo2, Redo2, Check, X as XIcon, Bell,
+  Share2, MoreHorizontal, Undo2, Redo2, Check, X as XIcon, Bell, DollarSign,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { notificationApi, type Notification } from '../../api/advanced';
+import { usageApi, formatUsd } from '../../api/usage';
+import { useCostStore } from '../../stores/costStore';
 
 export default function Header() {
   const { user, logout } = useAuthStore();
@@ -34,12 +36,30 @@ export default function Header() {
   useClickOutside(userMenuRef, () => setShowUserMenu(false), showUserMenu);
   useClickOutside(projectDropdownRef, () => setProjectDropdownOpen(false), projectDropdownOpen);
 
-  useEffect(() => { load(); loadNotifs(); }, []);
+  // Cost widget — running Google-API spend today.
+  const totalUsdToday = useCostStore((s) => s.totalUsdToday);
+  const callCountToday = useCostStore((s) => s.callCountToday);
+  const breakdownRef = useRef<{ api_name: string; calls: number; cost_usd: number }[]>([]);
+  const [costOpen, setCostOpen] = useState(false);
+  const costRef = useRef<HTMLDivElement>(null);
+  useClickOutside(costRef, () => setCostOpen(false), costOpen);
+  async function loadUsage() {
+    if (!useAuthStore.getState().token) return;
+    try {
+      const r = await usageApi.today();
+      useCostStore.getState().setTotals(r.total_usd, r.call_count);
+      breakdownRef.current = r.breakdown;
+    } catch {}
+  }
+
+  useEffect(() => { load(); loadNotifs(); loadUsage(); }, []);
   useEffect(() => {
-    // Poll every 60s for new notifications — cheap (single COUNT + 100 rows).
-    // Skip when logged out so we don't hammer 401s after sign-out.
+    // Poll every 60s for notifications + usage. Skip when logged out so we
+    // don't hammer 401s after sign-out.
     const t = setInterval(() => {
-      if (useAuthStore.getState().token) loadNotifs();
+      if (!useAuthStore.getState().token) return;
+      loadNotifs();
+      loadUsage();
     }, 60_000);
     return () => clearInterval(t);
   }, []);
@@ -233,6 +253,51 @@ export default function Header() {
         <button className="text-slate-300 p-1.5 cursor-not-allowed" title="Redo (coming soon)" disabled><Redo2 size={16} /></button>
 
         <div className="h-6 w-px bg-slate-200 mx-1" />
+
+        {/* Google API spend today */}
+        <div ref={costRef} className="relative">
+          <button
+            className="text-slate-600 hover:bg-slate-50 px-2 py-1.5 rounded text-xs font-semibold inline-flex items-center gap-1"
+            onClick={() => setCostOpen((v) => !v)}
+            title="Google API spend today (estimate)"
+          >
+            <DollarSign size={13} style={{ color: totalUsdToday > 1 ? '#dc2626' : '#7848BB' }} />
+            <span style={{ color: '#1A1A2E' }}>{formatUsd(totalUsdToday)}</span>
+            <span className="text-slate-400">today</span>
+          </button>
+          {costOpen && (
+            <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg w-[260px] z-40 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-bold" style={{ color: '#1A1A2E' }}>Google API spend</span>
+                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Estimate</span>
+              </div>
+              <div className="text-2xl font-extrabold" style={{ color: '#1A1A2E' }}>
+                {formatUsd(totalUsdToday)}
+              </div>
+              <div className="text-xs text-slate-500 mb-2">{callCountToday} calls today</div>
+              <div className="border-t border-slate-100 pt-2">
+                <div className="text-[10px] font-bold uppercase text-slate-500 tracking-wider mb-1">By API</div>
+                {breakdownRef.current.length === 0 && (
+                  <div className="text-xs text-slate-400 italic">No spend yet today.</div>
+                )}
+                <ul className="space-y-0.5">
+                  {breakdownRef.current.map((row) => (
+                    <li key={row.api_name} className="flex items-center justify-between text-xs">
+                      <span className="text-slate-600">{row.api_name}</span>
+                      <span className="font-semibold" style={{ color: '#1A1A2E' }}>
+                        {formatUsd(row.cost_usd)} <span className="text-slate-400 text-[10px]">· {row.calls}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-2 leading-snug">
+                Real billing lives in your Google Cloud console. These numbers are
+                per-call estimates based on Maps Platform list pricing.
+              </p>
+            </div>
+          )}
+        </div>
 
         <div ref={notifsRef} className="relative">
           <button

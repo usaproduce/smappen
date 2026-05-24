@@ -17,7 +17,11 @@ class GeocodingController
         try {
             $svc = new GoogleMapsService();
             $result = $svc->geocode($address);
-            $svc->logApiUsage('geocode', $request->user['id']);
+            $svc->logApiUsage('geocode', $request->user['id'], 'geocode');
+            $cost = \App\Services\GooglePricing::costFor('geocode');
+            // Attach the per-call cost so the frontend can show a toast.
+            // It's tiny (~$0.005) but informational is the whole point.
+            $result['_meta'] = ['api_name' => 'geocode', 'estimated_cost_usd' => $cost];
             Response::success($result);
         } catch (\Throwable $e) {
             Response::error('Geocoding failed: ' . $e->getMessage(), 502);
@@ -43,7 +47,13 @@ class GeocodingController
 
         $svc = new GoogleMapsService();
         $result = $svc->batchGeocode($addresses);
-        $svc->logApiUsage('geocode_batch', $request->user['id']);
+        $count = count($addresses);
+        $svc->logApiUsage('geocode_batch', $request->user['id'], 'geocode', $count);
+        $result['_meta'] = [
+            'api_name' => 'geocode',
+            'request_count' => $count,
+            'estimated_cost_usd' => \App\Services\GooglePricing::costFor('geocode', $count),
+        ];
         Response::success($result);
     }
 }

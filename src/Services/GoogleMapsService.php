@@ -232,15 +232,25 @@ class GoogleMapsService
         throw new \RuntimeException('Max retries exceeded');
     }
 
-    public function logApiUsage(string $endpoint, ?string $userId): void
+    /**
+     * Record a Google API call + estimated cost. Caller passes a specific
+     * api_name (e.g. 'geocode', 'places_nearby') which GooglePricing maps
+     * to per-call USD. The cost lives in api_usage_log so the daily-spend
+     * widget and the per-call toasts both read from one source of truth.
+     */
+    public function logApiUsage(string $endpoint, ?string $userId, ?string $apiName = null, int $count = 1): void
     {
         if (!$userId) return;
+        // Default the api_name from the endpoint if the caller didn't specify
+        // — old call sites pass just the endpoint name (e.g. 'geocode').
+        $apiName = $apiName ?: $endpoint;
+        $cost = \App\Services\GooglePricing::costFor($apiName, $count);
         try {
-            // Raw INSERT — api_usage_log has BIGINT AUTO_INCREMENT id, not UUID.
             Database::getInstance()->query(
-                'INSERT INTO api_usage_log (user_id, api_name, endpoint, request_count, created_at)
-                 VALUES (?, ?, ?, 1, ?)',
-                [$userId, 'google_maps', $endpoint, date('Y-m-d H:i:s')]
+                'INSERT INTO api_usage_log
+                   (user_id, api_name, endpoint, request_count, estimated_cost_usd, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)',
+                [$userId, $apiName, $endpoint, $count, $cost, date('Y-m-d H:i:s')]
             );
         } catch (\Throwable $e) {}
     }

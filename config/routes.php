@@ -30,6 +30,7 @@ use App\Controllers\WebhookSubscriptionController;
 use App\Controllers\PublicShareController;
 use App\Controllers\AiScoringController;
 use App\Controllers\OpenApiController;
+use App\Controllers\UsageController;
 
 return function (Router $r) {
     $auth = [Middleware::auth()];
@@ -133,6 +134,12 @@ return function (Router $r) {
     // Traffic-aware isochrones
     $r->post('/api/isochrone/traffic', [TrafficIsochroneController::class, 'calculate'], $rlTraffic);
     $r->post('/api/isochrone/traffic/grid', [TrafficIsochroneController::class, 'grid'], $rlTraffic);
+    $r->post('/api/isochrone/traffic/day', [TrafficIsochroneController::class, 'day'], $rlTraffic);
+
+    // Google API usage / spend visibility
+    $r->get('/api/usage/today', [UsageController::class, 'today'], $auth);
+    $r->get('/api/usage/days', [UsageController::class, 'days'], $auth);
+    $r->get('/api/usage/pricing', [UsageController::class, 'pricing'], $auth);
 
     // Cannibalization
     $r->get('/api/projects/{projectId}/cannibalization', [CannibalizationController::class, 'analyze'], $auth);
