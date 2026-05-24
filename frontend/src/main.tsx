@@ -18,17 +18,14 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
 }
 
 // When a fresh deploy rewrites Vite chunk hashes, a tab opened against the
-// previous build can have the *new* index.html (served network-first by
-// the service worker) but a *stale* runtime cache that no longer has the
-// dynamic-import chunks the new shell asks for — and the old chunks were
-// removed from /public/app/assets/ by the build. Result: "Failed to fetch
-// dynamically imported module" when the user opens any lazy tab (Analogs,
-// Analytics, etc.). React's error boundary catches it and shows the inline
-// "tab crashed" card.
-//
-// Catch those rejections and recover by clearing the SW caches + reloading
-// once. The sessionStorage guard prevents an infinite reload loop if the
-// underlying chunk really is missing (vs just stale).
+// previous build can have a *stale* runtime cache that no longer has the
+// dynamic-import chunks the new shell asks for. Result: "Failed to fetch
+// dynamically imported module" when the user opens any lazy tab. Recover
+// by purging SW caches + unregistering the SW + reloading. The
+// sessionStorage guard is permanent for the tab (no auto-clear) — running
+// it twice in the same session means the recovery itself failed, and a
+// second attempt would just produce another reload loop. After the tab is
+// closed and reopened, the guard resets automatically.
 window.addEventListener('unhandledrejection', (event) => {
   const msg = String(event.reason?.message || event.reason || '');
   const looksLikeStaleChunk =
@@ -36,20 +33,33 @@ window.addEventListener('unhandledrejection', (event) => {
     /Importing a module script failed/i.test(msg) ||
     /error loading dynamically imported module/i.test(msg);
   if (!looksLikeStaleChunk) return;
-  if (sessionStorage.getItem('sm_chunk_reload_done') === '1') return;
-  sessionStorage.setItem('sm_chunk_reload_done', '1');
-  // Best-effort cache purge so the next load fetches fresh chunks.
-  if ('caches' in window) {
-    caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
-      .finally(() => location.reload());
-  } else {
-    location.reload();
+  if (sessionStorage.getItem('sm_chunk_reload_done') === '1') {
+    // Already attempted recovery in this tab. Don't loop — surface the
+    // error to the error boundary instead.
+    console.warn('[chunk-recovery] already attempted in this session, surfacing error');
+    return;
   }
-});
-// Clear the reload guard on a successful navigation that completed without
-// chunk failures, so a future stale-cache incident can recover again.
-window.addEventListener('load', () => {
-  setTimeout(() => sessionStorage.removeItem('sm_chunk_reload_done'), 5000);
+  sessionStorage.setItem('sm_chunk_reload_done', '1');
+  console.warn('[chunk-recovery] stale chunk detected — clearing SW caches + reloading');
+  // Nuclear: purge caches AND unregister all SWs so the next load is fully
+  // fresh from the server. Without unregister, a stuck v4 SW can keep
+  // serving stale assets even after caches are emptied.
+  (async () => {
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+    } catch (e) {
+      console.warn('[chunk-recovery] cleanup failed:', e);
+    } finally {
+      location.reload();
+    }
+  })();
 });
 
 const qc = new QueryClient({
