@@ -40,17 +40,25 @@ class HeatmapController
 
     public function tracts(Request $request): void
     {
-        // Heatmap responses for wide bboxes can be 5-15MB encoded — bump the
-        // per-request memory budget so json_encode doesn't OOM at 128M default.
-        ini_set('memory_limit', '512M');
+        // Heatmap responses can balloon. With 84K tracts seeded across all
+        // states, a wide-bbox tract query that returns 10K rows + builds the
+        // FeatureCollection + json_encode peaked at >512M (see OOM in error
+        // log pre-2026-05-24). Bump to 768M so the buffered-row + decode +
+        // encode chain has headroom; tighter per-level row caps below keep
+        // the typical case well under that.
+        ini_set('memory_limit', '768M');
 
         $bbox = $request->getQuery('bbox', '');
         $metric = $request->getQuery('metric', 'population_density');
         $zoom = (float) $request->getQuery('zoom', 10);
         $levelOverride = $request->getQuery('level'); // 'state' | 'county' | 'tract' | null
-        // 10K is well above our 4,425-tract dataset; effectively no truncation but
-        // keeps memory bounded. ST_AsGeoJSON precision=4 (~11m) keeps payload small.
-        $maxFeatures = min(10000, max(1, (int)$request->getQuery('limit', 8000)));
+        // Original cap of 10K assumed a ~4K-tract DC-only dataset; now that
+        // all 84K US tracts are seeded, an unfiltered wide-bbox tract query
+        // will OOM. 3K is enough to cover a metro-area viewport at zoom 10+
+        // while keeping peak PHP memory under 200MB (10KB/tract × 3K × ~4x
+        // overhead = ~120MB). Truncation flag in meta tells the UI to
+        // suggest zooming in if it bites.
+        $maxFeatures = min(5000, max(1, (int)$request->getQuery('limit', 3000)));
 
         if (!isset(self::METRICS_TRACT[$metric])) {
             Response::error('Unknown metric: ' . $metric, 422);
@@ -128,17 +136,19 @@ class HeatmapController
 
         $features = [];
         $values = [];
-        foreach ($rows as $r) {
+        // Iterate by reference + unset each row's geom string immediately
+        // after json_decode — otherwise we hold the raw GeoJSON string AND
+        // the decoded array in memory simultaneously for every row, which
+        // doubles peak heap on wide-bbox queries.
+        foreach ($rows as $i => &$r) {
             $val = $r['metric_value'] === null ? null : (float)$r['metric_value'];
             if ($val !== null) $values[] = $val;
             $geom = $r['geom'] ? json_decode($r['geom'], true) : null;
+            $r['geom'] = null; // free the raw string
             // Census tract/county/state geometries are stored with X=lat,
             // Y=lng after the DMV normalize. MySQL's ST_AsGeoJSON for SRID
             // 4326 emits [Y, X] which under that storage is [lng, lat] —
-            // i.e., STANDARD GeoJSON already. The old swapCoords call was
-            // needed when DMV was stored in the legacy convention; now it
-            // corrupts every polygon by flipping correct [lng, lat] to a
-            // bogus [lat, lng] (which paints features in the wrong hemisphere).
+            // i.e., STANDARD GeoJSON already.
             $features[] = [
                 'type' => 'Feature',
                 'id' => $r['id'],
@@ -150,6 +160,8 @@ class HeatmapController
                 ],
             ];
         }
+        unset($r);
+        $rows = null; // release the whole row buffer before we json_encode the response
 
         $min = $values ? min($values) : 0;
         $max = $values ? max($values) : 0;
@@ -204,7 +216,11 @@ class HeatmapController
         $expr = self::METRICS_AGG[$metric];
         // Cap subquery to a sane number — county zoom rarely needs >300 in view.
         $limit = min($limit, 300);
-        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(g.geometry, 4) AS geom, q.metric_value
+        // precision=3 (~111m). At zoom 8-9 a county polygon renders 8-50px
+        // wide on a typical screen; 100m detail is invisible. Drops avg
+        // geom from 53KB → 48KB → ~10% saving and meaningfully reduces
+        // sort buffer + PDO row buffer pressure when 300 counties come back.
+        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(g.geometry, 3) AS geom, q.metric_value
                 FROM (
                   SELECT g.geoid AS id, g.name AS name, ($expr) AS metric_value
                   FROM census_counties g
@@ -223,7 +239,12 @@ class HeatmapController
         $expr = self::METRICS_AGG[$metric];
         // State zoom: max ~50 states ever; clamp aggressively.
         $limit = min($limit, 60);
-        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(g.geometry, 4) AS geom, q.metric_value
+        // precision=2 (~1.1km). At zoom ≤7 a state polygon spans the
+        // viewport; sub-kilometer coastline detail is visually pointless.
+        // Drops avg state geom from 363KB → 294KB → saves 4MB per
+        // continental-US query and ~16MB at peak PHP memory after the
+        // json_decode + features-array + json_encode chain.
+        $sql = "SELECT q.id, q.name, ST_AsGeoJSON(g.geometry, 2) AS geom, q.metric_value
                 FROM (
                   SELECT g.state_fips AS id, g.name AS name, ($expr) AS metric_value
                   FROM census_states g

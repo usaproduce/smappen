@@ -62,9 +62,11 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
       const token = ++fetchTokenRef.current;
       setHeatmapLoading(true);
       try {
-        // 10K is well above our ~4,400-tract dataset → effectively no truncation,
-        // and matches the backend cap so memory stays bounded.
-        const res = await heatmapApi.tracts(bbox, metric, zoom, 10000, heatmapLevel);
+        // 3K matches the backend's new per-level cap. The dataset is 84K
+        // tracts now (all states seeded); leaving the limit at 10K would
+        // OOM the backend on a wide-bbox tract query. UI shows a
+        // "truncated — zoom in for more detail" hint when meta.truncated.
+        const res = await heatmapApi.tracts(bbox, metric, zoom, 3000, heatmapLevel);
         if (token !== fetchTokenRef.current) return; // stale response from a previous pan
         const snapshot: google.maps.Data.Feature[] = [];
         layer.forEach((f) => snapshot.push(f));
