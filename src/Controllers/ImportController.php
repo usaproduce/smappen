@@ -131,8 +131,12 @@ class ImportController
         if ($info['ext'] === 'csv') {
             $f = fopen($info['file'], 'r');
             if (!$f) Response::error('Cannot read upload', 500);
+            // rowNum starts at 0; increment first → header is row 1, first
+            // data row is row 2. Earlier draft started at 1 and the failure
+            // messages told users "row 3" for their actual second line, which
+            // was extremely confusing when 80% of geocoding failed.
             $first = true;
-            $rowNum = 1;
+            $rowNum = 0;
             while (($r = fgetcsv($f)) !== false) {
                 $rowNum++;
                 if ($first) { $first = false; continue; } // skip header row

@@ -46,10 +46,24 @@ export default function SharedProjectPage() {
 
   const polygons = useMemo(() => {
     if (!data) return [];
-    return data.areas.map((a) => {
-      const path = (a.geometry?.coordinates?.[0] ?? []).map(([lng, lat]) => ({ lat, lng }));
-      return { id: a.id, name: a.name, path, fill: a.fill_color, stroke: a.stroke_color, opacity: a.fill_opacity };
-    });
+    return data.areas
+      .map((a) => {
+        // Defensive — public payloads may have areas with no geometry or
+        // an unexpected shape (e.g. older imports without polygons). Skip
+        // those instead of letting the .map([lng,lat]) destructure throw
+        // and blank the whole page.
+        const ring = a.geometry?.coordinates?.[0];
+        if (!Array.isArray(ring) || ring.length < 3) return null;
+        const path: google.maps.LatLngLiteral[] = [];
+        for (const pt of ring) {
+          if (!Array.isArray(pt) || pt.length < 2) continue;
+          const [lng, lat] = pt as [number, number];
+          if (Number.isFinite(lat) && Number.isFinite(lng)) path.push({ lat, lng });
+        }
+        if (path.length < 3) return null;
+        return { id: a.id, name: a.name, path, fill: a.fill_color, stroke: a.stroke_color, opacity: a.fill_opacity };
+      })
+      .filter(Boolean) as { id: string; name: string; path: google.maps.LatLngLiteral[]; fill: string; stroke: string; opacity: number }[];
   }, [data]);
 
   if (error) {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useClickOutside } from '../../hooks/useClickOutside';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import { useProjectStore } from '../../stores/projectStore';
@@ -24,13 +25,28 @@ export default function Header() {
   const [notifs, setNotifs] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  // Click-outside refs for the three dropdowns. Without these, opening one
+  // and clicking on the map leaves the menu sitting there visually.
+  const notifsRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  const projectDropdownRef = useRef<HTMLDivElement>(null);
+  useClickOutside(notifsRef, () => setNotifsOpen(false), notifsOpen);
+  useClickOutside(userMenuRef, () => setShowUserMenu(false), showUserMenu);
+  useClickOutside(projectDropdownRef, () => setProjectDropdownOpen(false), projectDropdownOpen);
+
   useEffect(() => { load(); loadNotifs(); }, []);
   useEffect(() => {
     // Poll every 60s for new notifications — cheap (single COUNT + 100 rows).
-    const t = setInterval(loadNotifs, 60_000);
+    // Skip when logged out so we don't hammer 401s after sign-out.
+    const t = setInterval(() => {
+      if (useAuthStore.getState().token) loadNotifs();
+    }, 60_000);
     return () => clearInterval(t);
   }, []);
   async function loadNotifs() {
+    // Belt-and-braces — even on first load there might not be a token if the
+    // header rendered before the auth store rehydrated from localStorage.
+    if (!useAuthStore.getState().token) return;
     try {
       const r = await notificationApi.list();
       setNotifs(r.notifications);
@@ -133,7 +149,7 @@ export default function Header() {
         <div className="h-7 w-px bg-slate-200 mx-1" />
 
         {/* Editable project name / breadcrumb */}
-        <div className="relative flex items-center gap-1">
+        <div ref={projectDropdownRef} className="relative flex items-center gap-1">
           {renaming ? (
             <div className="flex items-center gap-1">
               <input
@@ -218,7 +234,7 @@ export default function Header() {
 
         <div className="h-6 w-px bg-slate-200 mx-1" />
 
-        <div className="relative">
+        <div ref={notifsRef} className="relative">
           <button
             className="relative text-slate-600 hover:bg-slate-50 p-1.5 rounded"
             onClick={() => setNotifsOpen((v) => !v)}
@@ -274,7 +290,7 @@ export default function Header() {
           <Share2 size={15} /> Share
         </button>
 
-        <div className="relative">
+        <div ref={userMenuRef} className="relative">
           <button
             className="ml-1 inline-flex items-center gap-1.5 text-slate-600 hover:bg-slate-50 px-2 py-1.5 rounded text-sm font-semibold"
             onClick={() => setShowUserMenu(!showUserMenu)}

@@ -25,20 +25,35 @@ $maxJobs = 5;
 $claimed = 0;
 
 while ($claimed < $maxJobs) {
-    $reservationId = bin2hex(random_bytes(8));
-    $db->query(
-        "UPDATE jobs
-         SET status = 'running', reserved_at = NOW(), started_at = NOW(),
-             attempts = attempts + 1,
-             progress_message = ?
-         WHERE status = 'queued' AND available_at <= NOW()
-         ORDER BY created_at ASC LIMIT 1",
-        ["claimed:$reservationId"]
-    );
-    $job = $db->fetch(
-        "SELECT * FROM jobs WHERE status = 'running' AND progress_message = ? LIMIT 1",
-        ["claimed:$reservationId"]
-    );
+    // Atomic claim: SELECT … FOR UPDATE locks the row so a concurrent worker
+    // can't grab the same job between our SELECT and UPDATE. The previous
+    // approach (UPDATE-then-SELECT by sentinel) could double-claim if two
+    // workers raced. Wrap in a transaction so the lock is released cleanly.
+    $job = null;
+    try {
+        $db->beginTransaction();
+        $row = $db->fetch(
+            "SELECT * FROM jobs
+             WHERE status = 'queued' AND available_at <= NOW()
+             ORDER BY created_at ASC
+             LIMIT 1 FOR UPDATE SKIP LOCKED"
+        );
+        if ($row) {
+            $db->query(
+                "UPDATE jobs
+                 SET status = 'running', reserved_at = NOW(), started_at = NOW(),
+                     attempts = attempts + 1, progress_message = 'running'
+                 WHERE id = ?",
+                [$row['id']]
+            );
+            $job = $row;
+        }
+        $db->commit();
+    } catch (Throwable $e) {
+        try { $db->rollback(); } catch (Throwable $_) {}
+        error_log('[job-worker] claim failed: ' . $e->getMessage());
+        break;
+    }
     if (!$job) break;
     $claimed++;
     echo "==> running job {$job['id']} ({$job['type']})\n";

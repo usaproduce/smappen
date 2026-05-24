@@ -14,9 +14,9 @@ export default function TrafficTab() {
   const [result, setResult] = useState<any>(null);
 
   async function run() {
-    if (!mapInstance) return;
+    if (!mapInstance) { toast.error('Map not ready yet'); return; }
     const c = mapInstance.getCenter();
-    if (!c) return;
+    if (!c) { toast.error('Pan the map to set an origin first'); return; }
     setBusy(true);
     try {
       const r = await trafficApi.single({
@@ -37,7 +37,7 @@ export default function TrafficTab() {
       <p className="text-xs text-slate-600">How far you can drive at a specific time of day. Uses the map center as origin.</p>
       <Field label="Drive time (min)">
         <input type="number" min={1} max={60} value={time}
-          onChange={(e) => setTime(parseInt(e.target.value || '0'))} className="input h-9 text-sm" />
+          onChange={(e) => setTime(Math.max(0, parseInt(e.target.value, 10) || 0))} className="input h-9 text-sm" />
       </Field>
       <Field label="Day">
         <select className="input h-9 text-sm" value={day} onChange={(e) => setDay(e.target.value as any)}>

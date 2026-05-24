@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { authApi } from '../../api/auth';
 
@@ -7,8 +7,15 @@ export default function VerifyEmailPage() {
   const token = params.get('token') ?? '';
   const [status, setStatus] = useState<'pending' | 'ok' | 'err'>('pending');
   const [error, setError] = useState<string | null>(null);
+  // React 18 StrictMode mounts effects twice in dev; the verification token
+  // is single-use, so the second call would hit "Token already used" and the
+  // user would see an erroneous error. Module-scoped ref lock guards against
+  // both StrictMode and rapid back-button remounts.
+  const attemptedFor = useRef<string | null>(null);
 
   useEffect(() => {
+    if (attemptedFor.current === token) return;
+    attemptedFor.current = token;
     let done = false;
     (async () => {
       if (!token) { setStatus('err'); setError('Missing token'); return; }

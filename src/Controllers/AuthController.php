@@ -145,16 +145,12 @@ class AuthController
         if (strlen($newPassword) < 8) Response::error('Password must be at least 8 characters');
 
         $row = self::redeemToken($token, 'password_reset');
+        // Rotate password + stamp `tokens_invalid_before` so every JWT issued
+        // before this moment is rejected on next request. Cheaper and more
+        // correct than enumerating pseudo-jtis.
         Database::getInstance()->query(
-            'UPDATE users SET password_hash = ? WHERE id = ?',
+            'UPDATE users SET password_hash = ?, tokens_invalid_before = NOW() WHERE id = ?',
             [password_hash($newPassword, PASSWORD_BCRYPT), $row['user_id']]
-        );
-        // Revoke every outstanding JWT for this user so a thief can't reuse one.
-        Database::getInstance()->query(
-            "INSERT INTO revoked_tokens (jti, user_id, revoked_at, expires_at, reason)
-             SELECT UUID(), ?, NOW(), DATE_ADD(NOW(), INTERVAL 1 DAY), 'password_reset'
-             WHERE NOT EXISTS (SELECT 1 FROM revoked_tokens WHERE jti = 'all:' || ?)",
-            [$row['user_id'], $row['user_id']]
         );
         Response::success(['ok' => true]);
     }

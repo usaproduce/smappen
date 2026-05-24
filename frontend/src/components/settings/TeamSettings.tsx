@@ -10,6 +10,9 @@ const ROLE_BADGE: Record<string, { bg: string; fg: string }> = {
   editor: { bg: 'bg-emerald-100', fg: 'text-emerald-800' },
   viewer: { bg: 'bg-slate-100',  fg: 'text-slate-700' },
 };
+// Unknown role values (e.g. legacy 'approver' rows from before migration 007)
+// fall back to a neutral badge so the table still renders.
+const UNKNOWN_BADGE = { bg: 'bg-gray-100', fg: 'text-gray-700' };
 
 export default function TeamSettings() {
   const { currentProject } = useProjectStore();
@@ -96,7 +99,7 @@ export default function TeamSettings() {
           </thead>
           <tbody>
             {collabs.map((c) => {
-              const b = ROLE_BADGE[c.role] || ROLE_BADGE.viewer;
+              const b = ROLE_BADGE[c.role] ?? UNKNOWN_BADGE;
               return (
                 <tr key={c.user_id} className="border-t border-slate-100">
                   <td className="py-2 font-semibold" style={{ color: '#1A1A2E' }}>{c.name}</td>

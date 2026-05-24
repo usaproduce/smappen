@@ -25,7 +25,17 @@ export default function WebhookSettings() {
   async function load() {
     try {
       const { data } = await api.get('/api/webhooks');
-      setHooks(data.data.webhooks);
+      // Backend stores `events` as JSON in MySQL — usually returned as an
+      // array, but on older PHP/MySQL combos PDO can hand it back as a
+      // JSON-encoded string. Normalize either shape so `.join(', ')` below
+      // doesn't blow up.
+      const hooks: Webhook[] = (data.data.webhooks ?? []).map((h: any) => ({
+        ...h,
+        events: Array.isArray(h.events)
+          ? h.events
+          : (typeof h.events === 'string' ? (JSON.parse(h.events || '[]') as string[]) : []),
+      }));
+      setHooks(hooks);
       setEvents(data.data.available_events);
     } catch (e: any) {
       toast.error(e?.response?.data?.error ?? 'Failed');

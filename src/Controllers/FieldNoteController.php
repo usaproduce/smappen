@@ -56,10 +56,17 @@ class FieldNoteController
         if (mb_strlen($note) < 1 || mb_strlen($note) > 5000) Response::error('body must be 1-5000 chars');
         if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) Response::error('Invalid coordinates');
 
-        $captured = $body['captured_at'] ?? date('Y-m-d H:i:s');
-        // Normalize ISO 8601 to MySQL DATETIME
-        if (preg_match('/^\d{4}-\d{2}-\d{2}T/', $captured)) {
-            $captured = (new \DateTime($captured))->format('Y-m-d H:i:s');
+        // Accept anything strtotime() understands (ISO 8601, RFC 2822, "now",
+        // unix timestamps). Bad/garbage input falls back to "now" instead of
+        // throwing — the PWA outbox replays old captures so timestamps must
+        // be lenient.
+        $rawCaptured = $body['captured_at'] ?? null;
+        $captured = date('Y-m-d H:i:s');
+        if (is_string($rawCaptured) && $rawCaptured !== '') {
+            $ts = strtotime($rawCaptured);
+            if ($ts !== false && $ts > 0) {
+                $captured = date('Y-m-d H:i:s', $ts);
+            }
         }
 
         $id = Database::uuid();

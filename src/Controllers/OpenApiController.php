@@ -135,6 +135,17 @@ HTML;
             '/api/areas/{id}/demographics' => ['parameters' => [$idParam], 'get' => $r('Area demographics')],
             '/api/areas/{id}/segments' => ['parameters' => [$idParam], 'get' => $r('Segment mix for area')],
             '/api/areas/{id}/ai-score' => ['parameters' => [$idParam], 'post' => $r('AI-scored verdict (1–100)')],
+            '/api/areas/{id}/rebuild-boundary' => ['parameters' => [$idParam], 'post' => $r('Rebuild a territory polygon via ST_Union over source tracts')],
+            '/api/areas/reach' => ['post' => $r('Smallest circle covering N people')],
+            '/api/demographics/preview' => ['post' => $r('Live demographics for a drafted polygon')],
+            '/api/jobs/{id}/cancel' => ['parameters' => [$idParam], 'post' => $r('Cancel a running background job')],
+            '/api/heatmap/tracts' => ['get' => $r('Choropleth tracts for current viewport')],
+            '/api/places/{placeId}' => [
+                'parameters' => [['name' => 'placeId', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'string']]],
+                'get' => $r('Google Place details'),
+            ],
+            '/api/segmentation/segments' => ['get' => $r('Segment catalog (10 personas)')],
+            '/api/projects/{projectId}/segments' => ['parameters' => [$projParam], 'post' => $r('Segment mix across project areas')],
             '/api/projects/{projectId}/cannibalization' => [
                 'parameters' => [$projParam],
                 'get' => $r('Pairwise overlap demographics'),

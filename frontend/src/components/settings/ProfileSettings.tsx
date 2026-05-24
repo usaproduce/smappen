@@ -16,8 +16,12 @@ interface Profile {
 }
 
 export default function ProfileSettings() {
-  const { user, setUser } = useAuthStore() as any;
-  const [profile, setProfile] = useState<Partial<Profile>>(user || {});
+  // Pick the slices we need so this component re-renders only on relevant
+  // changes — the `as any` cast was hiding the fact that user/setUser are
+  // first-class on the store now.
+  const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
+  const [profile, setProfile] = useState<Partial<Profile>>((user as any) ?? {});
   const [saving, setSaving] = useState(false);
   const [pwd, setPwd] = useState({ current: '', next: '' });
   const [pwdSaving, setPwdSaving] = useState(false);
@@ -36,7 +40,7 @@ export default function ProfileSettings() {
         slack_webhook_url: profile.slack_webhook_url || '',
         theme: profile.theme,
       });
-      setUser?.(data.data.user);
+      setUser(data.data.user);
       toast.success('Saved');
     } catch (e: any) {
       toast.error(e?.response?.data?.error ?? 'Save failed');

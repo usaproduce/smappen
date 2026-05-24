@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import toast from 'react-hot-toast';
 import { useMapStore } from '../stores/mapStore';
 
 interface Opts {
@@ -36,9 +35,11 @@ export function useShortcuts({ onCreateArea, onSaveSnapshot }: Opts = {}) {
         return;
       }
       if (cmd && e.key.toLowerCase() === 's') {
+        // Always preventDefault, even when no snapshot callback is wired —
+        // otherwise the browser's "save page" dialog pops up over the app.
+        // Silent no-op when un-wired is better UX than a "not configured" toast.
         e.preventDefault();
-        if (onSaveSnapshot) onSaveSnapshot();
-        else toast('Snapshot shortcut not wired here');
+        onSaveSnapshot?.();
         return;
       }
       if (!cmd && (e.key === 'd' || e.key === 'D')) {
@@ -46,13 +47,14 @@ export function useShortcuts({ onCreateArea, onSaveSnapshot }: Opts = {}) {
         return;
       }
       if (!cmd && (e.key === 'Delete' || e.key === 'Backspace')) {
-        if (selectedAreaId) {
-          e.preventDefault();
-          if (confirm('Delete selected area?')) {
-            // Defer deletion to area-row context — emit a custom event so any
-            // component that owns the action can listen.
-            document.dispatchEvent(new CustomEvent('smappen:delete-selected-area', { detail: selectedAreaId }));
-          }
+        // Only intercept when an area is selected — otherwise Backspace
+        // should still work for browser-back navigation on certain UAs.
+        if (!selectedAreaId) return;
+        e.preventDefault();
+        if (confirm('Delete selected area?')) {
+          // Defer deletion to area-row context — emit a custom event so any
+          // component that owns the action can listen.
+          document.dispatchEvent(new CustomEvent('smappen:delete-selected-area', { detail: selectedAreaId }));
         }
       }
     };

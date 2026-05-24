@@ -13,9 +13,9 @@ export default function TerritoriesTab({ projectId }: { projectId: string }) {
   const [last, setLast] = useState<any>(null);
 
   async function run() {
-    if (!mapInstance) return;
+    if (!mapInstance) { toast.error('Map not ready yet'); return; }
     const b = mapInstance.getBounds();
-    if (!b) return;
+    if (!b) { toast.error('Pan or zoom the map first'); return; }
     const ne = b.getNorthEast(); const sw = b.getSouthWest();
     setBusy(true);
     try {
@@ -39,7 +39,7 @@ export default function TerritoriesTab({ projectId }: { projectId: string }) {
       <p className="text-xs text-slate-600">Auto-generate balanced territories over the current map view. Each territory becomes an area, named by compass direction (NW, SE, etc.) relative to the view center.</p>
       <Field label="Number of territories">
         <input type="number" min={2} max={30} value={target}
-          onChange={(e) => setTarget(parseInt(e.target.value || '0'))}
+          onChange={(e) => setTarget(Math.max(0, parseInt(e.target.value, 10) || 0))}
           className="input h-9 text-sm" />
       </Field>
       <Field label="Balance by">

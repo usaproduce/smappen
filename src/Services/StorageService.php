@@ -125,16 +125,14 @@ class StorageService
     /**
      * Pre-signed URL (V4 query-string auth). Use for serving private uploads
      * to authenticated users without proxying through PHP.
+     *
+     * Addressing mode: virtual-hosted. Bucket goes in the hostname, NOT in
+     * the canonical path. Earlier draft did `/$bucket$path` for the path,
+     * which DigitalOcean and AWS both reject when the bucket is in the host.
      */
     private static function s3SignedUrl(string $key, int $ttl): string
     {
-        $bucket = Config::get('SPACES_BUCKET');
-        $region = Config::get('SPACES_REGION', 'nyc3');
-        $endpoint = Config::get('SPACES_ENDPOINT', "https://{$region}.digitaloceanspaces.com");
-        $accessKey = Config::get('SPACES_KEY', '');
-        $secretKey = Config::get('SPACES_SECRET', '');
-        $host = parse_url($endpoint, PHP_URL_HOST);
-        $path = '/' . ltrim($key, '/');
+        [$bucket, $region, $accessKey, $secretKey, $host, $path] = self::s3Context($key);
         $now = gmdate('Ymd\THis\Z');
         $date = substr($now, 0, 8);
         $credential = "$accessKey/$date/$region/s3/aws4_request";
@@ -145,7 +143,7 @@ class StorageService
             'X-Amz-Expires' => $ttl,
             'X-Amz-SignedHeaders' => 'host',
         ], '', '&', PHP_QUERY_RFC3986);
-        $canon = "GET\n/$bucket$path\n$query\nhost:$host\n\nhost\nUNSIGNED-PAYLOAD";
+        $canon = "GET\n$path\n$query\nhost:$host\n\nhost\nUNSIGNED-PAYLOAD";
         $strToSign = "AWS4-HMAC-SHA256\n$now\n$date/$region/s3/aws4_request\n" . hash('sha256', $canon);
         $signKey = hash_hmac('sha256', 'aws4_request',
             hash_hmac('sha256', 's3',
@@ -153,19 +151,13 @@ class StorageService
                     hash_hmac('sha256', $date, 'AWS4' . $secretKey, true),
                 true), true), true);
         $sig = hash_hmac('sha256', $strToSign, $signKey);
-        return rtrim($endpoint, '/') . "/$bucket$path?$query&X-Amz-Signature=$sig";
+        return "https://$host$path?$query&X-Amz-Signature=$sig";
     }
 
-    /** SigV4 signer for PUT/GET/DELETE. Returns [url, headers]. */
+    /** SigV4 signer for PUT/GET/DELETE. Returns [url, headers]. Virtual-hosted. */
     private static function sign(string $method, string $key, string $body = '', array $extraHeaders = []): array
     {
-        $bucket = Config::get('SPACES_BUCKET');
-        $region = Config::get('SPACES_REGION', 'nyc3');
-        $endpoint = Config::get('SPACES_ENDPOINT', "https://{$region}.digitaloceanspaces.com");
-        $accessKey = Config::get('SPACES_KEY', '');
-        $secretKey = Config::get('SPACES_SECRET', '');
-        $host = parse_url($endpoint, PHP_URL_HOST);
-        $path = '/' . ltrim($key, '/');
+        [$bucket, $region, $accessKey, $secretKey, $host, $path] = self::s3Context($key);
         $now = gmdate('Ymd\THis\Z');
         $date = substr($now, 0, 8);
         $payloadHash = hash('sha256', $body);
@@ -184,7 +176,7 @@ class StorageService
             $canonHeaders .= $lk . ':' . trim((string) $v) . "\n";
         }
         $signedHeadersStr = implode(';', $signedHeaders);
-        $canon = "$method\n/$bucket$path\n\n$canonHeaders\n$signedHeadersStr\n$payloadHash";
+        $canon = "$method\n$path\n\n$canonHeaders\n$signedHeadersStr\n$payloadHash";
         $strToSign = "AWS4-HMAC-SHA256\n$now\n$date/$region/s3/aws4_request\n" . hash('sha256', $canon);
         $signKey = hash_hmac('sha256', 'aws4_request',
             hash_hmac('sha256', 's3',
@@ -195,6 +187,27 @@ class StorageService
         $auth = "AWS4-HMAC-SHA256 Credential=$accessKey/$date/$region/s3/aws4_request, SignedHeaders=$signedHeadersStr, Signature=$sig";
         $outHeaders = ['Authorization: ' . $auth];
         foreach ($headers as $k => $v) $outHeaders[] = "$k: $v";
-        return [rtrim($endpoint, '/') . "/$bucket$path", $outHeaders];
+        return ["https://$host$path", $outHeaders];
+    }
+
+    /**
+     * Resolve shared S3 inputs and pick virtual-hosted addressing
+     * (https://{bucket}.{region}.digitaloceanspaces.com{path}).
+     * If SPACES_ENDPOINT already has the bucket in the host, honor it as-is.
+     */
+    private static function s3Context(string $key): array
+    {
+        $bucket = (string) Config::get('SPACES_BUCKET', '');
+        $region = (string) Config::get('SPACES_REGION', 'nyc3');
+        $endpoint = (string) Config::get('SPACES_ENDPOINT', "https://{$bucket}.{$region}.digitaloceanspaces.com");
+        $accessKey = (string) Config::get('SPACES_KEY', '');
+        $secretKey = (string) Config::get('SPACES_SECRET', '');
+        $host = parse_url($endpoint, PHP_URL_HOST) ?: "{$bucket}.{$region}.digitaloceanspaces.com";
+        // If the endpoint host does NOT include the bucket subdomain, prepend it.
+        if (strpos($host, $bucket . '.') !== 0) {
+            $host = $bucket . '.' . $host;
+        }
+        $path = '/' . ltrim($key, '/');
+        return [$bucket, $region, $accessKey, $secretKey, $host, $path];
     }
 }

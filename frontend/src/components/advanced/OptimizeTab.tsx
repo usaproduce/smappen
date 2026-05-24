@@ -14,9 +14,9 @@ export default function OptimizeTab({ projectId }: { projectId: string }) {
   const [result, setResult] = useState<any>(null);
 
   async function run() {
-    if (!mapInstance) return;
+    if (!mapInstance) { toast.error('Map not ready yet'); return; }
     const b = mapInstance.getBounds();
-    if (!b) return;
+    if (!b) { toast.error('Pan or zoom the map first'); return; }
     const ne = b.getNorthEast(); const sw = b.getSouthWest();
     setBusy(true);
     try {
@@ -40,15 +40,15 @@ export default function OptimizeTab({ projectId }: { projectId: string }) {
       <p className="text-xs text-slate-600">Find the best K locations within the map view to maximize population covered.</p>
       <Field label="Picks">
         <input type="number" min={1} max={20} value={pickCount}
-          onChange={(e) => setPickCount(parseInt(e.target.value || '0'))} className="input h-9 text-sm" />
+          onChange={(e) => setPickCount(Math.max(0, parseInt(e.target.value, 10) || 0))} className="input h-9 text-sm" />
       </Field>
       <Field label="Reach radius (km)">
         <input type="number" min={1} max={80} value={radiusKm}
-          onChange={(e) => setRadiusKm(parseFloat(e.target.value || '0'))} className="input h-9 text-sm" />
+          onChange={(e) => setRadiusKm(Math.max(0, parseFloat(e.target.value) || 0))} className="input h-9 text-sm" />
       </Field>
       <Field label="Grid step (km)">
         <input type="number" min={1} max={50} value={gridStep}
-          onChange={(e) => setGridStep(parseFloat(e.target.value || '0'))} className="input h-9 text-sm" />
+          onChange={(e) => setGridStep(Math.max(0, parseFloat(e.target.value) || 0))} className="input h-9 text-sm" />
       </Field>
       <button className="btn btn-primary w-full h-10" onClick={run} disabled={busy}>
         {busy ? <Spinner /> : <Target size={14} />} {busy ? 'Optimizing…' : 'Find best locations'}

@@ -46,6 +46,16 @@ class Middleware
                     Response::error('User not found or inactive', 401);
                     return false;
                 }
+                // Bulk-revocation cutoff: tokens issued before the user's
+                // `tokens_invalid_before` (set on password reset) are rejected.
+                // This handles "log me out everywhere" without per-jti rows.
+                if (!empty($user['tokens_invalid_before'])) {
+                    $iat = (int)($decoded->iat ?? 0);
+                    if ($iat > 0 && $iat < strtotime($user['tokens_invalid_before'])) {
+                        Response::error('Token revoked — please sign in again', 401);
+                        return false;
+                    }
+                }
                 unset($user['password_hash']);
                 $request->user = $user;
                 return true;

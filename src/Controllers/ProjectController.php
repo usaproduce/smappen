@@ -56,11 +56,14 @@ class ProjectController
             if (array_key_exists($f, $body)) $update[$f] = $body[$f];
         }
         if (array_key_exists('is_shared', $body)) {
-            if (!empty($body['is_shared'])) {
-                // Always generate a fresh token when sharing turns on, so old links
-                // can't be silently reactivated by re-toggling.
+            $turningOn = !empty($body['is_shared']);
+            $wasOn = !empty($project['is_shared']) && !empty($project['share_token']);
+            if ($turningOn && !$wasOn) {
+                // Only mint a token on the off→on transition. Re-PUTting
+                // is_shared:true on an already-shared project must NOT
+                // rotate the URL — otherwise existing links break silently.
                 $update['share_token'] = Project::generateShareToken();
-            } else {
+            } elseif (!$turningOn) {
                 // Turning off invalidates any outstanding share link.
                 $update['share_token'] = null;
             }

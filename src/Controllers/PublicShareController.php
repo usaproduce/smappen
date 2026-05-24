@@ -81,8 +81,14 @@ class PublicShareController
         ]);
     }
 
-    private static function loadByToken(string $token): array
+    private static function loadByToken(?string $token): array
     {
+        // The PHP type-hint above says `?string` — the router may pass null
+        // when the URL is malformed (e.g. /api/public/projects/ with trailing
+        // slash). Bail with a stable 404 before mb_strlen() throws on null.
+        if ($token === null || $token === '') {
+            Response::error('Share token required', 404);
+        }
         if (mb_strlen($token) < 8) Response::error('Invalid share token', 404);
         $row = Database::getInstance()->fetch(
             'SELECT * FROM projects WHERE share_token = ? AND is_shared = 1',

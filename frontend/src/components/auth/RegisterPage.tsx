@@ -1,12 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../../stores/authStore';
 
 export default function RegisterPage() {
   const navigate = useNavigate();
-  const { register, isLoading } = useAuthStore();
+  const { register, isLoading, isAuthenticated } = useAuthStore();
   const [form, setForm] = useState({ name: '', email: '', password: '', organization_name: '' });
+
+  useEffect(() => {
+    if (isAuthenticated) navigate('/', { replace: true });
+  }, [isAuthenticated, navigate]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();

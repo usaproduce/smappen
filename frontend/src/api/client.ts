@@ -22,10 +22,14 @@ api.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err.response?.status === 401) {
-      useAuthStore.getState().logout();
-      if (location.pathname !== '/login' && location.pathname !== '/register') {
-        location.href = '/login';
-      }
+      // logout() now hits POST /api/auth/logout to revoke the JWT. The 401 we
+      // just received means the token is already invalid, so a server call
+      // would 401 again — fire and forget; don't await it. Clear local state
+      // immediately and redirect.
+      try { useAuthStore.getState().logout(); } catch {}
+      const onAuthPage = ['/login', '/register', '/forgot-password', '/reset-password', '/verify-email']
+        .some((p) => location.pathname.startsWith(p));
+      if (!onAuthPage) location.href = '/login';
     }
     if (!err.response) {
       toast.error('Connection lost. Please check your network.');

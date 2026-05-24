@@ -51,7 +51,9 @@ class TrafficIsochroneController
             'multiplier' => $multiplier,
             'label' => self::label($day, $hour, $multiplier),
         ];
-        self::logUsage($request, 'isochrone_traffic');
+        // No inline logUsage — the rateLimit('traffic_iso') middleware already
+        // wrote an api_usage_log row before invoking us. Double-logging would
+        // inflate analytics by 2× for the same call.
         Response::success($result);
     }
 
@@ -90,7 +92,7 @@ class TrafficIsochroneController
                 'bbox' => $iso['bbox'],
             ];
         }
-        self::logUsage($request, 'isochrone_traffic_grid');
+        // Same as calculate(): rateLimit middleware already logged this call.
         Response::success([
             'center' => ['lat' => $lat, 'lng' => $lng],
             'requested_minutes' => $time,

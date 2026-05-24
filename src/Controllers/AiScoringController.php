@@ -190,19 +190,22 @@ class AiScoringController
 
     private static function cacheGet(string $key): ?string
     {
+        // The `cache` table uses reserved-word columns `key` / `value`, so
+        // queries must backtick-quote them. Earlier draft used `cache_key`
+        // which doesn't exist and would 500 every AI-score request.
         try {
             $row = Database::getInstance()->fetch(
-                'SELECT cache_value FROM cache WHERE cache_key = ? AND (expires_at IS NULL OR expires_at > NOW())',
+                'SELECT `value` FROM cache WHERE `key` = ? AND (expires_at IS NULL OR expires_at > NOW())',
                 [$key]
             );
-            return $row['cache_value'] ?? null;
+            return $row['value'] ?? null;
         } catch (\Throwable $e) { return null; }
     }
     private static function cacheSet(string $key, string $value, int $ttl): void
     {
         try {
             Database::getInstance()->query(
-                'REPLACE INTO cache (cache_key, cache_value, expires_at)
+                'REPLACE INTO cache (`key`, `value`, expires_at)
                  VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))',
                 [$key, $value, $ttl]
             );

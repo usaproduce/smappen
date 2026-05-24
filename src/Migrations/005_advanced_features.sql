@@ -32,9 +32,9 @@ CREATE TABLE IF NOT EXISTS territory_generation_jobs (
 
 -- Areas grow a pointer back to the generation job that created them (nullable).
 ALTER TABLE areas
-    ADD COLUMN generation_job_id CHAR(36) NULL AFTER created_by,
-    ADD COLUMN territory_index INT NULL AFTER generation_job_id,
-    ADD INDEX idx_area_gen_job (generation_job_id);
+    ADD COLUMN IF NOT EXISTS generation_job_id CHAR(36) NULL AFTER created_by,
+    ADD COLUMN IF NOT EXISTS territory_index INT NULL AFTER generation_job_id,
+    ADD INDEX IF NOT EXISTS idx_area_gen_job (generation_job_id);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Feature 5: Customer segmentation (8–12 named segments derived from Census)

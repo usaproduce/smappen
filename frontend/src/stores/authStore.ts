@@ -42,10 +42,13 @@ export const useAuthStore = create<AuthState>()(
           throw e;
         }
       },
-      async logout() {
-        // Best-effort revocation so the JWT can't be replayed if it leaks.
-        try { await authApi.logout(); } catch {}
+      logout() {
+        // Clear local state first so the UI doesn't sit waiting on the
+        // network round-trip. The server-side revocation is best-effort and
+        // fire-and-forget — if the call hangs or 401s, we still got the user
+        // signed out locally.
         set({ user: null, token: null, isAuthenticated: false });
+        authApi.logout().catch(() => {});
       },
       setUser(user) { set({ user }); },
       async loadUser() {
