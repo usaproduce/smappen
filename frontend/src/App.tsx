@@ -1,4 +1,5 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import LoginPage from './components/auth/LoginPage';
 import RegisterPage from './components/auth/RegisterPage';
 import ForgotPasswordPage from './components/auth/ForgotPasswordPage';
@@ -31,6 +32,7 @@ export default function App() {
   // marketing homepage. Avoids the "logged-in user lands on marketing copy"
   // confusion and keeps the SEO surface at `/` intact for anonymous visitors.
   const isAuthed = useAuthStore((s) => !!s.token);
+  useOrphanOverlayCleanup();
   return (
     <ErrorBoundary>
       <Routes>
@@ -61,4 +63,62 @@ export default function App() {
       </Routes>
     </ErrorBoundary>
   );
+}
+
+/**
+ * Belt-and-braces cleanup: on every navigation, sweep document.body for
+ * stuck modal-backdrop elements. React's createPortal should remove its
+ * children on unmount, but if a component portal mounts on /app and the
+ * user navigates away mid-mount (or React's reconciliation glitches across
+ * an effect that ran during the unmount), a fixed-inset-0 div can be left
+ * behind in body — visible as a translucent gray sheet that intercepts
+ * every click on the next page.
+ *
+ * This sweep only removes elements that look exactly like leaked modal
+ * backdrops: direct child of <body>, position:fixed, inset:0, and a class
+ * list that includes the standard backdrop signatures we use across our
+ * modal components (bg-black/* or backdrop-blur-*). It will NOT touch
+ * react-hot-toast's portal (different className), AreaCard's portal menu
+ * (not inset:0), or any other legitimate body-mounted portal.
+ */
+function useOrphanOverlayCleanup() {
+  const location = useLocation();
+  useEffect(() => {
+    // Run on a microtask so we sweep AFTER React has had a chance to
+    // mount/unmount this route's children.
+    const rafId = requestAnimationFrame(() => {
+      const children = Array.from(document.body.children);
+      for (const el of children) {
+        if (!(el instanceof HTMLElement)) continue;
+        if (el.id === 'root') continue;
+        const cs = window.getComputedStyle(el);
+        if (cs.position !== 'fixed') continue;
+        // inset:0 ⇒ all four offsets are 0px (or auto when not explicitly set)
+        const fullCover =
+          (cs.top === '0px' || cs.top === 'auto') &&
+          (cs.left === '0px' || cs.left === 'auto') &&
+          (cs.right === '0px' || cs.right === 'auto') &&
+          (cs.bottom === '0px' || cs.bottom === 'auto');
+        if (!fullCover) continue;
+        const cls = el.className?.toString() || '';
+        const looksLikeBackdrop =
+          /\bfixed\b/.test(cls) &&
+          /\binset-0\b/.test(cls) &&
+          (/\bbg-black\b/.test(cls) || /\bbackdrop-blur\b/.test(cls));
+        // Final safety check: is anything inside still connected to a
+        // React tree? If the element is alive in React, it has children
+        // with React internal fiber pointers — we leave those alone.
+        // Orphans don't have fiber pointers anywhere in their subtree.
+        if (looksLikeBackdrop) {
+          const hasReactFiber = !!Array.from(el.querySelectorAll('*'))
+            .find((n) => Object.keys(n).some((k) => k.startsWith('__reactFiber$')));
+          if (!hasReactFiber) {
+            console.warn('[orphan-cleanup] removing stuck overlay:', el);
+            el.remove();
+          }
+        }
+      }
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [location.pathname]);
 }

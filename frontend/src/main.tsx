@@ -6,14 +6,25 @@ import { Toaster } from 'react-hot-toast';
 import App from './App';
 import './styles.css';
 
-// Register the service worker so the mobile field PWA can install and queue
-// offline note submissions. Skipped during dev (Vite serves on a different
-// origin and would 404 on /app/sw.js).
+// Service worker disabled — was causing recurring stale-cache / stuck-SW
+// issues across deploys. Any existing client that still has a SW will pick
+// up the new kill-switch sw.js (it unregisters itself), but we also
+// proactively unregister + purge caches here so users who land on a fresh
+// JS bundle don't wait for the SW lifecycle to drain.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).catch(() => {
-      // Silent — SW is non-critical
-    });
+    (async () => {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      } catch (_) {}
+      try {
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((k) => caches.delete(k)));
+        }
+      } catch (_) {}
+    })();
   });
 }
 
