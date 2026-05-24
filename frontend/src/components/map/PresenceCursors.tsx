@@ -36,10 +36,14 @@ export default function PresenceCursors() {
   const lastPing = useRef(0);
   const lastPos = useRef<{ lat: number; lng: number } | null>(null);
 
-  // Ping loop — listens to map mousemove + flushes the latest position
-  // every 750ms (so we don't hammer the backend at 60fps).
+  // Ping loop — only fire when we know there are peers to display the
+  // cursor to. Otherwise we're spamming the backend with mousemove pings
+  // that nobody will ever read; on a solo project that's ~80 pings/min
+  // just for an idle user. Note the dependency on peers.length so the
+  // listener re-attaches when a collaborator joins/leaves.
   useEffect(() => {
     if (!projectId || !mapInstance) return;
+    if (peers.length === 0) return; // skip cost when solo
     const handler = (e: google.maps.MapMouseEvent) => {
       if (!e.latLng) return;
       lastPos.current = { lat: e.latLng.lat(), lng: e.latLng.lng() };
@@ -57,37 +61,25 @@ export default function PresenceCursors() {
     };
     const listener = mapInstance.addListener('mousemove', handler);
     return () => google.maps.event.removeListener(listener);
-  }, [projectId, mapInstance]);
+  }, [projectId, mapInstance, peers.length]);
 
-  // SSE peer stream — reconnects on error, drops the channel on unmount.
+  // SSE peer stream. EventSource auto-reconnects on close + respects the
+  // server's `retry: NNN` hint. When there are no peers, the backend
+  // sends `retry: 30000` and closes, so the next reconnect is 30s out —
+  // which means a solo session uses ~50ms of FPM worker time every 30s
+  // instead of locking a worker for 55s every minute. The browser's
+  // built-in retry handles reconnection; we don't manually re-open.
   useEffect(() => {
     if (!projectId) return;
-    let es: EventSource | null = null;
-    let retry: number | undefined;
-    let cancelled = false;
-
-    function open() {
-      if (cancelled) return;
-      // Pass token via query because EventSource ignores headers.
-      const token = useAuthStore.getState().token ?? '';
-      es = new EventSource(`/api/projects/${projectId}/presence/stream?token=${encodeURIComponent(token)}`);
-      es.onmessage = (ev) => {
-        try {
-          const data = JSON.parse(ev.data);
-          if (Array.isArray(data.peers)) setPeers(data.peers);
-        } catch {}
-      };
-      es.onerror = () => {
-        es?.close();
-        if (!cancelled) retry = window.setTimeout(open, 2000);
-      };
-    }
-    open();
-    return () => {
-      cancelled = true;
-      es?.close();
-      window.clearTimeout(retry);
+    const token = useAuthStore.getState().token ?? '';
+    const es = new EventSource(`/api/projects/${projectId}/presence/stream?token=${encodeURIComponent(token)}`);
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (Array.isArray(data.peers)) setPeers(data.peers);
+      } catch {}
     };
+    return () => es.close();
   }, [projectId]);
 
   if (!peers.length) return null;

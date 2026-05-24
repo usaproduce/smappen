@@ -58,18 +58,28 @@ class PresenceController
     }
 
     /**
-     * SSE stream. Long-running; the controller keeps the response open
-     * and pushes a fresh snapshot every ~750ms. The client uses native
-     * EventSource. Frontend disconnects when leaving the page; server
-     * naturally cleans up via PHP request-terminate-timeout (currently 60s,
-     * so the client reconnects every minute — see useEffect cleanup).
+     * SSE stream. PHP-FPM workers are precious (pool of 20 droplet-wide),
+     * so we can't tie one up for 55 seconds just to emit empty peer lists
+     * for a solo user.
+     *
+     * Behavior:
+     *   - First emission immediate. If there are real peers, keep streaming
+     *     every ~750ms for up to 55s (then client reconnects).
+     *   - If the peer list is empty for 6 consecutive emissions (~4.5s),
+     *     close the connection so the worker is freed. The client sees an
+     *     EventSource error and reconnects after a 2s backoff — total
+     *     "presence on" overhead for a solo session is ~5s of worker time
+     *     every ~7s, vs the old 55s of worker time every minute.
+     *
+     * Frontend already skips opening the stream entirely when there are no
+     * collaborators on the project, but this guard is the backstop for
+     * cases where the frontend can't know (e.g. just-added collaborator).
      */
     public function stream(Request $request): void
     {
         $projectId = $request->getParam('projectId');
         $uid = $request->user['id'];
 
-        // SSE headers
         header('Content-Type: text/event-stream');
         header('Cache-Control: no-cache');
         header('Connection: keep-alive');
@@ -78,7 +88,23 @@ class PresenceController
         @set_time_limit(60);
         ignore_user_abort(false);
 
+        // First check: if no peers, send one event with a 30s reconnect
+        // hint and close immediately. EventSource will respect `retry:` and
+        // wait 30s before re-opening. Net cost: ~50ms of worker time every
+        // 30s for a solo session vs the old 55s every 60s.
+        $peers = array_values(array_filter(
+            self::listForProject($projectId),
+            fn($p) => $p['user_id'] !== $uid && (time() - $p['last_seen']) < self::TTL
+        ));
+        if (empty($peers)) {
+            echo "retry: 30000\n";
+            echo "data: " . json_encode(['peers' => []]) . "\n\n";
+            @ob_flush(); flush();
+            return;
+        }
+
         $start = time();
+        $emptyTicks = 0;
         while (time() - $start < 55) {
             if (connection_aborted()) break;
             $peers = array_values(array_filter(
@@ -87,6 +113,18 @@ class PresenceController
             ));
             echo "data: " . json_encode(['peers' => $peers]) . "\n\n";
             @ob_flush(); flush();
+            if (empty($peers)) {
+                $emptyTicks++;
+                // After 3 empty ticks (~2.5s) bump the retry hint to 30s
+                // and bail — the collaborator must have dropped off.
+                if ($emptyTicks >= 3) {
+                    echo "retry: 30000\n\n";
+                    @ob_flush(); flush();
+                    break;
+                }
+            } else {
+                $emptyTicks = 0;
+            }
             usleep(750_000);
         }
     }
