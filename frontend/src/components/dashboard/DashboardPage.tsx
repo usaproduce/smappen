@@ -39,7 +39,13 @@ export default function DashboardPage() {
   const totalUsdToday = useCostStore((s) => s.totalUsdToday);
 
   return (
-    <div className="min-h-screen" style={{ background: '#F9F9FB' }}>
+    // bg-white in light mode + auto-darkened in dark mode by styles.css's
+    // [data-theme="dark"] .bg-white override (→ #1f2937). The earlier
+    // inline style={{ background:'#F9F9FB' }} forced a literal light-gray
+    // page even in light mode AND wasn't caught by dark-mode overrides —
+    // the result was a flat, washed-out "grayed-out" look against the
+    // body's same #F9F9FB.
+    <div className="min-h-screen bg-white">
       <header className="bg-white border-b border-slate-200">
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <Link to="/dashboard" className="flex items-center gap-2 font-extrabold text-[16px]" style={{ color: '#1A1A2E' }}>
