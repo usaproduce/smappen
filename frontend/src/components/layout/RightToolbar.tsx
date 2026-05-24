@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 import { useUiPrefsStore } from '../../stores/uiPrefsStore';
+import toast from 'react-hot-toast';
 
 interface Props {
   onCreateArea: () => void;
@@ -14,11 +15,24 @@ interface Props {
 }
 
 export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, advancedOpen, onScreenshot }: Props) {
-  const { mapInstance, showHeatmap, toggleHeatmap, selectArea, favoritesOnly, toggleFavoritesOnly } = useMapStore();
+  const {
+    mapInstance, showHeatmap, toggleHeatmap, selectArea, favoritesOnly,
+    toggleFavoritesOnly, selectedAreaId, setRightPanelTab, rightPanelTab,
+  } = useMapStore();
 
   function zoom(by: number) {
     if (!mapInstance) return;
     mapInstance.setZoom((mapInstance.getZoom() ?? 10) + by);
+  }
+
+  // Deep-link to a right-panel tab. Requires an area selection — if no
+  // area is selected, hint the user that they need to pick one first.
+  function goToTab(t: 'demographics' | 'businesses' | 'data') {
+    if (!selectedAreaId) {
+      toast('Select an area first', { icon: '👆', position: 'top-right' });
+      return;
+    }
+    setRightPanelTab(t);
   }
 
   return (
@@ -36,10 +50,18 @@ export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, a
       >
         <MapIcon size={20} />
       </button>
-      <button className="toolbar-btn" title="Demographics">
+      <button
+        className={`toolbar-btn ${selectedAreaId && rightPanelTab === 'demographics' ? 'active' : ''}`}
+        title="Demographics for selected area"
+        onClick={() => goToTab('demographics')}
+      >
         <Building size={20} />
       </button>
-      <button className="toolbar-btn" title="Reports">
+      <button
+        className={`toolbar-btn ${selectedAreaId && rightPanelTab === 'businesses' ? 'active' : ''}`}
+        title="Businesses inside the selected area"
+        onClick={() => goToTab('businesses')}
+      >
         <ClipboardList size={20} />
       </button>
       <button className="toolbar-btn" title="Add data" onClick={onImport}>

@@ -124,13 +124,23 @@ class CensusService
             }
         }
 
-        // Find overlapping tracts and overlap percentage
+        // Find overlapping tracts + overlap percentage.
+        // ST_Intersection of two polygons that share only an edge returns a
+        // GEOMETRYCOLLECTION, which ST_Area rejects with MySQL error 3516
+        // (Unexpected geometry type). Filter via ST_GeometryType so only
+        // real-area overlaps contribute — same pattern used in Reach and
+        // Cannibalization.
         $sql = 'SELECT ct.geoid,
-                       ST_Area(ST_Intersection(ct.geometry, a.geometry)) /
-                       NULLIF(ST_Area(ct.geometry), 0) AS overlap_pct
+                       CASE WHEN ST_GeometryType(ST_Intersection(ct.geometry, a.geometry))
+                                IN ("Polygon", "MultiPolygon")
+                            THEN ST_Area(ST_Intersection(ct.geometry, a.geometry))
+                                 / NULLIF(ST_Area(ct.geometry), 0)
+                            ELSE 0
+                       END AS overlap_pct
                 FROM census_tracts ct
                 JOIN areas a ON a.id = :aid
-                WHERE ST_Intersects(ct.geometry, a.geometry)';
+                WHERE ST_Intersects(ct.geometry, a.geometry)
+                HAVING overlap_pct > 0';
         $tracts = $db->fetchAll($sql, [':aid' => $areaId]);
 
         if (empty($tracts)) {

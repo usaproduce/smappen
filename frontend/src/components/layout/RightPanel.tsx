@@ -22,9 +22,12 @@ const modeLabel: Record<string, string> = {
 };
 
 export default function RightPanel() {
-  const { selectedAreaId, selectArea, openTimeMachine } = useMapStore();
+  const { selectedAreaId, selectArea, openTimeMachine, rightPanelTab, setRightPanelTab } = useMapStore();
   const { areas } = useProjectStore();
-  const [tab, setTab] = useState<Tab>('overview');
+  // Tab state lives in mapStore so the right-toolbar Demographics/Businesses
+  // buttons can deep-link into a specific tab when an area is selected.
+  const tab = rightPanelTab as Tab;
+  const setTab = setRightPanelTab as (t: Tab) => void;
   const [exportOpen, setExportOpen] = useState(false);
 
   const area = areas.find((a) => a.id === selectedAreaId);

@@ -29,6 +29,9 @@ interface MapState {
   timeMachineRequest: { lat: number; lng: number; minutes: number; color: string } | null;
   /** Left-panel filter: show only favorited areas. Toggled by the toolbar star. */
   favoritesOnly: boolean;
+  /** Right-panel active tab. Promoted out of RightPanel local state so the
+   *  toolbar Demographics/Businesses/Reports buttons can deep-link into a tab. */
+  rightPanelTab: 'overview' | 'demographics' | 'businesses' | 'data';
   setCenter: (c: { lat: number; lng: number }) => void;
   setZoom: (z: number) => void;
   selectArea: (id: string | null) => void;
@@ -48,6 +51,7 @@ interface MapState {
   openTimeMachine: (opts?: Partial<NonNullable<MapState['timeMachineRequest']>>) => void;
   closeTimeMachine: () => void;
   toggleFavoritesOnly: () => void;
+  setRightPanelTab: (t: MapState['rightPanelTab']) => void;
 }
 
 export const useMapStore = create<MapState>((set, get) => ({
@@ -71,6 +75,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   timeMachine: null,
   timeMachineRequest: null,
   favoritesOnly: false,
+  rightPanelTab: 'overview',
   setCenter: (center) => set({ center }),
   setZoom: (zoom) => set({ zoom }),
   selectArea: (id) => set({ selectedAreaId: id }),
@@ -101,6 +106,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   },
   closeTimeMachine: () => set({ timeMachineRequest: null, timeMachine: null }),
   toggleFavoritesOnly: () => set((s) => ({ favoritesOnly: !s.favoritesOnly })),
+  setRightPanelTab: (rightPanelTab) => set({ rightPanelTab }),
   fitBoundsToArea: (geometry) => {
     const map = get().mapInstance;
     if (!map || !geometry?.coordinates?.[0]) return;

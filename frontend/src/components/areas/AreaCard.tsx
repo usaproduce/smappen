@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Trash2, MoreHorizontal, Car, Bike, Footprints, Circle, Edit3,
   Copy, FolderInput, Crosshair, Eye, Palette, Star,
@@ -26,6 +27,7 @@ export default function AreaCard({ area }: { area: Area }) {
   const [renameVal, setRenameVal] = useState(area.name);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
 
   const isSelected = area.id === selectedAreaId;
   const ModeIcon = modeIcon[area.travel_mode ?? ''] ?? Circle;
@@ -247,6 +249,7 @@ export default function AreaCard({ area }: { area: Area }) {
       </button>
       <div ref={menuRef} className="relative" onClick={(e) => e.stopPropagation()}>
         <button
+          ref={menuButtonRef}
           className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-100 opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={() => { setMenuOpen(!menuOpen); setColorPickerOpen(false); }}
           title="Actions"
@@ -254,7 +257,10 @@ export default function AreaCard({ area }: { area: Area }) {
           <MoreHorizontal size={14} />
         </button>
         {menuOpen && (
-          <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-20 min-w-[180px] py-1">
+          <PortalMenu
+            anchor={menuButtonRef.current}
+            onClose={() => { setMenuOpen(false); setColorPickerOpen(false); }}
+          >
             <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); setRenaming(true); }}>
               <Edit3 size={13} /> Rename
             </button>
@@ -267,12 +273,13 @@ export default function AreaCard({ area }: { area: Area }) {
             <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 flex items-center gap-2" onClick={onZoomTo}>
               <Crosshair size={13} /> Zoom to area
             </button>
-            <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 flex items-center gap-2" onClick={() => onDuplicate()}>
+            <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); onDuplicate(); }}>
               <Copy size={13} /> Duplicate
             </button>
             <button
               className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 flex items-center gap-2"
               onClick={() => {
+                setMenuOpen(false);
                 const km = parseFloat(prompt('Offset distance (km):', '5') ?? '0');
                 if (!km || km <= 0) return;
                 const deg = parseFloat(prompt('Bearing (0=N, 90=E, 180=S, 270=W):', '90') ?? '90');
@@ -291,7 +298,7 @@ export default function AreaCard({ area }: { area: Area }) {
             <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-red-50 text-red-600 border-t border-slate-100 flex items-center gap-2" onClick={onDelete}>
               <Trash2 size={13} /> Delete
             </button>
-          </div>
+          </PortalMenu>
         )}
       </div>
     </div>
@@ -332,5 +339,74 @@ function ColorSwatches({ current, onPick }: { current?: string | null; onPick: (
       {recents.length > 0 && <Row label="Recent" colors={recents} />}
       <Row label="Brand" colors={AREA_PALETTE} />
     </div>
+  );
+}
+
+/**
+ * Floating menu rendered via createPortal at document.body so it can escape
+ * the AreaList's `overflow-y-auto` clip. Positioned with `fixed` coordinates
+ * computed from the anchor button's getBoundingClientRect — and flipped above
+ * the trigger when it would otherwise overflow the viewport bottom.
+ *
+ *   - Closes on outside click (mousedown, before any inner button click fires)
+ *   - Closes on scroll/resize so it doesn't float disconnected from the row
+ *   - z-50 so it sits above panels (which are z-20/30)
+ */
+function PortalMenu({
+  anchor,
+  children,
+  onClose,
+}: {
+  anchor: HTMLElement | null;
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; flipUp: boolean }>({ top: 0, left: 0, flipUp: false });
+
+  // Position before paint so the menu never visibly jumps.
+  useLayoutEffect(() => {
+    if (!anchor) return;
+    const place = () => {
+      const r = anchor.getBoundingClientRect();
+      const menuH = menuRef.current?.offsetHeight ?? 280;
+      const menuW = 200;
+      const margin = 6;
+      const wouldOverflowBottom = r.bottom + menuH + margin > window.innerHeight;
+      // Anchor right edge to the button's right; clamp left so we never go off-screen.
+      const right = Math.min(window.innerWidth - 8, r.right);
+      const left = Math.max(8, right - menuW);
+      const top = wouldOverflowBottom ? Math.max(8, r.top - menuH - margin) : r.bottom + margin;
+      setPos({ top, left, flipUp: wouldOverflowBottom });
+    };
+    place();
+    window.addEventListener('scroll', onClose, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', onClose, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [anchor, onClose]);
+
+  // Outside-click handler — uses mousedown so it fires before any inner click.
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      if (anchor?.contains(e.target as Node)) return;
+      onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [anchor, onClose]);
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className="fixed bg-white border border-slate-200 rounded-lg shadow-lg z-50 min-w-[200px] max-w-[260px] py-1"
+      style={{ top: pos.top, left: pos.left }}
+    >
+      {children}
+    </div>,
+    document.body
   );
 }
