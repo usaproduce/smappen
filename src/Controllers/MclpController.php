@@ -51,22 +51,48 @@ class MclpController
 
         $candidates = self::buildCandidates($candidatesIn, $bbox, $gridStepKm);
         if (count($candidates) < $pickCount) {
-            Response::error('Not enough candidates (' . count($candidates) . ') for pick_count ' . $pickCount);
+            Response::error('Not enough candidates (' . count($candidates) . ') for pick_count ' . $pickCount, 422);
         }
-        if (count($candidates) > 1500) {
-            Response::error('Too many candidate locations (' . count($candidates) . '). Reduce grid_step_km or pass an explicit candidates list.');
+        // Old cap was 1500. Even with the spatial pre-filter below, each
+        // candidate still does an indexed scan + per-row distance check —
+        // 1500 candidates × ~150 tracts in-radius averages ~7s just for
+        // SQL roundtrips. 500 keeps us well under the 45s wall-clock + 60s
+        // Apache timeout. UI surfaces this as a 422 so the user can lower
+        // pick_count or widen grid_step_km.
+        if (count($candidates) > 500) {
+            Response::error('Too many candidate locations (' . count($candidates) . '). Reduce by raising grid_step_km, narrowing the bbox, or passing an explicit candidates list (max 500).', 422);
         }
 
-        // For each candidate: list of (tract geoid, weight).
-        // We do this in one SQL pass per candidate using ST_Distance_Sphere on
-        // tract centroids — much cheaper than ST_Intersects against polygons.
+        // For each candidate, find tracts within radius_km. The old query did
+        // ST_Distance_Sphere on EVERY tract (~84K nationwide) which couldn't
+        // use the SPATIAL INDEX → full table scan per candidate. That caused
+        // the 504 timeouts seen in earlier logs.
+        //
+        // Fix: pre-filter with ST_Intersects against a buffer polygon (uses
+        // the SPATIAL INDEX on census_tracts.geometry), then refine with the
+        // exact ST_Distance_Sphere check. Cuts the per-candidate row count
+        // from ~84K to ~150 in a typical metro radius.
         $candidateCoverage = [];
+        // 1 degree latitude ≈ 111km. Add a small fudge factor so we don't
+        // accidentally exclude tracts whose centroid is just inside the
+        // radius but bbox is outside.
+        $bufferDeg = ($radiusKm / 111) * 1.1;
+
         foreach ($candidates as $idx => $c) {
-            // Two MySQL 8 quirks compounded here:
-            //   - ST_Centroid does not work on geographic SRS → relabel with ST_SRID(g, 0)
-            //   - The centroid then loses its SRID, so ST_Distance_Sphere
-            //     would reject it; we re-tag it with SRID 4326 before the
-            //     distance check. The numeric coords are preserved.
+            $minLat = $c['lat'] - $bufferDeg;
+            $maxLat = $c['lat'] + $bufferDeg;
+            // Longitude degrees shrink with latitude; widen accordingly.
+            $cosLat = max(0.000001, cos(deg2rad($c['lat'])));
+            $lngBuf = $bufferDeg / $cosLat;
+            $minLng = $c['lng'] - $lngBuf;
+            $maxLng = $c['lng'] + $lngBuf;
+            // SRID-4326 WKT in (lat lng) axis order, matching how
+            // census_tracts.geometry is stored (see seed-census.php).
+            $bboxWkt = sprintf(
+                'POLYGON((%1$.7f %2$.7f, %1$.7f %4$.7f, %3$.7f %4$.7f, %3$.7f %2$.7f, %1$.7f %2$.7f))',
+                $minLat, $minLng, $maxLat, $maxLng
+            );
+
             $rows = Database::getInstance()->fetchAll(
                 "SELECT ct.geoid,
                         CASE ?
@@ -78,11 +104,12 @@ class MclpController
                         END AS w
                  FROM census_tracts ct
                  LEFT JOIN census_demographics d ON d.geoid = ct.geoid
-                 WHERE ST_Distance_Sphere(
+                 WHERE MBRIntersects(ct.geometry, ST_GeomFromText(?, 4326))
+                   AND ST_Distance_Sphere(
                          ST_SRID(ST_Centroid(ST_SRID(ct.geometry, 0)), 4326),
                          ST_GeomFromText(?, 4326)
                        ) <= ?",
-                [$metric, "POINT({$c['lng']} {$c['lat']})", $radiusKm * 1000]
+                [$metric, $bboxWkt, "POINT({$c['lng']} {$c['lat']})", $radiusKm * 1000]
             );
             $cov = [];
             foreach ($rows as $r) {

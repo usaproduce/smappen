@@ -82,14 +82,32 @@ class TerritoryController
         try {
             $gen = new TerritoryGenerator();
             $result = $gen->run($bbox, $target, $metric, $constraints);
-        } catch (\Throwable $e) {
+        } catch (\InvalidArgumentException | \DomainException $e) {
+            // Client-side mistake (bad target_count, missing inputs). 422.
             $db->query(
-                'UPDATE territory_generation_jobs
-                 SET status = "failed", error_message = ?, finished_at = NOW()
-                 WHERE id = ?',
+                'UPDATE territory_generation_jobs SET status = "failed", error_message = ?, finished_at = NOW() WHERE id = ?',
                 [substr($e->getMessage(), 0, 5000), $jobId]
             );
-            Response::error('Territory generation failed: ' . $e->getMessage(), 500);
+            Response::error($e->getMessage(), 422);
+        } catch (\RuntimeException $e) {
+            // Data-coverage problems ("Not enough census coverage in bbox").
+            // The user can fix this by choosing a different bbox — it's a 422,
+            // not a server fault. Earlier this returned a misleading HTTP 500.
+            $db->query(
+                'UPDATE territory_generation_jobs SET status = "failed", error_message = ?, finished_at = NOW() WHERE id = ?',
+                [substr($e->getMessage(), 0, 5000), $jobId]
+            );
+            $msg = $e->getMessage();
+            $code = stripos($msg, 'coverage') !== false || stripos($msg, 'not enough') !== false ? 422 : 500;
+            Response::error($msg, $code);
+        } catch (\Throwable $e) {
+            // True server failure — keep the 500.
+            $db->query(
+                'UPDATE territory_generation_jobs SET status = "failed", error_message = ?, finished_at = NOW() WHERE id = ?',
+                [substr($e->getMessage(), 0, 5000), $jobId]
+            );
+            error_log('[territory] unexpected: ' . $e->getMessage());
+            Response::error('Territory generation failed. Try again or contact support.', 500);
         }
 
         $palette = ['#7848BB', '#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#ec4899',
