@@ -359,3 +359,112 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
   border-radius: 3px;
   vertical-align: middle;
 }
+
+/* ── Panel + card animations ──────────────────────────────────────────── */
+
+/* Slide-in-from-edge for floating panels (right-panel, advanced-panel,
+   heatmap-panel, daypart strip). The combined translate + opacity + slight
+   scale produces a "card expands into place" feel rather than a hard pop. */
+.panel-slide-right { animation: panelInRight 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+.panel-slide-left  { animation: panelInLeft  0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+.panel-slide-up    { animation: panelInUp    0.24s cubic-bezier(0.16, 1, 0.3, 1); }
+.panel-slide-down  { animation: panelInDown  0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+@keyframes panelInRight {
+  from { opacity: 0; transform: translateX(24px) scale(0.98); }
+  to   { opacity: 1; transform: translateX(0)    scale(1); }
+}
+@keyframes panelInLeft {
+  from { opacity: 0; transform: translateX(-24px) scale(0.98); }
+  to   { opacity: 1; transform: translateX(0)     scale(1); }
+}
+@keyframes panelInUp {
+  from { opacity: 0; transform: translateY(20px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+@keyframes panelInDown {
+  from { opacity: 0; transform: translateY(-12px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)     scale(1); }
+}
+
+/* "Pop-in" for buttons that appear on hover (the … menu, star, etc) so they
+   don't snap visible — smaller scale-up feels more refined than opacity-only. */
+.fade-in {
+  animation: fadeInSlight 0.18s ease-out;
+}
+@keyframes fadeInSlight {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Card expansion — used for menus / dropdowns. transform-origin top so the
+   menu unfurls downward from its trigger rather than zooming from center. */
+.card-expand {
+  animation: cardExpand 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top;
+}
+@keyframes cardExpand {
+  from { opacity: 0; transform: scaleY(0.85) translateY(-4px); }
+  to   { opacity: 1; transform: scaleY(1)    translateY(0); }
+}
+
+/* List stagger — when a list of items first renders, animate them in with a
+   tiny per-item delay so it cascades visibly. Each item should set
+   --stagger-i (the row index) inline. Cap at 8 so a long list doesn't waste
+   a full second. */
+.stagger-in {
+  opacity: 0;
+  animation: areaRowIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(min(var(--stagger-i, 0), 8) * 30ms);
+}
+
+/* Toolbar buttons — gentle hover lift + colored ring on hover, more refined
+   than the old "active = filled background" jump. */
+.toolbar-btn {
+  position: relative;
+  width: 40px; height: 40px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  color: var(--slate);
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.12s ease;
+}
+.toolbar-btn:hover {
+  background: var(--brand-50);
+  color: var(--brand);
+  transform: translateY(-1px);
+}
+.toolbar-btn:active { transform: translateY(0) scale(0.96); }
+.toolbar-btn.active {
+  background: var(--brand-light);
+  color: var(--brand);
+}
+
+/* Sparkle pulse — used on featured CTAs (eg the dashed-violet Time Machine
+   launcher). A tiny breathing ring that doesn't distract but invites a click. */
+.sparkle-pulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 0 rgba(120, 72, 187, 0.35);
+  pointer-events: none;
+  animation: sparklePulse 2.4s ease-in-out infinite;
+}
+@keyframes sparklePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(120, 72, 187, 0); }
+  50%      { box-shadow: 0 0 0 6px rgba(120, 72, 187, 0.10); }
+}
+
+/* Respect prefers-reduced-motion — disable all the showy stuff for users
+   who've asked the OS not to animate. */
+@media (prefers-reduced-motion: reduce) {
+  .panel-slide-right,
+  .panel-slide-left,
+  .panel-slide-up,
+  .panel-slide-down,
+  .fade-in,
+  .card-expand,
+  .stagger-in,
+  .sparkle-pulse::after { animation: none !important; }
+  .toolbar-btn:hover { transform: none; }
+}

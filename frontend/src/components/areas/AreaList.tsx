@@ -130,7 +130,13 @@ export default function AreaList() {
         />
       ) : (
         <div>
-          {filtered.map((a) => <AreaCard key={a.id} area={a} />)}
+          {filtered.map((a, i) => (
+            // Inline CSS var drives the .stagger-in animation delay so rows
+            // cascade in on first paint — capped at 8 inside the CSS rule.
+            <div key={a.id} className="stagger-in" style={{ ['--stagger-i' as any]: i }}>
+              <AreaCard area={a} />
+            </div>
+          ))}
         </div>
       )}
     </div>

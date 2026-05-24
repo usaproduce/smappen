@@ -1,7 +1,7 @@
 import { Polygon, InfoWindow } from '@react-google-maps/api';
 import { useState } from 'react';
 import { useMapStore } from '../../stores/mapStore';
-import { geoJsonToGooglePath, polygonCentroid } from '../../utils/geo';
+import { geoJsonToGooglePaths, polygonCentroid } from '../../utils/geo';
 import type { Area } from '../../types';
 
 export default function AreaPolygon({ area, heatmapOn = false }: { area: Area; heatmapOn?: boolean }) {
@@ -10,9 +10,15 @@ export default function AreaPolygon({ area, heatmapOn = false }: { area: Area; h
   const [hover, setHover] = useState(false);
 
   if (!area.geometry) return null;
-  const path = geoJsonToGooglePath(area.geometry);
+  // After migration 011 territory geometries can be MultiPolygon (multiple
+  // disjoint pieces — common when k-means clusters source tracts that aren't
+  // spatially contiguous). Render one <Polygon> per piece so each shape on
+  // the map is a real, accurate boundary instead of a stretched convex hull.
+  const paths = geoJsonToGooglePaths(area.geometry as any);
+  if (paths.length === 0) return null;
 
-  // In heatmap mode, fill becomes invisible and stroke flips to white per Smappen styling.
+  // Heatmap mode: fill goes transparent and stroke flips to white so the
+  // outline stays visible over colored tracts.
   const fillColor = area.fill_color || '#7848BB';
   const strokeColor = heatmapOn ? '#FFFFFF' : (area.stroke_color || fillColor);
   const strokeWeight = heatmapOn ? 3 : (isSelected ? 3 : (area.stroke_weight ?? 2));
@@ -20,31 +26,32 @@ export default function AreaPolygon({ area, heatmapOn = false }: { area: Area; h
 
   return (
     <>
-      <Polygon
-        path={path}
-        options={{
-          fillColor,
-          fillOpacity,
-          strokeColor,
-          strokeWeight,
-          strokeOpacity: 1,
-          clickable: true,
-          zIndex: isSelected ? 5 : 1,
-        }}
-        onClick={() => selectArea(area.id)}
-        onMouseOver={() => setHover(true)}
-        onMouseOut={() => setHover(false)}
-      />
+      {paths.map((path, i) => (
+        <Polygon
+          key={i}
+          path={path}
+          options={{
+            fillColor,
+            fillOpacity,
+            strokeColor,
+            strokeWeight,
+            strokeOpacity: 1,
+            clickable: true,
+            zIndex: isSelected ? 5 : 1,
+          }}
+          onClick={() => selectArea(area.id)}
+          onMouseOver={() => setHover(true)}
+          onMouseOut={() => setHover(false)}
+        />
+      ))}
       {hover && (() => {
-        // Surface a one-line stat preview alongside the area name. Reads
-        // demographics_cache in both nested + flat shapes.
         const dc: any = (area as any).demographics_cache ?? {};
         const pop = typeof dc.population?.total === 'number' ? dc.population.total
           : typeof dc.population === 'number' ? dc.population
           : null;
         const income = dc.income?.median_household_income ?? dc.median_household_income;
         return (
-          <InfoWindow position={polygonCentroid(area.geometry)} options={{ disableAutoPan: true }}>
+          <InfoWindow position={polygonCentroid(area.geometry as any)} options={{ disableAutoPan: true }}>
             <div className="text-sm" style={{ minWidth: 160 }}>
               <div className="font-semibold" style={{ color: '#1A1A2E' }}>{area.name}</div>
               <div className="text-slate-500 text-xs">

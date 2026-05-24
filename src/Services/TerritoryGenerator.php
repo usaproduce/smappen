@@ -82,14 +82,26 @@ class TerritoryGenerator
         $result = [];
         foreach ($clusters as $k => $c) {
             if (empty($c['pts'])) continue;
-            $hull = self::convexHull($c['pts']);
+            // Replace the previous convex-hull dissolve with a real ST_Union
+            // over the source tracts. The hull stretched diagonally whenever
+            // the cluster's tracts weren't contiguous; ST_Union produces a
+            // MultiPolygon that follows actual tract boundaries (one piece
+            // per spatial group). MySQL 8 only has binary ST_Union, so we
+            // iterate pairwise — capped at MAX_TRACTS_FOR_UNION per cluster
+            // to keep the sync pipeline under ~30s total.
+            $geom = self::unionTractGeometries($c['tract_ids']);
+            if ($geom === null) {
+                // Fallback to convex hull if the union failed for any reason.
+                $hull = self::convexHull($c['pts']);
+                $geom = ['type' => 'Polygon', 'coordinates' => [$hull]];
+            }
             $result[] = [
                 'index' => $k,
                 'centroid' => $centroids[$k],
                 'tract_count' => count($c['tract_ids']),
                 'population' => (int) round($c['pop']),
                 'median_household_income' => $c['income_n'] > 0 ? (int) round($c['income_sum'] / $c['income_n']) : null,
-                'geometry' => ['type' => 'Polygon', 'coordinates' => [$hull]],
+                'geometry' => $geom,
                 'tract_geoids' => $c['tract_ids'],
             ];
         }
@@ -272,6 +284,62 @@ class TerritoryGenerator
                 }
             }
             if (!$improved) return;
+        }
+    }
+
+    private const MAX_TRACTS_FOR_UNION = 80;
+
+    /**
+     * ST_Union over a cluster's source tracts. Returns a GeoJSON Polygon or
+     * MultiPolygon. MySQL 8's ST_Union is binary, so we iterate pairwise —
+     * roughly 80ms per union step on a typical droplet. Cap at 80 tracts per
+     * cluster so the generation pipeline stays under ~30s for an 8-cluster run.
+     *
+     * Coordinate-axis quirk: ST_AsGeoJSON on a SRID-4326 column returns
+     * [lat, lng] pairs (per WKT spec), but we use [lng, lat] in GeoJSON
+     * everywhere else. Swap via GeoUtils::swapGeometry on the way out.
+     */
+    private static function unionTractGeometries(array $tractIds): ?array
+    {
+        if (empty($tractIds)) return null;
+        $ids = array_slice($tractIds, 0, self::MAX_TRACTS_FOR_UNION);
+        $db = Database::getInstance();
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $rows = $db->fetchAll(
+            "SELECT ST_AsText(geometry) AS wkt FROM census_tracts WHERE geoid IN ($placeholders)",
+            $ids
+        );
+        if (empty($rows)) return null;
+
+        // Pairwise fold. Each iteration writes the cumulative WKT into $current;
+        // a try/catch lets us skip degenerate unions (e.g. self-intersections
+        // from low-precision geometries) and continue with the rest.
+        $current = $rows[0]['wkt'];
+        for ($i = 1; $i < count($rows); $i++) {
+            try {
+                $merged = $db->fetch(
+                    "SELECT ST_AsText(ST_Union(ST_GeomFromText(?, 4326), ST_GeomFromText(?, 4326))) AS wkt",
+                    [$current, $rows[$i]['wkt']]
+                );
+                if (!empty($merged['wkt'])) $current = $merged['wkt'];
+            } catch (\Throwable $e) {
+                error_log('TerritoryGenerator pairwise ST_Union skipped: ' . $e->getMessage());
+            }
+        }
+
+        // Convert WKT → GeoJSON via MySQL ST_AsGeoJSON, then swap coord order.
+        try {
+            $row = $db->fetch(
+                'SELECT ST_AsGeoJSON(ST_GeomFromText(?, 4326), 5) AS gj',
+                [$current]
+            );
+            if (empty($row['gj'])) return null;
+            $geom = json_decode($row['gj'], true);
+            if (!is_array($geom)) return null;
+            return \App\Services\GeoUtils::swapGeometry($geom);
+        } catch (\Throwable $e) {
+            error_log('TerritoryGenerator ST_AsGeoJSON failed: ' . $e->getMessage());
+            return null;
         }
     }
 

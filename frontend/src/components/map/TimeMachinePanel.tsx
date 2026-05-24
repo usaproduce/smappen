@@ -153,7 +153,7 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
   // also need a separate <input type=range> wasting vertical space.
   return (
     <aside
-      className="absolute bottom-4 left-4 right-20 bg-white rounded-xl shadow-xl border border-slate-200 z-30 overflow-hidden"
+      className="absolute bottom-4 left-4 right-20 bg-white rounded-xl shadow-xl border border-slate-200 z-30 overflow-hidden panel-slide-up"
       style={{ maxWidth: 'calc(100vw - 100px)' }}
     >
       {/* ── Row 1: identity + controls (always visible) ──────────────────── */}

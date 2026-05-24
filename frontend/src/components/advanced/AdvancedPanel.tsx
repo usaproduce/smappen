@@ -40,7 +40,7 @@ export default function AdvancedPanel({ onClose }: Props) {
   const { currentProject } = useProjectStore();
 
   return (
-    <aside className="absolute top-4 right-[68px] w-[400px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 z-30 flex flex-col">
+    <aside className="absolute top-4 right-[68px] w-[400px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 z-30 flex flex-col panel-slide-right">
       <header className="flex items-center justify-between px-3 py-2.5 border-b border-slate-200">
         <div className="flex items-center gap-2 font-bold text-sm" style={{ color: '#1A1A2E' }}>
           <Sparkles size={15} style={{ color: '#7848BB' }} /> Advanced

@@ -434,8 +434,14 @@ function PortalMenu({
   return createPortal(
     <div
       ref={menuRef}
-      className="fixed bg-white border border-slate-200 rounded-lg shadow-lg z-50 min-w-[200px] max-w-[260px] py-1"
-      style={{ top: pos.top, left: pos.left }}
+      className="fixed bg-white border border-slate-200 rounded-lg shadow-lg z-50 min-w-[200px] max-w-[260px] py-1 card-expand"
+      style={{
+        top: pos.top,
+        left: pos.left,
+        // When auto-flipping above the trigger, anchor the expand origin at
+        // the bottom so the menu unfurls upward (not downward into the row).
+        transformOrigin: pos.flipUp ? 'bottom' : 'top',
+      }}
     >
       {children}
     </div>,

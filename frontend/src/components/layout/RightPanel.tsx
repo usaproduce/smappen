@@ -47,7 +47,7 @@ export default function RightPanel() {
   const ModeIcon = modeIcon[area.travel_mode ?? ''] ?? MapPin;
 
   return (
-    <aside className="absolute top-4 right-20 w-[300px] md:w-[340px] lg:w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20">
+    <aside className="absolute top-4 right-20 w-[300px] md:w-[340px] lg:w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20 panel-slide-right">
       {/* Header */}
       <div className="px-4 pt-3 pb-3 border-b border-slate-100">
         <div className="flex items-start justify-between gap-2">
