@@ -1,662 +1,807 @@
-# Smappen — Implementation Completeness Audit
+# Smappen — Platform Audit (v2)
 
-**Date:** 2026-05-23
-**Auditor:** Claude (automated, six-agent crawl)
-**Specs audited against:**
-- `_specs/smappen-clone-prompts.md` (base blueprint, 75KB)
-- `_specs/advanced-features-implementation-guide.md` (advanced features, 65KB)
-- `_specs/smappen-style-guide.md` (style guide, 39KB)
-
-**Scope:** Every file under `src/`, `frontend/src/`, `config/`, `scripts/`, `public/`. Excluded `node_modules/` and `vendor/`.
-
-**Headline:** The project is **substantially complete** against both specs. All 23 spec'd database tables, all 50+ API endpoints, all 7 external API integrations, and ~32 of ~34 frontend components exist and are wired. The dominant gaps are operational rather than functional: no Docker, no Redis, no S3/object storage, no automated Census refresh, no email/Slack notification channels, no password reset, and several core algorithms ship with documented simplifications (greedy MCLP instead of greedy+local-search, convex-hull territory boundaries instead of ST_Union+simplify, no risk-tier classification in cannibalization).
+*Snapshot as of 2026-05-24 — supersedes the prior audit. This document describes everything the platform currently does, every visual surface, every endpoint, every data flow.*
 
 ---
 
-## SECTION 1: PROJECT STRUCTURE & STACK AUDIT
+## Table of Contents
 
-### Top-Level Directory Structure
+1. [TL;DR](#tldr)
+2. [Tech stack](#tech-stack)
+3. [Architecture & data flow](#architecture--data-flow)
+4. [Database schema](#database-schema)
+5. [Backend surface (controllers + endpoints)](#backend-surface)
+6. [Services layer](#services-layer)
+7. [Frontend surface](#frontend-surface)
+8. [Feature catalog](#feature-catalog)
+9. [Visual design system](#visual-design-system)
+10. [Performance & caching](#performance--caching)
+11. [Security & auth](#security--auth)
+12. [Infrastructure & deploy](#infrastructure--deploy)
+13. [Testing](#testing)
+14. [Known gaps & roadmap](#known-gaps--roadmap)
+
+---
+
+## TL;DR
+
+Smappen is a territory mapping + demographics + competitive intelligence platform for retail / franchise / sales-territory planners. Live at **https://smappen.mygreendock.com**.
+
+The product surface is split across **three persistent panels** around a Google Maps canvas:
+- **Left panel** — area list, search/filter/sort, create/import buttons
+- **Right panel** — opens when an area is selected; tabs for Overview / Demographics / Businesses / Data
+- **Right toolbar** — vertical icon strip for primary tools (overview, address, heatmap, demographics, reports, import, favorites, advanced sparkle, screenshot, zoom, help)
+
+Plus four overlay surfaces:
+- **Heatmap panel** — bottom-left when the choropleth is active
+- **Mini-map toggle** — bottom-left, slides over when heatmap panel opens
+- **Advanced panel** — slide-in from the right toolbar's ✨ sparkle, with 9 lazy-loaded tabs
+- **Daypart strip** — full-width media-player along the bottom, for the 24-hour traffic animation
+
+Top-of-page header carries: project switcher (Cmd/Ctrl+K), undo/redo placeholders, **Google-API spend widget** (clickable for per-API breakdown), notifications bell with unread badge, share button, user menu (profile / team / integrations / billing / sign-out).
+
+Every Google-API-fronting endpoint emits a `_meta.estimated_cost_usd` field that the axios interceptor surfaces as a small bottom-right toast (e.g. *"geocode · $0.005"*) AND bumps the persistent header widget.
+
+---
+
+## Tech stack
+
+### Backend
+- **PHP 8.3 / 8.4** (custom router, no framework). PSR-4 autoload under `App\`
+- **MySQL 8.0.45** with spatial features (SRID 4326 throughout)
+- **Apache 2.4** with `mod_deflate` (gzip on JSON, brings 12MB heatmap responses to ~2MB on the wire)
+- **PHP-FPM** with OPcache + per-request `memory_limit` bumps for heavy spatial queries (512–768MB)
+- **Composer** deps: `firebase/php-jwt`, `stripe/stripe-php`, `vlucas/phpdotenv`, `phpoffice/phpspreadsheet`, `tecnickcom/tcpdf`, `monolog/monolog`, dev: `phpunit/phpunit`
+
+### Frontend
+- **React 18** + **TypeScript 5.5** + **Vite 5** (build output to `public/app/`)
+- **Tailwind v4** (`@tailwindcss/vite`) with `@source` glob covering all `.ts(x)`/`.html`
+- **Zustand** for state (auth, project, map, cost)
+- **TanStack React Query** v5 (installed; partially used)
+- **react-google-maps/api** with `useJsApiLoader` — libraries `drawing`, `visualization`, `geometry`, `places`
+- **react-router-dom** v6
+- **react-hot-toast** for toasts (incl. cost-per-call notifications)
+- **axios** with global request/response interceptors (auth, 401 logout, cost-tracking)
+- **lucide-react** for icons
+- **recharts** for charts, **echarts** as alternative
+- **papaparse**, **xlsx** for CSV/Excel parsing
+- **vitest** dev dep for unit tests
+
+### External services
+- **Google Maps Platform**: Maps JS API, Geocoding, Places (new API), Static Maps
+- **OpenRouteService** (hosted) for isochrones, `Accept: application/geo+json`, `smoothing=0`
+- **US Census Bureau** ACS 5-year (2023 vintage) for demographics + TIGER 2023 for tract geometries
+- **Stripe** for billing (webhook-verified at controller + service)
+- **Optional plumbing** (activates when env-keys are set):
+  - **Anthropic API** (`claude-haiku-4-5-20251001`) for AI site scoring
+  - **Postmark** OR **Resend** for transactional email (password reset, verify, competitor alerts)
+  - **Slack incoming webhooks** for per-user competitor alert pipes
+  - **Redis** for cache backend (filesystem fallback)
+  - **DigitalOcean Spaces** (S3 SigV4 virtual-hosted) for file storage
+
+### Hosting
+- DigitalOcean droplet (143.244.144.7), Ubuntu 24.04
+- Coexists with GreenDock under the same Apache via separate vhost (smappen.conf + smappen-le-ssl.conf)
+- Let's Encrypt SSL via ACME alias
+- Deploy: `ssh root@droplet 'git pull && composer install --no-dev && (cd frontend && npm ci && npm run build) && systemctl reload php8.3-fpm'`
+- Auto-deploy wired via GitHub Actions on push to main (secrets-gated, no-op if `DEPLOY_SSH_KEY` unset)
+
+---
+
+## Architecture & data flow
 
 ```
-smappen/
-├── public/                     # Web root (entry point, assets, uploads)
-├── frontend/                   # React + TypeScript SPA (Vite)
-├── src/                        # PHP backend (Controllers/Core/Models/Services/Migrations/Templates)
-├── config/                     # routes.php, cors.php
-├── storage/                    # Logs, cache, reports (runtime)
-├── scripts/                    # Migrations, seeding, cron, deploy
-├── _specs/                     # Spec docs (copied into project for audit)
-├── composer.json               # PHP deps
-├── nginx.conf                  # Nginx vhost
-└── README.md
+┌──────────────────────────────────────────────────────────────┐
+│  Browser: React SPA at /app/* (Vite bundle, manifest, sw.js) │
+└────────────────┬─────────────────────────────────────────────┘
+                 │ HTTPS · JWT (Bearer) or X-Api-Key
+                 ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Apache 2.4 → PHP-FPM 8.3                                    │
+│   ├ /api/* → public/index.php → Router → Controller          │
+│   ├ /app/* → SPA shell (built assets)                        │
+│   ├ /app/sw.js + /app/manifest.webmanifest (PWA)             │
+│   └ static /storage/* via alias (for local-driver files)     │
+└────────────────┬─────────────────────────────────────────────┘
+                 │
+   ┌─────────────┼─────────────┬─────────────┬─────────────┐
+   ▼             ▼             ▼             ▼             ▼
+┌──────┐     ┌──────┐    ┌────────┐    ┌─────────┐   ┌─────────┐
+│MySQL │     │Redis │    │ ORS    │    │ Google  │   │ Census  │
+│ 8.0  │     │(opt) │    │ /iso   │    │ Maps/   │   │ ACS API │
+│      │     │      │    │        │    │ Places  │   │         │
+└──────┘     └──────┘    └────────┘    └─────────┘   └─────────┘
+                                            │
+                                            ▼
+                              ┌──────────────────────────┐
+                              │  api_usage_log + cost    │
+                              │  → /api/usage/today      │
+                              │  → header widget + toast │
+                              └──────────────────────────┘
 ```
 
-- [public/](public/) — entry point [`index.php`](public/index.php), `.htaccess`, `assets/`, `uploads/`
-- [src/Core/](src/Core) — Router, Database (PDO), Request/Response, Middleware, Config, PlanLimits
-- [src/Controllers/](src/Controllers) — 23 controller classes
-- [src/Models/](src/Models) — 8 model classes (User, Organization, Project, Area, Folder, ImportedPoint, POICache, Report)
-- [src/Services/](src/Services) — 10 service classes (GoogleMapsService, CensusService, IsochroneService, SegmentationService, TerritoryGenerator, CompetitorScanner, TrafficService, StripeService, CacheService, GeoUtils)
-- [src/Migrations/](src/Migrations) — 5 SQL files (~579 lines)
-- [frontend/src/](frontend/src) — React components, API layer, Zustand stores
-- [storage/](storage) — writable runtime dirs (logs, cache, reports, uploads)
+**Request flow** (typical authenticated POST):
+1. Frontend axios → `/api/...` with `Authorization: Bearer <JWT>` or `X-Api-Key`
+2. `public/index.php` boots Config from `.env`, mounts Response::corsHeaders
+3. Router matches regex pattern, runs middleware stack: `Middleware::auth()` → `rateLimit()` → controller
+4. Auth middleware verifies JWT signature, checks `revoked_tokens` for the `jti`, checks `users.tokens_invalid_before` against `iat`, loads user + org plan
+5. Controller executes; spatial queries against MySQL with `ST_GeomFromText(..., 4326)` + `ST_Intersects` / `ST_Intersection` / `ST_Distance_Sphere`
+6. Response wrapped as `{success: true, data: {...}}`; Google-API-backed responses carry `_meta.estimated_cost_usd`
+7. Frontend interceptor:
+   - On success with cost meta → `useCostStore.trackCall(cost)` + bottom-right toast
+   - On 401 → fire-and-forget `authApi.logout()`, redirect to /login (unless on auth page)
 
-### Frontend Stack
-
-- **Framework:** React 18.3.1, TypeScript 5.5.3 (strict), Vite 5.3.3
-- **Styling:** Tailwind CSS 4.0 + custom CSS variables in [`styles.css`](frontend/src/styles.css). Brand: `--brand: #7848BB` (purple), `--cta: #E53935` (red) — matches spec.
-- **State:** Zustand 4.5.4 with persist middleware ([`stores/`](frontend/src/stores)): `authStore`, `projectStore`, `mapStore`
-- **Server state:** `@tanstack/react-query` 5.51.0 — installed but used in only 4 places (see Section 5.6)
-- **Routing:** `react-router-dom` 6.24.1
-- **Maps:** `@react-google-maps/api` 2.20.0, `@googlemaps/markerclusterer` 2.5.3
-- **Geo math:** `@turf/turf` 7.0.0
-- **Data:** `papaparse` 5.4.1 (CSV), `xlsx` 0.18.5 (Excel), `recharts` 2.12.7 (charts)
-- **HTTP:** `axios` 1.7.2 via [`api/client.ts`](frontend/src/api/client.ts)
-- **UI:** `react-hot-toast` 2.4.1, `lucide-react` 0.408.0
-- **Build target:** `frontend/public/index.html` → built to `public/app/` ([`vite.config.ts`](frontend/vite.config.ts))
-
-All dependencies are current. No deprecated packages detected.
-
-### Backend Stack
-
-- **Language:** PHP 8.1+ (composer.json), PHP 8.3 on production droplet ([`droplet-deploy.sh:61`](scripts/droplet-deploy.sh#L61))
-- **Framework:** None. Custom regex-based router in [`src/Core/Router.php`](src/Core/Router.php) with middleware chain.
-- **HTTP:** Nginx primary ([`nginx.conf`](nginx.conf)); Apache fallback via [`public/.htaccess`](public/.htaccess)
-- **DB driver:** PDO singleton in [`src/Core/Database.php`](src/Core/Database.php) — prepared statements, named params, no ORM
-- **JSON envelope:** [`src/Core/Response.php`](src/Core/Response.php) — uniform `{ success, data, error, message }` shape
-
-### PHP Dependencies (composer.json)
-
-- `firebase/php-jwt` ^6.10 — JWT for auth
-- `stripe/stripe-php` ^13.0 — billing
-- `vlucas/phpdotenv` ^5.6 — env loading
-- `phpoffice/phpspreadsheet` ^2.0 — Excel I/O
-- `tecnickcom/tcpdf` ^6.6 — PDF reports
-
-All current. No deprecated/abandoned/vulnerable packages.
-
-### Database
-
-- **DBMS:** MySQL 8 (utf8mb4 / utf8mb4_unicode_ci) with native spatial types — POINT, POLYGON, MULTIPOLYGON, SRID 4326
-- **Important deviation from spec:** Spec says **PostgreSQL + PostGIS**; implementation uses **MySQL 8 with native spatial types**. Functionally equivalent for the queries actually used (ST_Intersects, ST_Contains, ST_Area, ST_Intersection, ST_Distance_Sphere). No PostGIS-only features (e.g., topology, raster, network analysis) are needed.
-- **Schema:** 5 migrations, ~29 tables, ~40 indexes (full inventory in Section 2)
-- **Migration runner:** [`scripts/migrate.php`](scripts/migrate.php) — tracks executed migrations in `migrations` table, idempotent
-
-### State Management & API Layer (Frontend)
-
-- Zustand stores typed with TypeScript ([`stores/`](frontend/src/stores))
-- Custom Axios client with auth interceptor, 401 auto-logout, network toast ([`api/client.ts`](frontend/src/api/client.ts))
-- React Query installed but underused (4 of ~35 components) — see Section 5.6
-
-### Environment Variables
-
-**Backend (.env loaded via Dotenv):**
-- DB: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`
-- Auth: `JWT_SECRET`
-- APIs: `GOOGLE_API_KEY`, `ORS_API_KEY`, `CENSUS_API_KEY`
-- Billing: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_BUSINESS`
-- URLs: `APP_URL`, `FRONTEND_URL`, `APP_ENV`
-
-**Frontend:** `VITE_API_URL` (read via `import.meta.env`)
-
-`.env.example` present at both root and `frontend/`. `.env` correctly in `.gitignore`.
-
-### TypeScript
-
-`tsconfig.json` configured with strict mode. Build step runs `tsc -b && vite build` ([`frontend/package.json`](frontend/package.json)). No type-check run performed in this audit.
-
-### Docker / CI / CD
-
-- **No Dockerfile, no docker-compose.yml.** Deployment is bare-metal DigitalOcean droplet.
-- **No GitHub Actions, CircleCI, or CI config** of any kind.
-- **Deployment:** [`scripts/droplet-deploy.sh`](scripts/droplet-deploy.sh) — one-shot provisioner for Ubuntu (PHP 8.3, MySQL, Nginx, Node 20, Composer, Certbot). Coexists with GreenDock on same droplet.
+**Background work** (PWA outbox + cron + job worker):
+- `scripts/job-worker.php` — runs every 10s from cron, claims jobs atomically via `SELECT … FOR UPDATE SKIP LOCKED`, executes territory generation / competitor scans / webhook deliveries
+- `scripts/cleanup-cron.php` — hourly; expires cache, auth_tokens, revoked_tokens, old jobs (30d), old webhook_deliveries (30d), orphan upload/export files
+- `scripts/competitor-scan.php` — runs every 15min; picks monitors due based on `next_run_at`
+- `scripts/refresh-census.php` — annual (Jan 15); seed → aggregate → segment pipeline
+- `scripts/backup-db.sh` — nightly mysqldump → gzipped → local 30-day daily + 12-month monthly retention + optional rclone to Spaces
 
 ---
 
-## SECTION 2: DATABASE SCHEMA AUDIT
+## Database schema
 
-### Executive Summary
+**9 migrations** (numbered, all currently applied to production):
 
-5 migration files, ~579 SQL lines, ~29 tables, ~40 indexes. **Every spec'd base and advanced-feature table is present.** No structural mismatches.
-
-The only architectural deviation: spec calls for **PostgreSQL + PostGIS**; implementation uses **MySQL 8 with native spatial types**. Validated equivalent for all queries actually used. PostGIS-only features (topology extension, raster, pgRouting) are not required by any feature.
-
-### 2.1 Base Blueprint Tables
-
-| Table | Status | Source |
+| # | Migration | Tables / changes |
 |---|---|---|
-| `organizations` | ✅ | [001:5-11](src/Migrations/001_initial_schema.sql#L5) |
-| `users` | ✅ | [001:13-27](src/Migrations/001_initial_schema.sql#L13) |
-| `projects` | ✅ | [001:29-42](src/Migrations/001_initial_schema.sql#L29) |
-| `folders` | ✅ (self-ref `parent_folder_id`) | [001:44-54](src/Migrations/001_initial_schema.sql#L44) |
-| `areas` | ✅ all 17 spec'd columns + `generation_job_id`/`territory_index` (advanced) | [001:56-85](src/Migrations/001_initial_schema.sql#L56), [005:38-41](src/Migrations/005_advanced_features.sql#L38) |
-| `imported_points` | ✅ POINT SRID 4326 | [001:87-103](src/Migrations/001_initial_schema.sql#L87) |
-| `poi_cache` | ✅ | [001:105-112](src/Migrations/001_initial_schema.sql#L105) |
-| `census_tracts` | ✅ MULTIPOLYGON SRID 4326 | [001:114-124](src/Migrations/001_initial_schema.sql#L114) |
-| `census_demographics` | ✅ all 19 demographic columns | [001:126-148](src/Migrations/001_initial_schema.sql#L126) |
-| `reports` | ✅ | [001:150-161](src/Migrations/001_initial_schema.sql#L150) |
-| `audit_log` | ✅ BIGINT id | [001:170-180](src/Migrations/001_initial_schema.sql#L170) |
-| `api_usage_log` | ✅ (extra, for rate limiting) | [001:163-168](src/Migrations/001_initial_schema.sql#L163) |
+| 001 | `001_initial_schema.sql` | `organizations`, `users`, `projects`, `folders`, `areas` (POLYGON SRID 4326 + SPATIAL INDEX), `imported_points` (POINT), `poi_cache`, `census_tracts` (MULTIPOLYGON), `census_demographics`, `reports`, `api_usage_log`, `audit_log` |
+| 002 | `002_cache_table.sql` | `cache` (key VARCHAR(255), value LONGTEXT, expires_at) |
+| 003 | `003_demographics_indexes.sql` | Indexes on census tables for state-FIPS + tract-level lookups |
+| 004 | `004_aggregated_geo_and_tile_cache.sql` | `census_counties`, `census_states` (rolled-up demographics for zoom-out LOD), `heatmap_tile_cache`, `reach_cache` |
+| 005 | `005_advanced_features.sql` | `territory_generation_jobs`, `tract_segments`, `project_versions`, `comments`, `change_log`, `project_collaborators` (viewer/editor/admin/owner), `approval_requests`, `field_notes` (POINT), `competitor_monitors`, `competitor_scans`, `tracked_places`, `competitor_alerts`, `notifications`. Adds `areas.generation_job_id` + `areas.territory_index` |
+| 006 | `006_auth_and_jobs.sql` | `auth_tokens` (password reset + email verify), `revoked_tokens` (JWT revocation), `jobs` (background queue), `webhook_subscriptions`, `webhook_deliveries`. Adds `users.email_verified_at`, `users.api_key_hash`, `users.api_key_last4`, `users.notify_email`, `users.notify_competitor_alerts`, `users.notify_team_activity`, `users.slack_webhook_url`, `users.theme`. Adds `projects.share_expires_at`, `projects.share_view_count` |
+| 007 | `007_role_rename.sql` | Renames `project_collaborators.role='approver'` → `'admin'` |
+| 008 | `008_bug_fixes.sql` | Adds `users.tokens_invalid_before` (bulk JWT revocation marker); normalizes role enum. Uses INFORMATION_SCHEMA prepared-statement guards for idempotency on MySQL < 8.0.29 |
+| 009 | `009_api_cost_tracking.sql` | Adds `api_usage_log.estimated_cost_usd` (DECIMAL(10,6)) + `idx_usage_cost_day` index |
 
-For `areas`: verified `id, project_id, folder_id, name, area_type` (ENUM isochrone/isodistance/manual/radius), `center_lat/lng, center_address, travel_mode, travel_time_minutes, travel_distance_km, geometry (POLYGON 4326), fill_color, fill_opacity, stroke_color, stroke_weight, demographics_cache (JSON), demographics_cached_at, notes, created_by, timestamps`.
+**Spatial features used**: `ST_GeomFromText`, `ST_AsGeoJSON(g, 4)` (4-decimal precision = ~11m), `ST_AsText`, `ST_Intersects`, `ST_Intersection`, `ST_Area`, `ST_Distance_Sphere`, `ST_Centroid(ST_SRID(g, 0))` (planar workaround for geographic SRS — MySQL 8 refuses `ST_Centroid` on SRID 4326 directly), `ST_Union` (pairwise iterative in PHP for territory boundary rebuild — MySQL's ST_Union is binary not aggregate), `ST_GeometryType` filter for `GEOMETRYCOLLECTION` edge cases on touching tracts, `ST_X` / `ST_Y` / `ST_PointFromText`, `ST_Contains`.
 
-For `census_demographics`: verified `total_population, median_household_income, median_home_value, labor_force_total, unemployed_total, male_total, female_total, housing_units_total, age_under_18, age_18_to_34, age_35_to_54, age_55_to_64, age_65_plus, income_under_25k, income_25k_to_50k, income_50k_to_75k, income_75k_to_100k, income_100k_plus, data_year, updated_at`.
-
-### 2.2 Advanced-Feature Tables
-
-| Table | Status | Source |
-|---|---|---|
-| `territory_generation_jobs` | ✅ | [005:14-34](src/Migrations/005_advanced_features.sql#L14) |
-| `tract_segments` | ✅ | [005:50-60](src/Migrations/005_advanced_features.sql#L50) |
-| `project_versions` | ✅ UNIQUE(project_id, version_number) | [005:69-82](src/Migrations/005_advanced_features.sql#L69) |
-| `comments` | ✅ supports threading (parent_comment_id) | [005:84-106](src/Migrations/005_advanced_features.sql#L84) |
-| `change_log` | ✅ BIGINT id | [005:108-124](src/Migrations/005_advanced_features.sql#L108) |
-| `project_collaborators` | ✅ UNIQUE(project_id, user_id) | [005:126-141](src/Migrations/005_advanced_features.sql#L126) |
-| `approval_requests` | ✅ | [005:143-159](src/Migrations/005_advanced_features.sql#L143) |
-| `field_notes` | ✅ POINT SRID 4326 + spatial index | [005:182-202](src/Migrations/005_advanced_features.sql#L182) |
-| `competitor_monitors` | ✅ index on (is_active, next_run_at) for scheduling | [005:215-233](src/Migrations/005_advanced_features.sql#L215) |
-| `competitor_scans` | ✅ | [005:235-246](src/Migrations/005_advanced_features.sql#L235) |
-| `tracked_places` | ✅ UNIQUE(monitor_id, place_id); location intentionally nullable (no spatial index) | [005:248-272](src/Migrations/005_advanced_features.sql#L248) |
-| `competitor_alerts` | ✅ | [005:274-290](src/Migrations/005_advanced_features.sql#L274) |
-| `notifications` | ✅ (cross-feature, not in original spec but correct) | [005:297-312](src/Migrations/005_advanced_features.sql#L297) |
-
-### 2.3 Supporting / Performance Tables
-
-- `cache` — generic K/V cache ([002](src/Migrations/002_cache_table.sql))
-- `census_counties` — county-level rollup with MULTIPOLYGON geometry and aggregated demographics ([004:2-18](src/Migrations/004_aggregated_geo_and_tile_cache.sql#L2))
-- `census_states` — state-level rollup ([004:20-33](src/Migrations/004_aggregated_geo_and_tile_cache.sql#L20))
-- `heatmap_tile_cache` — choropleth response cache ([004:35-47](src/Migrations/004_aggregated_geo_and_tile_cache.sql#L35))
-- `reach_cache` — isochrone/radius result cache ([004:49-57](src/Migrations/004_aggregated_geo_and_tile_cache.sql#L49))
-
-### 2.4 PostGIS & Indexes
-
-- **PostGIS extension:** ❌ not enabled — implementation uses MySQL 8 native spatial. **Not a defect** (see Section 1).
-- **Spatial indexes (all NOT NULL geometry columns covered):**
-  - `areas.geometry` → `idx_area_geom`
-  - `imported_points.point` → `idx_ip_point`
-  - `census_tracts.geometry` → `idx_ct_geom`
-  - `census_counties.geometry` → `idx_counties_geom`
-  - `census_states.geometry` → `idx_states_geom`
-  - `field_notes.location` → `idx_fn_location`
-  - `tracked_places.location` — none (intentionally nullable per code comment)
-- **Functional indexes:** `idx_census_demo_pop`, `idx_census_demo_income`, plus expected indexes on every FK and `(project_id, status)`, `(monitor_id, created_at)`, etc. — all present.
-
-### 2.5 Result
-
-Zero mismatches. Schema faithfully implements both the base blueprint and the advanced features guide.
+**Coverage**: ~4,425 census tracts loaded for DC / MD / VA / WV (the launch corridor); each classified into one of 10 customer segments via the rule-based segmentation service.
 
 ---
 
-## SECTION 3: API ENDPOINTS AUDIT
+## Backend surface
 
-24 controllers, 120+ routes. Centralized auth via [`Middleware::auth()`](src/Core/Middleware.php#L6). Responses use uniform `{ success, data, error }` envelope from [`Response.php`](src/Core/Response.php).
-
-### 3.1 Core Endpoints
-
-| Endpoint | Status | Handler | Notes |
+### Public (no auth)
+| Method | Path | Controller | Purpose |
 |---|---|---|---|
-| `POST /api/auth/register` | ✅ | [`AuthController`](src/Controllers/AuthController.php) | Bcrypt + JWT |
-| `POST /api/auth/login` | ✅ | [`AuthController`](src/Controllers/AuthController.php) | Issues 24h JWT |
-| `POST /api/auth/refresh` | ✅ | [`AuthController`](src/Controllers/AuthController.php) | |
-| `GET /api/auth/me` | ✅ | [`AuthController`](src/Controllers/AuthController.php) | Returns user + org |
-| Projects CRUD | ✅ | [`ProjectController:11-77`](src/Controllers/ProjectController.php#L11) | Includes `/api/shared/{token}` (no auth) |
-| Folders CRUD | ✅ | [`FolderController`](src/Controllers/FolderController.php) | Tree, cascades |
-| Areas CRUD | ✅ | [`AreaController`](src/Controllers/AreaController.php) | Geometry as WKT |
-| `POST /api/isochrone/calculate` | ✅ | [`IsochroneController:7-35`](src/Controllers/IsochroneController.php#L7) | ORS proxy, daily rate limit |
-| `GET /api/areas/{id}/demographics` | ✅ | [`DemographicsController:7-19`](src/Controllers/DemographicsController.php#L7) | Census API w/ 30-day cache |
-| `POST /api/demographics/compare` | ✅ | [`DemographicsController:21-39`](src/Controllers/DemographicsController.php#L21) | Max 10 areas |
-| `POST /api/places/nearby` | ✅ | [`PlacesController:10-42`](src/Controllers/PlacesController.php#L10) | Places API + polygon filter + cache |
-| `POST /api/places/search` | ✅ | [`PlacesController:44-55`](src/Controllers/PlacesController.php#L44) | Text Search |
-| `GET /api/places/{placeId}` | ✅ | [`PlacesController:57-62`](src/Controllers/PlacesController.php#L57) | Place Details |
-| `GET /api/areas/{id}/pois` | ✅ | [`PlacesController:64-72`](src/Controllers/PlacesController.php#L64) | From poi_cache |
-| `POST /api/geocode` | ✅ | [`GeocodingController:10-20`](src/Controllers/GeocodingController.php#L10) | |
-| `POST /api/geocode/batch` | ✅ | [`GeocodingController:22-43`](src/Controllers/GeocodingController.php#L22) | Plan-tiered limits (10/100/500) |
-| Import upload + configure | ✅ | [`ImportController:10-117`](src/Controllers/ImportController.php#L10) | 10MB cap, on-the-fly geocoding |
-| Export areas/POIs/points | ✅ | [`ExportController`](src/Controllers/ExportController.php) | CSV/XLSX/GeoJSON/KML |
-| Reports generate/list/download | ✅ | [`ReportController`](src/Controllers/ReportController.php) | PDF |
-| `POST /api/billing/checkout` | ✅ | [`BillingController:10-27`](src/Controllers/BillingController.php#L10) | Owner-only |
-| `POST /api/billing/webhook` | ✅ | [`BillingController:29-42`](src/Controllers/BillingController.php#L29) | Stripe-signed |
-| Billing subscription/portal/cancel | ✅ | [`BillingController:44-80`](src/Controllers/BillingController.php#L44) | |
-| `GET /api/heatmap/tracts` | ✅ | [`HeatmapController`](src/Controllers/HeatmapController.php) | Viewport tracts for choropleth |
-| `POST /api/areas/reach`, `/api/demographics/preview` | ✅ | [`ReachController`](src/Controllers/ReachController.php) | Smart area sizing |
+| GET | `/api/health` | HealthController | Liveness probe; returns `{ok, db, version, environment, elapsed_ms}`, 503 on DB failure |
+| POST | `/api/auth/register` | AuthController | Create account + org |
+| POST | `/api/auth/login` | AuthController | Issue JWT (with `jti`) |
+| POST | `/api/auth/request-reset` | AuthController | Email a 1h password-reset token |
+| POST | `/api/auth/reset` | AuthController | Redeem reset token, set new password, stamp `tokens_invalid_before` |
+| GET | `/api/auth/verify-email` | AuthController | Redeem verification token |
+| GET | `/api/shared/{shareToken}` | ProjectController | Legacy share link |
+| GET | `/api/public/projects/{token}` | PublicShareController | Public read-only project payload |
+| GET | `/api/public/projects/{token}/embed` | PublicShareController | Lighter embed payload (geometry only, no demographics) |
+| POST | `/api/billing/webhook` | BillingController | Stripe webhook — signature verified at controller AND service |
+| GET | `/api/openapi.json` | OpenApiController | OpenAPI 3.1 spec |
+| GET | `/api/docs` | OpenApiController | Swagger UI page |
 
-### 3.2 Advanced-Feature Endpoints
-
-| Endpoint | Status | Handler |
-|---|---|---|
-| `POST /api/projects/{id}/territories/generate` | ✅ | [`TerritoryController:10-90`](src/Controllers/TerritoryController.php#L10) |
-| `GET /api/projects/{id}/territories/jobs` | ✅ | [`TerritoryController:92-112`](src/Controllers/TerritoryController.php#L92) |
-| `GET /api/projects/{id}/cannibalization` | ✅ | [`CannibalizationController:23-93`](src/Controllers/CannibalizationController.php#L23) |
-| `POST /api/isochrone/traffic` | ✅ | [`TrafficIsochroneController:19-48`](src/Controllers/TrafficIsochroneController.php#L19) |
-| `POST /api/isochrone/traffic/grid` | ✅ | [`TrafficIsochroneController:50-91`](src/Controllers/TrafficIsochroneController.php#L50) |
-| `POST /api/projects/{id}/optimize/locations` | ✅ | [`MclpController:17-105`](src/Controllers/MclpController.php#L17) |
-| `GET /api/segmentation/segments` | ✅ | [`SegmentationController:10-14`](src/Controllers/SegmentationController.php#L10) |
-| `GET /api/areas/{id}/segments` | ✅ | [`SegmentationController:16-32`](src/Controllers/SegmentationController.php#L16) |
-| `POST /api/projects/{id}/segments` | ✅ | [`SegmentationController:34-63`](src/Controllers/SegmentationController.php#L34) |
-| `POST /api/segmentation/recompute` | ✅ | [`SegmentationController:65-73`](src/Controllers/SegmentationController.php#L65) |
-| Versions (POST/GET list/GET one) | ✅ | [`CollaborationController:13-79`](src/Controllers/CollaborationController.php#L13) |
-| Comments (CRUD + resolve) | ✅ | [`CollaborationController:82-130+`](src/Controllers/CollaborationController.php#L82) |
-| Change log (`/changes`) | ✅ | [`CollaborationController`](src/Controllers/CollaborationController.php) |
-| Collaborators (CRUD) | ✅ | [`CollaborationController`](src/Controllers/CollaborationController.php) |
-| Approvals (create/list/decide) | ✅ | [`CollaborationController`](src/Controllers/CollaborationController.php) |
-| Notifications (list/read/read-all) | ✅ | [`NotificationController`](src/Controllers/NotificationController.php) |
-| Competitor monitors (full CRUD + scan-now + places + alerts) | ✅ | [`CompetitorController:10-?`](src/Controllers/CompetitorController.php#L10) |
-| Field notes (CRUD + `where-am-i`) | ✅ | [`FieldNoteController:10-107`](src/Controllers/FieldNoteController.php#L10) |
-
-### 3.3 Endpoint-Quality Findings
-
-- ✅ **Auth:** uniformly enforced. Webhook + register + login + `/api/shared/{token}` correctly unauthenticated.
-- ✅ **Input validation:** manual but thorough — coord bounds, array caps, plan-based limits.
-- ⚠️ **CORS preflight:** `Response::corsHeaders()` exists but no explicit `OPTIONS` route registered in `routes.php`. Complex preflight requests may fail.
-- ⚠️ **Webhook signature:** delegated to `StripeService::handleWebhook()`; controller does not re-verify. Trust boundary is in the service layer — acceptable but worth a comment.
-- ⚠️ **Rate limiting incomplete:** only isochrone and places endpoints log to `api_usage_log` and check daily limits. Geocoding/imports/territory-generation/MCLP have no per-endpoint throttle.
-- ⚠️ **Long-running jobs:** Territory generation and MCLP bump `memory_limit` and `set_time_limit` inline; no queue/worker abstraction. PHP-FPM workers can stall under load.
-- ⚠️ **No caching headers** (no `Cache-Control` / `ETag`) on read endpoints.
-- ℹ️ No validation library (no Respect, no Symfony Validator). Manual checks work but are verbose.
-
-### 3.4 Result
-
-All 50+ spec endpoints are present and functional. Response envelope consistent. Minor production-hardening gaps listed above.
-
----
-
-## SECTION 4: EXTERNAL API INTEGRATIONS AUDIT
-
-### 4.1 Google Maps JS API (Frontend) — ✅ COMPLETE
-
-- Map init with drawing + visualization libraries ([`MapCanvas.tsx`](frontend/src/components/map/MapCanvas.tsx))
-- Custom styled map (13-rule desaturated theme) at [`mapStyle.ts`](frontend/src/utils/mapStyle.ts)
-- Polygon rendering with styling at [`AreaPolygon.tsx`](frontend/src/components/map/AreaPolygon.tsx)
-- DrawingManager (polygon + circle) at [`DrawingTools.tsx:11-24`](frontend/src/components/map/DrawingTools.tsx#L11)
-- HeatmapLayer (visualization library) at [`HeatmapLayer.tsx`](frontend/src/components/map/HeatmapLayer.tsx)
-- Choropleth via Google Data layer at [`ChoroplethLayer.tsx`](frontend/src/components/map/ChoroplethLayer.tsx)
-
-### 4.2 OpenRouteService (Isochrone) — ✅ COMPLETE
-
-- [`IsochroneService.php:1-97`](src/Services/IsochroneService.php) — hosted ORS API (`api.openrouteservice.org/v2/isochrones/{mode}`)
-- Modes: `driving-car`, `cycling-regular`, `foot-walking`, `wheelchair` ([line 9](src/Services/IsochroneService.php#L9))
-- Coordinate order: `[lng, lat]` ✅ ([line 33](src/Services/IsochroneService.php#L33))
-- Time→seconds: `$timeMinutes * 60` ([line 34](src/Services/IsochroneService.php#L34))
-- `smoothing: 0` for max detail ([line 35](src/Services/IsochroneService.php#L35))
-- 24h cache via [`CacheService`](src/Services/CacheService.php) with v2 key prefix
-- Alt `calculateRadius()` for fixed-distance circles ([lines 87-97](src/Services/IsochroneService.php#L87))
-- ⚠️ Self-hosted ORS / Docker setup **not present** — relies on hosted API (rate-limited)
-
-### 4.3 Google Places API (New) — ✅ COMPLETE
-
-- Nearby Search: [`GoogleMapsService.php:103-145`](src/Services/GoogleMapsService.php#L103) — endpoint `places.googleapis.com/v1/places:searchNearby`
-- Text Search: [`GoogleMapsService.php:147-180`](src/Services/GoogleMapsService.php#L147)
-- Place Details: [`GoogleMapsService.php:182-198`](src/Services/GoogleMapsService.php#L182)
-- Correct `X-Goog-FieldMask` header (Essentials + selected Pro fields: rating, userRatingCount, phone, website)
-- Point-in-polygon filter via ray-casting in [`GeoUtils::pointInPolygon()`](src/Services/GeoUtils.php) called from [`PlacesController.php:36-49`](src/Controllers/PlacesController.php#L36)
-- 48h cache + `poi_cache` table
-
-### 4.4 Google Geocoding — ✅ COMPLETE
-
-- Forward: [`GoogleMapsService.php:20-47`](src/Services/GoogleMapsService.php#L20)
-- Reverse: [`GoogleMapsService.php:49-73`](src/Services/GoogleMapsService.php#L49)
-- Batch (concurrency 5, 20ms throttle): [`GoogleMapsService.php:75-101`](src/Services/GoogleMapsService.php#L75)
-- 365-day cache on both forward and reverse
-- Plan-tier batch caps in [`GeocodingController.php:23-28`](src/Controllers/GeocodingController.php#L23)
-
-### 4.5 Traffic-Aware Isochrones — ✅ COMPLETE (with caveat)
-
-- 7×24 multiplier matrix in [`TrafficService.php:10-38`](src/Services/TrafficService.php#L10)
-- `adjustedMinutes()` divides budget by multiplier ([lines 48-54](src/Services/TrafficService.php#L48))
-- 8 preset windows in [`TrafficService.php:57-66`](src/Services/TrafficService.php#L57)
-- Grid endpoint queries all 8 windows ([`TrafficIsochroneController.php:55-103`](src/Controllers/TrafficIsochroneController.php#L55))
-- ⚠️ Spec calls for Google Routes API `computeRoutes` with `TRAFFIC_AWARE` + radial sampling/interpolation. This implementation instead **adjusts ORS isochrone budgets using empirical multipliers** — simpler and cheaper, but less precise than a true traffic-aware routing query.
-
-### 4.6 US Census Bureau ACS — ✅ COMPLETE
-
-- [`CensusService.php`](src/Services/CensusService.php) — ACS 5-Year 2023, `acs/acs5` dataset
-- All spec variables present: B01003 (pop), B19013 (income), B25001/B25077 (housing), B23025 (employment), B01001/B09001 (age), B19001 (income brackets)
-- Request chunking (50 vars per call, 200ms throttle) at [`CensusService.php:100-125`](src/Services/CensusService.php#L100)
-- Spatial join + overlap-weighted aggregation at [`CensusService.php:128-223`](src/Services/CensusService.php#L128); counts scaled by `ST_Area(ST_Intersection)/ST_Area(tract)`, medians weighted by population × overlap
-- 30-day cache on per-area demographics
-
-### 4.7 Stripe Billing — ✅ COMPLETE
-
-- [`StripeService.php`](src/Services/StripeService.php) full lifecycle: createCustomer, createCheckoutSession, billing portal, webhook handler (4 event types), getSubscription, cancelSubscription
-- Webhook signature validated against `STRIPE_WEBHOOK_SECRET`
-- Plan ↔ price-id mapping via env vars
-
-### 4.8 Authentication — 🟡 PARTIAL
-
-- ✅ JWT (Firebase library), 24h expiry, HS256, Bearer header
-- ✅ `auth()` middleware loads user, checks `is_active`, strips password hash
-- ✅ Optional `optionalAuth()` variant for public endpoints
-- 🟡 **No password reset** flow
-- 🟡 **No email verification** — accounts active immediately
-- 🟡 **No logout token revocation** (no blacklist)
-- 🟡 **Role granularity minimal** — owner vs non-owner; no fine-grained per-feature permissions
-
----
-
-## SECTION 5: FRONTEND COMPONENTS AUDIT
-
-### 5.1 Map Components — ✅ all 7 present
-
-| Spec component | File | Status |
-|---|---|---|
-| MapCanvas | [`MapCanvas.tsx`](frontend/src/components/map/MapCanvas.tsx) | ✅ |
-| IsochroneLayer | [`AreaPolygon.tsx`](frontend/src/components/map/AreaPolygon.tsx) | ✅ (renamed) |
-| DrawingTools | [`DrawingTools.tsx`](frontend/src/components/map/DrawingTools.tsx) | ✅ polygon+circle |
-| HeatmapLayer | [`HeatmapLayer.tsx`](frontend/src/components/map/HeatmapLayer.tsx) | ✅ |
-| ImportedPointsLayer | [`ImportedMarkers.tsx`](frontend/src/components/map/ImportedMarkers.tsx) | ✅ MarkerClusterer |
-| POIMarkers | [`POIMarkers.tsx`](frontend/src/components/map/POIMarkers.tsx) | ✅ click→info window |
-| AreaInfoWindow | inside `AreaPolygon.tsx` | ✅ |
-| ChoroplethLayer (bonus) | [`ChoroplethLayer.tsx`](frontend/src/components/map/ChoroplethLayer.tsx) | ✅ extra |
-
-### 5.2 Panel Components — ✅ all 7
-
-- LeftPanel, RightPanel — [`layout/`](frontend/src/components/layout)
-- AreaCreator — [`AreaCreator.tsx`](frontend/src/components/areas/AreaCreator.tsx) (multi-step: address → geocode → isochrone/reach → preview → save)
-- FolderTree, AreaList, AreaCard, AreaEditor — [`areas/`](frontend/src/components/areas)
-- DemographicsPanel, POISearchPanel, ComparisonView, ChartWidgets — [`analytics/`](frontend/src/components/analytics)
-
-### 5.3 Data Components — ✅ all 3
-
-- [`ImportWizard.tsx`](frontend/src/components/data/ImportWizard.tsx) — 3-step: upload → column-map → process
-- [`ExportDialog.tsx`](frontend/src/components/data/ExportDialog.tsx) — CSV/XLSX/GeoJSON/KML
-- [`ReportButton.tsx`](frontend/src/components/data/ReportButton.tsx) — PDF generate + download
-
-### 5.4 Advanced-Feature Components — 🟡 ALL FEATURES PRESENT, BUT CONSOLIDATED
-
-All 9 advanced features are implemented inside a **single 712-line file**, [`AdvancedPanel.tsx`](frontend/src/components/advanced/AdvancedPanel.tsx), as tab content functions rather than separate components. The 20+ spec-named components (AutoGenerateWizard, BalanceIndicator, CannibalizationPanel, OverlapHeatmap, TrafficAwareControls, ComparisonIsochrones, OptimizationWizard, CandidateMap, SegmentDonutChart, SegmentHeatmap, CollaboratorsList, VersionTimeline, CommentsPanel, ChangeLogFeed, MonitorSetupWizard, MonitorDashboard, AlertBell, AlertFeed, CompetitorTimeline, MobileFieldView, FieldNoteCapture) **do not exist as standalone files**.
-
-Tab inventory in `AdvancedPanel.tsx`:
-1. `TerritoriesTab()` ([line 105](frontend/src/components/advanced/AdvancedPanel.tsx#L105)) — territory generation
-2. `CannibalizeTab()` — cannibalization
-3. `TrafficTab()` — traffic isochrones
-4. `OptimizeTab()` — MCLP
-5. `SegmentsTab()` — segmentation
-6. `CommentsTab()` — collaboration comments
-7. `VersionsTab()` — version history
-8. `CompetitorsTab()` — competitor monitoring + alerts
-9. `FieldTab()` — field notes
-
-API layer comprehensive at [`api/advanced.ts`](frontend/src/api/advanced.ts) (412 lines, fully typed).
-
-**Functional coverage:** 100%. **Architectural alignment with spec:** partial — no reusable subcomponents, no tree-shaking benefit, harder to test in isolation.
-
-### 5.5 Settings & Admin — 🟡 2/3
-
-- ✅ BillingSettings + PricingPage — [`billing/`](frontend/src/components/billing) (subscription, plan tiers, Stripe portal/checkout, cancel)
-- 🔴 **TeamManagement.tsx — MISSING** (needed for Business tier seat management)
-- 🔴 **IntegrationsPage.tsx — MISSING** (needed for API keys, HubSpot connection)
-
-### 5.6 State Management
-
-- ✅ All three stores typed: `authStore`, `mapStore` (12 properties), `projectStore`
-- ✅ Auth store persists token to localStorage
-- 🟡 **React Query underutilized** — installed (5.51.0) but used in only **4 of ~35 components**:
-  - `DemographicsPanel` (`['demographics', areaId]`)
-  - `ComparisonView` (`['compare', areaIds]`)
-  - `BillingSettings` (`['subscription']`)
-  - `usePlanLimits` hook
-  Most API calls use imperative `await` in event handlers with no caching. Expanding React Query to AreaList, POISearchPanel, AreaCreator preview, and AdvancedPanel tabs would significantly reduce redundant fetches.
-- 🟡 [`ErrorBoundary.tsx`](frontend/src/components/ErrorBoundary.tsx) exists but is **not mounted** anywhere — no global crash protection.
-
-### Component Tally
-
-| Category | Present | Partial | Missing |
+### Auth (JWT or `X-Api-Key`)
+| Method | Path | Controller | Notes |
 |---|---|---|---|
-| Map (7 core) | 7 | 0 | 0 |
-| Panels (7 core) | 7 | 0 | 0 |
-| Data (3 core) | 3 | 0 | 0 |
-| Advanced (9 features) | 9 | 9 (as inline tabs, not files) | 0 |
-| Settings/Admin (3) | 2 | 0 | 1 |
-| Stores + hooks | 4 | 0 | 0 |
+| POST | `/api/auth/refresh` | AuthController | Issue fresh JWT |
+| POST | `/api/auth/logout` | AuthController | Insert current `jti` into `revoked_tokens` |
+| GET | `/api/auth/me` | AuthController | Current user + org |
+| POST | `/api/auth/resend-verification` | AuthController | |
+| PUT | `/api/auth/profile` | AuthController | Update name/email/notification prefs/slack/theme |
+| POST | `/api/auth/change-password` | AuthController | |
+| GET | `/api/auth/api-key` | AuthController | Returns `{has_key, last4}` |
+| POST | `/api/auth/api-key/regenerate` | AuthController | Mints new `sm_…` key (shown once) |
 
----
-
-## SECTION 6: ADVANCED ALGORITHM IMPLEMENTATION AUDIT
-
-### 6.1 Territory Auto-Generation — 🟡 PARTIAL
-
-**Files:** [`TerritoryGenerator.php`](src/Services/TerritoryGenerator.php) (313 lines), [`TerritoryController.php`](src/Controllers/TerritoryController.php) (177 lines)
-
-- ✅ K-means clustering with Lloyd's algorithm + k-means++ seeding ([lines 44-67, 160-188](src/Services/TerritoryGenerator.php#L44))
-- ✅ Three balance metrics: `population`, `income_weighted_pop`, `housing_units` ([lines 131-141](src/Services/TerritoryGenerator.php#L131))
-- ✅ Border-tract swapping rebalancer — `balanceSwap()` up to 8 passes ([lines 204-252](src/Services/TerritoryGenerator.php#L204))
-- ✅ Imbalance threshold check (`(max-min)/min ≤ max_imbalance_pct`, default 15%)
-- ⚠️ **Convex hull** (Andrew's monotone chain, [lines 283-327](src/Services/TerritoryGenerator.php#L283)) instead of `ST_Union` — documented trade-off (MySQL struggles with pairwise union of 200+ polygons)
-- 🔴 **Boundary smoothing** (`ST_SimplifyPreserveTopology`) **not implemented** — covered by hull approximation
-- 🔴 **Direction-based naming** ("Territory — Northwest") **not implemented** — names are index-based ("Territory 1", "Territory 2", ...) at [`TerritoryController.php:91`](src/Controllers/TerritoryController.php#L91)
-
-### 6.2 Cannibalization Modeling — 🟡 PARTIAL
-
-**File:** [`CannibalizationController.php`](src/Controllers/CannibalizationController.php) (207 lines)
-
-- ✅ `ST_Intersection` overlap polygons + tract aggregation ([lines 89-123](src/Controllers/CannibalizationController.php#L89))
-- ✅ Overlap-weighted demographics (`d.total_population * inter.overlap_pct`)
-- ✅ Network-wide impact + per-area `cannibalized_pct` ([lines 135-151](src/Controllers/CannibalizationController.php#L135))
-- 🔴 **Risk-tier classification (low/moderate/high/critical) NOT implemented** — only raw percentages returned; UI has no severity labels
-
-### 6.3 Traffic-Aware Isochrones — ✅ COMPLETE (with simplification noted in 4.5)
-
-- ✅ 7×24 multiplier matrix
-- ✅ 8 preset windows + grid endpoint
-- ✅ `adjustedMinutes()` correctly divides time budget by multiplier
-- ℹ️ Implementation is **multiplier-based**, not radial-sampling + Google Routes — see Section 4.5
-
-### 6.4 Multi-Location Optimization (MCLP) — ✅ COMPLETE (greedy only)
-
-**File:** [`MclpController.php`](src/Controllers/MclpController.php) (232 lines)
-
-- ✅ Uncovered area computation
-- ✅ Candidate grid generation from bbox + grid_step_km ([lines 168-203](src/Controllers/MclpController.php#L168))
-- ✅ Greedy selection with incremental scoring ([lines 95-117](src/Controllers/MclpController.php#L95))
-- ✅ Three demand metrics: `population`, `housing_units`, `income_weighted_pop`
-- ✅ Before/after coverage metrics + `coverage_pct`
-- ℹ️ **Local search refinement skipped** — documented as acceptable trade-off (1-1/e ≈ 63% approximation, fine for iterative UX)
-
-### 6.5 Customer Segmentation — ✅ COMPLETE (no spending profiles)
-
-**Files:** [`SegmentationService.php`](src/Services/SegmentationService.php) (202 lines), [`scripts/segment-tracts.php`](scripts/segment-tracts.php)
-
-- ✅ 10 segments defined ([lines 20-31](src/Services/SegmentationService.php#L20)): affluent-suburbs, urban-professionals, family-suburbs, working-class-urban, rural-stable, retirement, college-towns, low-income-urban, moderate-suburbs, emerging-growth
-- ✅ Rule cascade classifier on age %, income tier, home value, density ([lines 89-119](src/Services/SegmentationService.php#L89))
-- ✅ Confidence score (0.5–0.9)
-- ✅ Batch upsert to `tract_segments` ([lines 44-61](src/Services/SegmentationService.php#L44))
-- 🔴 **Spending profiles NOT implemented** — DIY classifier uses Census only (Esri Tapestry-style spending data absent; documented acceptable in spec)
-
-### 6.6 Competitor Scanning — 🟡 PARTIAL
-
-**Files:** [`CompetitorScanner.php`](src/Services/CompetitorScanner.php) (299 lines), [`scripts/competitor-scan.php`](scripts/competitor-scan.php)
-
-- ✅ Cron entry point + `nextRunAt()` scheduling by frequency (daily/weekly/monthly)
-- ✅ Places API search within radius/area
-- ✅ Full diff detection: new, gone (`is_gone=1`), moved (Haversine > 150m), rating delta ≥ 0.3
-- ✅ Alert generation with type + severity
-- 🟡 **Notification channels: in-app only** — `fanoutNotification()` inserts into `notifications` table; **email + Slack channels stubbed/missing**
-
----
-
-## SECTION 7: DATA PIPELINE AUDIT
-
-### 7.1 Census Data ETL — 🟡 PARTIAL
-
-**Files:** [`scripts/seed-census.php`](scripts/seed-census.php), [`scripts/seed-census-reporter.php`](scripts/seed-census-reporter.php), [`scripts/aggregate-geographies.php`](scripts/aggregate-geographies.php)
-
-- ✅ TIGER/Line download instructions (manual: `ogr2ogr -f GeoJSON`)
-- ✅ Shapefile → MySQL via `ST_GeomFromText(?, 4326)`
-- ✅ Two ACS strategies: official Census API + Census Reporter fallback (no API key)
-- ✅ All required variable codes present (B01003, B19013, B23025, B25077, B25001, B01001, B19001)
-- ✅ Materialized aggregations to `census_counties` + `census_states` ([`aggregate-geographies.php:86-130`](scripts/aggregate-geographies.php#L86))
-- ✅ Idempotent (`ON DUPLICATE KEY UPDATE`)
-- 🔴 **No yearly refresh cron** — scripts exist but no schedule. Data drift left to operator.
-
-### 7.2 OpenRouteService Data — 🔴 NOT IMPLEMENTED
-
-- No OSM download
-- No Dockerfile / docker-compose for self-hosted ORS
-- Implementation uses **hosted ORS API** — fine for low volume, but subject to public-tier rate limits
-
-### 7.3 Segmentation Pipeline — ✅ COMPLETE
-
-- [`scripts/segment-tracts.php`](scripts/segment-tracts.php) — 16 lines, invokes `SegmentationService::recomputeAll()`
-- Batched 500 tracts at a time, REPLACE INTO `tract_segments`
-- Uses age + income + home value + density Census fields (no education/commute/mobility, but the implemented rule cascade doesn't require them)
-
----
-
-## SECTION 8: INFRASTRUCTURE & DEVOPS AUDIT
-
-### Implemented
-
-- ✅ **Custom migration system** ([`scripts/migrate.php`](scripts/migrate.php)) — tracked, idempotent
-- ✅ **Nginx + Apache fallback** ([`nginx.conf`](nginx.conf), [`.htaccess`](public/.htaccess)) — gzip, static-asset caching, internal upload serving
-- ✅ **CORS** — [`config/cors.php`](config/cors.php) (currently `*` — permissive)
-- ✅ **Rate limiting** middleware ([`Middleware.php:58-72`](src/Core/Middleware.php#L58)) via `api_usage_log`; plan-tier enforcement via `PlanLimits.php`
-- ✅ **Audit logging** — `audit_log` table populated by mutating endpoints
-- ✅ **API usage logging** — `api_usage_log` table feeds rate limiter
-- ✅ **Global error handler** ([`public/index.php:28-38`](public/index.php#L28)) — logs to `storage/logs/php-error.log`, returns generic 500 in production, stack trace in dev
-- ✅ **HTTPS via Certbot** in [`droplet-deploy.sh`](scripts/droplet-deploy.sh)
-- ✅ `.env.example` complete for both backend and frontend
-
-### Missing / Not Production-Grade
-
-- 🔴 **No Docker** — bare-metal only; hard to reproduce environments
-- 🔴 **No Redis** — `CacheService` uses filesystem (`storage/cache/`); spec assumes Redis for hot caches (isochrone results, Places, geocoding)
-- 🔴 **No S3/GCS** — uploads + generated reports live in `public/uploads/` and `storage/reports/` on the droplet; not horizontally scalable, no backup story
-- 🔴 **No health-check endpoint** — `/health` or `/status` not registered; load balancers can't probe
-- 🔴 **No structured logging** — `error_log()` only; no Monolog, no JSON logs, no log shipping
-- 🔴 **No CI/CD** — no GitHub Actions, no automated tests run on push
-- 🔴 **No automated backups documented**
-- 🔴 **No API docs** (Swagger / OpenAPI / Postman collection)
-- 🟡 **Rate limiting partial** — only some endpoints
-- 🟡 **CORS too permissive** — `*` should be narrowed to known origins in production
-
----
-
-## SECTION 9: QUALITY & COMPLETENESS SCORECARD
-
-Legend: ✅ COMPLETE · 🟡 PARTIAL · 🔴 NOT STARTED · ⚠️ BROKEN
-
-### Feature Completeness Matrix
-
-| Feature | Status | % Complete | Key Gaps |
-|---|---|---|---|
-| Interactive Map + Controls | ✅ | 100% | — |
-| Isochrone Generation (static) | ✅ | 100% | Hosted ORS only (no self-host) |
-| Manual Drawing Tools | ✅ | 100% | Polygon + circle (rectangle absent — not required) |
-| Demographics Overlay | ✅ | 100% | — |
-| POI / Business Search | ✅ | 100% | — |
-| CSV/Excel Import | ✅ | 100% | Synchronous, no streaming for >10MB |
-| Data Export (CSV, Excel, PDF) | ✅ | 100% | — |
-| Heatmap Visualization | ✅ | 100% | — |
-| Area Folders & Organization | ✅ | 100% | — |
-| Area Overlap (visual) | ✅ | 100% | — |
-| User Authentication | 🟡 | 70% | No password reset, no email verify, no logout revocation |
-| Stripe Billing | ✅ | 100% | — |
-| Team / Multi-user | 🟡 | 60% | Collaborator backend exists; no UI for team mgmt; no seat enforcement UI |
-| Territory Auto-Generation | 🟡 | 80% | No direction naming, hull instead of union+simplify |
-| Cannibalization Modeling | 🟡 | 75% | No risk-tier classification thresholds |
-| Traffic-Aware Isochrones | 🟡 | 85% | Multiplier-based, not Routes API + radial sampling |
-| Multi-Location Optimization | ✅ | 90% | Greedy only (no local search) — documented trade-off |
-| Customer Segmentation | ✅ | 95% | No Esri-style spending profiles (intentional) |
-| Collaboration & Versioning | ✅ | 95% | Backend complete; UI consolidated into AdvancedPanel |
-| Mobile Field App | 🟡 | 70% | Field-notes API/UI present; no PWA manifest, no offline, no native install |
-| Competitor Monitoring | 🟡 | 80% | In-app notifications only — no email/Slack |
-| Census Data Pipeline | 🟡 | 85% | No yearly refresh cron |
-| Self-Hosted Routing (ORS Docker) | 🔴 | 0% | Not implemented; hosted API only |
-
-### Top 10 Most Critical Gaps
-
-1. **No password reset / email verification** — users locked out have no recovery path. ([`AuthController`](src/Controllers/AuthController.php))
-2. **No CI/CD, no tests** — every deploy is hand-rolled; no regression safety net.
-3. **No structured logging or health check** — operations blind in production; load balancers can't probe.
-4. **No Redis** — file-based cache won't scale beyond one droplet; can't share between PHP-FPM workers reliably.
-5. **No S3/GCS for uploads + reports** — single-server storage is a horizontal-scale blocker and a backup risk.
-6. **No yearly Census refresh automation** — ACS publishes annually; manual re-run required, data drifts silently.
-7. **TeamManagement.tsx + IntegrationsPage.tsx missing** — Business-tier UX promise not deliverable.
-8. **Cannibalization missing risk-tier classification** — UI has raw percentages but no actionable low/moderate/high/critical labels.
-9. **Competitor notifications in-app only** — operators not paged when scans surface critical changes (new direct competitor opens in territory).
-10. **Self-hosted OpenRouteService absent** — hosted-API rate limits cap throughput; one heavy customer can exhaust the quota.
-
-### Top 10 Code Issues / Bugs to Verify
-
-1. **CORS preflight may fail** — `OPTIONS` not registered as a route in [`config/routes.php`](config/routes.php); rely on web-server-level handling only.
-2. **Stripe webhook controller does not re-verify signature** — trust delegated to service layer ([`BillingController:29-42`](src/Controllers/BillingController.php#L29)); worth a guard.
-3. **Long-running jobs bump `memory_limit` + `set_time_limit` inline** in TerritoryController/MclpController — under load this can starve PHP-FPM workers.
-4. **CSV/XLSX upload reads entire file into memory** ([`ImportController`](src/Controllers/ImportController.php)) — risk of OOM on near-10MB files.
-5. **Rate limiting incomplete** — geocoding/import/territory-generation/MCLP have no per-endpoint throttle.
-6. **JWT has no revocation list** — stolen token valid until natural expiry (24h); no "log out everywhere" possible.
-7. **ErrorBoundary exists but is not mounted** ([`ErrorBoundary.tsx`](frontend/src/components/ErrorBoundary.tsx)) — a single React crash blanks the page.
-8. **React Query installed but used in only 4 components** — most data fetches re-run on every render; wasted API calls and unnecessary re-renders.
-9. **`AdvancedPanel.tsx` is 712 lines of inline JSX** — single-file regressions will be hard to isolate; testing requires mounting the whole panel.
-10. **CORS configured as `*`** in [`config/cors.php`](config/cors.php) — should be narrowed in production.
-
-### Architecture Concerns
-
-- **Monolithic `AdvancedPanel.tsx`** — hard to test, no tree-shaking, no reuse outside the panel.
-- **No background-job queue** — algorithms run synchronously inside HTTP requests with bumped timeouts. Will not survive horizontal scale.
-- **File-based cache + local storage** — couples app state to a single host.
-- **No observability stack** — no metrics, no APM, no log aggregation. Production debugging is grep on the droplet.
-- **No automated tests anywhere** — every change is a leap of faith.
-
----
-
-## SECTION 10: RECOMMENDED NEXT STEPS
-
-### Critical Fixes (do first)
-
-1. **Wire ErrorBoundary into `AppLayout`** — wrap `<MapCanvas>` and major panels. ~1 hour.
-2. **Register explicit `OPTIONS` handler** in [`config/routes.php`](config/routes.php) or in the Router to ensure CORS preflight succeeds for complex requests. ~1 hour.
-3. **Add `/api/health` endpoint** returning `{ ok: true, db: <bool>, version: <git-sha> }`. Required for any load balancer. ~30 minutes.
-4. **Tighten CORS allowed_origins** from `*` to the production frontend origin only. ~15 minutes.
-5. **Mount Stripe signature re-check in the controller** as defense-in-depth, even though the service handles it. ~30 minutes.
-
-### Missing Core Features
-
-6. **Password reset flow** — endpoint pair (`request-reset`, `reset`), email send via PHPMailer or transactional provider, token with TTL stored in DB. ~1 day.
-7. **Email verification** at registration — same email infra. Mark `users.email_verified_at`. ~half day.
-8. **JWT revocation list** — `revoked_tokens` table keyed on `jti`; middleware check. Logout writes to it. ~half day.
-9. **TeamManagement page** — invite collaborators, list/remove members, role editor. Backend already exists. ~1–2 days.
-10. **IntegrationsPage** — at minimum API key display + regeneration; HubSpot OAuth deferrable. ~1 day for keys only.
-
-### Missing Advanced Features
-
-11. **Cannibalization risk tiers** — threshold the existing `cannibalized_pct` into low/moderate/high/critical, surface in [`CannibalizeTab`](frontend/src/components/advanced/AdvancedPanel.tsx). ~half day backend + half day UI.
-12. **Direction-based territory naming** — compute centroid bearing from project center, label "NW / N / NE / ..." in [`TerritoryController.php:91`](src/Controllers/TerritoryController.php#L91). ~2 hours.
-13. **Competitor email/Slack notifications** — extend `fanoutNotification()` with channel dispatch; reuse email infra from #6. ~half day each.
-14. **Yearly Census refresh cron** — wrap `seed-census.php` + `aggregate-geographies.php` in a wrapper script, add to `crontab` in `droplet-deploy.sh`. ~2 hours.
-15. **PWA manifest + service worker** for field-notes mobile use — `manifest.json`, basic offline shell, "Add to Home Screen" prompt. ~1 day.
-
-### Polish & Optimization
-
-16. **Expand React Query coverage** — wrap AreaList, POISearchPanel, AreaCreator preview, AdvancedPanel tabs. ~1 day. Big perf and code-quality win.
-17. **Split `AdvancedPanel.tsx` into per-feature files** under `frontend/src/components/advanced/`. ~1 day, mechanical.
-18. **Background job queue** — even a simple DB-backed queue (`jobs` table + cron worker) for territory generation / MCLP / competitor scans removes inline timeout hacks. ~2 days.
-19. **Move file-cache → Redis** — `predis/predis`, swap `CacheService` backend. Phpredis is faster but predis avoids native ext. ~half day.
-20. **Move uploads + reports → S3** (or DigitalOcean Spaces — S3-compatible). `aws/aws-sdk-php`. ~1 day.
-21. **Structured logging** — Monolog with JSON formatter + rotating handler. ~half day.
-22. **Streaming CSV import** — switch from `IOFactory::load()` to PhpSpreadsheet's reader chunking, or hand-roll a streaming CSV parser. ~1 day.
-23. **Add OpenAPI/Swagger doc** for the API surface — even a hand-written spec file improves the team-onboarding experience. ~2 days.
-24. **Self-hosted OpenRouteService** (Docker) — only if hosted-API rate limits become a problem. ~1 day infra + ongoing maintenance.
-25. **First test suite** — start with PHPUnit for `Services/` (territory, MCLP, segmentation, traffic, census). Vitest for stores + utils. ~2–3 days for a meaningful first pass.
-
-### Effort Summary
-
-| Tier | Items | Estimate |
+### Core mapping
+| Method | Path | Notes |
 |---|---|---|
-| Critical fixes | 5 | ~half day total |
-| Missing core features | 5 | ~4–5 days |
-| Missing advanced features | 5 | ~3–4 days |
-| Polish & optimization | 10 | ~2 weeks for the full set |
+| GET/POST/PUT/DELETE | `/api/projects[/{id}]` | CRUD; org-scoped |
+| GET/POST/PUT/DELETE | `/api/folders` + `/api/projects/{projectId}/folders` | |
+| GET/POST/PUT/DELETE | `/api/areas[/{id}]` + `/api/projects/{projectId}/areas` | |
+| GET | `/api/areas/{id}/demographics` | Cache-Control: max-age=86400 |
+| GET | `/api/areas/{id}/pois` | From POICache table |
+| POST | `/api/demographics/compare` | Side-by-side comparison |
+| GET | `/api/heatmap/tracts` | Viewport choropleth (see Heatmap section) |
+| POST | `/api/areas/reach` | Smart-sizing: smallest circle covering N people (binary search), rate-limited 120/hr |
+| POST | `/api/demographics/preview` | Live demographics for a drafted polygon (no persist) |
+| POST | `/api/isochrone/calculate` | ORS isochrone or radius circle |
 
-**Realistic MVP-launch path:** items 1–10 (~1 week of focused work) get the product to a state where you can onboard the first paying customer without operational embarrassment. Items 11–18 are the second sprint; 19–25 are scale prep.
+### Geocoding & Places (Google-billed, rate-limited)
+| Method | Path | Cost/call | Rate limit |
+|---|---|---|---|
+| POST | `/api/geocode` | $0.005 | 500/hr |
+| POST | `/api/geocode/batch` | $0.005 × N | 20/hr |
+| POST | `/api/places/nearby` | $0.032 | 300/hr |
+| POST | `/api/places/search` | $0.032 | 300/hr |
+| GET | `/api/places/{placeId}` | $0.020 | — |
+
+### Import / Export / Reports
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/api/projects/{projectId}/import/upload` | CSV or XLSX (10MB cap); 20/hr |
+| POST | `/api/projects/{projectId}/import/configure` | Streams row-by-row (`fgetcsv` for CSV, `getRowIterator` for XLSX); per-row geocode |
+| GET | `/api/imports/{batchId}/status` | |
+| DELETE | `/api/imports/{batchId}` | |
+| GET | `/api/projects/{projectId}/export/areas` | CSV/GeoJSON/KML |
+| GET | `/api/areas/{areaId}/export/pois` | |
+| GET | `/api/projects/{projectId}/export/points` | |
+| GET | `/api/exports/{filename}` | Signed download |
+| POST | `/api/areas/{id}/report` | TCPDF or wkhtmltopdf → PDF |
+| GET | `/api/reports` | List |
+| GET | `/api/reports/{id}/download` | Streams `application/pdf`; frontend wraps in blob for proper download |
+
+### Advanced (the ✨ sparkle panel)
+**Cannibalization** (with risk tiers):
+- `GET /api/projects/{projectId}/cannibalization` — pairwise overlap demographics, severity = low/moderate/high/critical, includes recommendation strings
+
+**Territory generation** (k-means + boundary swap):
+- `POST /api/projects/{projectId}/territories/generate` — sync or `async:true` (queues a job)
+- `GET /api/projects/{projectId}/territories/jobs`
+- `POST /api/areas/{id}/rebuild-boundary` — pairwise `ST_Union` over source tracts (slow, pretty)
+
+**Multi-location optimization (MCLP)**:
+- `POST /api/projects/{projectId}/optimize/locations` — greedy + 4-pass local-search refinement (~63% greedy → near-optimal after swap)
+
+**Customer segmentation**:
+- `GET /api/segmentation/segments` — catalog of 10 personas (affluent-suburbs, urban-professionals, family-suburbs, working-class-urban, rural-stable, retirement, college-towns, low-income-urban, moderate-suburbs, emerging-growth)
+- `GET /api/areas/{id}/segments` — Cache-Control: max-age=86400
+- `POST /api/projects/{projectId}/segments` — project-wide aggregate
+- `POST /api/segmentation/recompute` — admin/owner only; ~0.4s for 4,425 tracts
+
+**Traffic-aware isochrones (incl. Daypart)**:
+- `POST /api/isochrone/traffic` — single hour, applies 7×24 multiplier matrix to ORS budget
+- `POST /api/isochrone/traffic/grid` — 8 predefined windows (Mon AM peak, Fri PM peak, etc.)
+- `POST /api/isochrone/traffic/day` — **24 hours in one call**; dedupes by `adjusted_minutes` so 24 hours → ~6-8 unique ORS calls per day
+
+**Collaboration**:
+- Versions: `POST/GET /api/projects/{projectId}/versions`, `GET /api/versions/{id}`
+- Comments: list/create/resolve/delete with optional `anchor_lat/lng` + parent threading
+- Change log: `GET /api/projects/{projectId}/changes`
+- Collaborators: list/add/remove with viewer/editor/admin/owner roles
+- Approvals: create/list/decide with payload + decision note
+
+**Competitor monitoring**:
+- Monitors CRUD + `/scan` to force-run (rate-limited 60/hr)
+- Tracked places snapshot via `/places`
+- Alerts via `/alerts` + `/read`
+- Cron-driven scanner (`scripts/competitor-scan.php`) detects new / gone / moved (>150m) / rating drift (>0.3 stars)
+- Fans out to in-app notifications, email (if user opted in), and Slack (if user webhook configured)
+
+**Field notes / mobile PWA**:
+- `GET/POST /api/projects/{projectId}/field-notes` — geo-stamped
+- `DELETE /api/field-notes/{id}`
+- `GET /api/projects/{projectId}/where-am-i?lat=&lng=` — returns containing areas + tract + segment
+
+**AI site scoring**:
+- `POST /api/areas/{id}/ai-score` — Anthropic Claude Haiku 4.5 when key configured; deterministic local fallback otherwise. Cached 24h per area-WKT signature
+
+### Cost tracking
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/usage/today` | Total + per-API breakdown for today |
+| GET | `/api/usage/days` | Last 30 days, bucketed |
+| GET | `/api/usage/pricing` | Public price card |
+
+### Background jobs + webhooks
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/jobs/{id}` | Poll status (queued/running/done/failed/cancelled) |
+| POST | `/api/jobs/{id}/cancel` | Soft cancel |
+| GET/POST/PUT/DELETE | `/api/webhooks[/{id}]` | Up to 10 per org; HMAC-SHA256 signed deliveries |
+| POST | `/api/webhooks/{id}/test` | Ping a configured URL |
+
+### Notifications
+| Method | Path | |
+|---|---|---|
+| GET | `/api/notifications?unread=1` | Poll every 60s from header |
+| POST | `/api/notifications/{id}/read` | |
+| POST | `/api/notifications/read-all` | |
+
+### Billing (Stripe)
+| Method | Path | |
+|---|---|---|
+| POST | `/api/billing/checkout` | Owners only |
+| GET | `/api/billing/subscription` | |
+| POST | `/api/billing/portal` | |
+| POST | `/api/billing/cancel` | |
 
 ---
 
-## Final Verdict
+## Services layer
 
-**Smappen is much further along than a typical "audit me" repo.** The spec coverage is genuinely impressive — 23 controllers, 10 services, all 29 schema tables, every external integration, and 9 distinct advanced features all functionally present. The work that remains is overwhelmingly **operational** (auth recovery, observability, queueing, object storage, CI) rather than **product** (the product itself works).
+Located under `src/Services/`. All injected as plain instances; no DI container.
 
-The two pieces of debt most likely to bite you in the first 90 days of paying customers:
+| Service | Purpose |
+|---|---|
+| `CacheService` | Redis-first (when `REDIS_URL` set), MySQL `cache` table fallback. Same interface for both. Soft-fail on Redis errors |
+| `StorageService` | Local FS or DigitalOcean Spaces (S3 SigV4 virtual-hosted addressing). Pre-signed URLs for private assets |
+| `MailService` | Postmark/Resend/log driver; chooses on first call based on env keys |
+| `Logger` | Monolog with JSON rotating handler (14d for app.log, 30d for error.log), UID + WebProcessor, stderr in dev. Stub fallback if Monolog missing |
+| `GoogleMapsService` | Geocode, reverse, batch, Places nearby/text/details, place details. Persists costs via `logApiUsage(api_name, count)` |
+| `GooglePricing` | Per-call USD price card (geocode $0.005, places $0.032, place_details $0.020, static_map $0.002, routes $0.005, maps_load $0.007, etc.) |
+| `IsochroneService` | ORS wrapper. `smoothing=0` for max detail, `Accept: application/geo+json` (else ORS 406s), 90s timeout, 24h cache keyed on `lat,lng,minutes,mode` |
+| `TrafficService` | 7×24 multiplier matrix (calibrated against FHWA/INRIX). Methods: `multiplier(day, hour)`, `adjustedMinutes(minutes, day, hour)`, `windows()` for the 8-window grid view |
+| `TerritoryGenerator` | k-means++ init, weighted Lloyd iterations (up to 25), boundary swap (up to 8 passes), convex hull dissolves. Max 5,000 tracts × 30 territories |
+| `SegmentationService` | 10 rule-based personas from Census features; recomputeAll batched 500 at a time |
+| `CompetitorScanner` | Per-monitor Google Places sweep, diff against `tracked_places`, emits new/gone/moved/rating alerts. Fans out to notifications + email + Slack |
+| `WebhookDispatcher` | HMAC-SHA256 signatures (`X-Smappen-Signature: t=<unix>,v1=<hex>`), 10s timeout, retry on 5xx, deduplicated by org+event |
+| `GeoUtils` | GeoJSON ↔ WKT, point-in-polygon, circle polygon generator, spherical area, coordinate swap (MySQL returns lat,lng for SRID 4326 GeoJSON), polyline encoding |
+| `CensusService` | Tract-weighted demographics aggregation (population, income, home value, housing units, age + income buckets) for any polygon WKT |
 
-1. **Auth recovery** — the moment a customer loses a password, you have to manually reset their DB row.
-2. **No queue, no Redis, single-droplet file storage** — the first customer who imports 50k addresses and runs territory generation on a 10-county region will pin the box.
+---
 
-Everything else is a known-good improvement, not an existential threat.
+## Frontend surface
+
+### Routing (`App.tsx`)
+
+| Path | Component | Auth |
+|---|---|---|
+| `/login` | LoginPage | redirect if already auth'd |
+| `/register` | RegisterPage | redirect if already auth'd |
+| `/forgot-password` | ForgotPasswordPage | |
+| `/reset-password?token=…` | ResetPasswordPage | |
+| `/verify-email?token=…` | VerifyEmailPage | StrictMode ref-lock against double-redemption |
+| `/pricing` | PricingPage | |
+| `/share/:token` | SharedProjectPage | Public, read-only, raw axios |
+| `/settings` (layout) | SettingsLayout | Protected |
+| `/settings/profile` | ProfileSettings | Name, email (with verify-resend), notif toggles, Slack URL, theme |
+| `/settings/team` | TeamSettings | Invite by email + role badge (viewer/editor/admin/owner) |
+| `/settings/integrations` | IntegrationsSettings | API key tile, webhooks tile, Slack tile, email status |
+| `/settings/api` | ApiKeySettings | Show last4, regenerate w/ confirm, curl/JS/Python snippets |
+| `/settings/webhooks` | WebhookSettings | URL + events checkboxes, test ping, secret shown once |
+| `/settings/billing` | BillingSettings | Plan + Stripe portal |
+| `/*` | AppLayout (the map) | Protected |
+
+### AppLayout structure
+
+```
+┌──────────────────── Header (h-14, sticky top, z-30) ───────────────────┐
+│  Logo S · "smappen" · │ ProjectName▼ ⋮ │  Undo Redo │ $0.01 today▼ 🔔 │
+│                                                       Share  AvatarMenu │
+└─────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┬──────┐
+│                                                                  │ Tool │
+│  ┌────────────┐                          ┌──────────────────┐  │  bar │
+│  │ Left panel │      ← Map canvas →      │ Right panel      │  │ (v)  │
+│  │ Areas list │      (Google Maps)       │ when area        │  │  📊  │
+│  │ search +   │                          │ selected         │  │  📍  │
+│  │ filters    │                          │ tabs:            │  │  🗺   │
+│  │ AreaCard×N │                          │ Overview/        │  │  🏢   │
+│  │ Import/Draw│                          │ Demographics/    │  │  📋   │
+│  └────────────┘                          │ Businesses/Data  │  │  📦   │
+│                                          └──────────────────┘  │  ⭐   │
+│  ┌────────────────────┐                                        │  ✨   │
+│  │ Heatmap panel      │                  ┌──────────────────┐  │  📷   │
+│  │ (when active)      │                  │ Advanced panel   │  │  +    │
+│  │ Metric/Level/      │                  │ when sparkle on  │  │  −    │
+│  │ Palette/Legend     │                  │ tabs:Territories │  │  ?    │
+│  └────────────────────┘                  │ Cannibalize/     │  │      │
+│  [MiniMap toggle]                        │ Traffic/Optimize │  │      │
+│                                          │ Segments/        │  │      │
+│  ┌────────────────────────────────────────│ Comments/Versions│  │      │
+│  │   Daypart strip (full-width when on)  │ Competitors/Field│  │      │
+│  │  Mon ▾ 60m ▾ Run   ▶ 06:00 5,088km²   │                  │  │      │
+│  │  ▆▇▇▇▇▆▅▃▂▃▄▅▆▆▅▄▃▃▄▅▆▆▇▇            │                  │  │      │
+│  └────────────────────────────────────────└──────────────────┘  │      │
+└──────────────────────────────────────────────────────────────────┴──────┘
+```
+
+### Component tree (key components)
+
+- **`AppLayout.tsx`** — Mounts `useJsApiLoader`, all `ErrorBoundary` wrappers (per-panel inline fallbacks instead of full-screen), shortcuts hook, screenshot handler, and the TimeMachinePanel via `mapStore.timeMachineRequest`
+- **`Header.tsx`** — Project switcher (Cmd+K opens with `autoFocus` search), notifications dropdown (with click-outside-to-close), Google API spend widget (Dollar icon, color goes rose when >$1/day, popover shows per-API breakdown), user menu (Profile/Team/Integrations/Billing/Sign-out)
+- **`LeftPanel.tsx`** — `AreaList`, search-filter-sort chips, Create/Import buttons
+- **`AreaList.tsx`** — Search by name, sort (recent/name/time/pop), filter by area type (isochrone/radius/manual), proper search-icon inset
+- **`AreaCard.tsx`** — Color dot, name, meta, full action menu (rename inline, change color, duplicate, zoom-to, delete with confirm)
+- **`RightPanel.tsx`** — Closes on Esc; tabs Overview/Demographics/Businesses/Data; Overview hosts Report button, Export button, and the dashed-violet **"Drive-time over a full day"** launcher (only for isochrone-type areas)
+- **`DemographicsPanel.tsx`** — Population, age buckets, income buckets, median income, median home value, housing units. ECharts donuts
+- **`POISearchPanel.tsx`** — Type + keyword + radius, Google Places nearby
+- **`MapCanvas.tsx`** — Single GoogleMap. Children: ChoroplethLayer (when heatmap on), AreaPolygons, AreaCenterPins (memoized icon + guard against `typeof google === 'undefined'`), ImportedMarkers, POIMarkers, DrawingTools, TimeMachine polygon overlay (zIndex 999)
+- **`HeatmapPanel.tsx`** — Metric select (population, density, income, home value, unemployment, housing), level (auto/state/county/tract), palette picker (11 named palettes), legend gradient bar with hover-tract position marker
+- **`ChoroplethLayer.tsx`** — Google Data layer, debounced viewport fetch (250ms), prefetchAdjacent on idle, 200-entry client memCache LRU
+- **`MiniMapToggle.tsx`** — Bottom-left; slides to `left-[364px]` when heatmap is open
+- **`RightToolbar.tsx`** — Vertical icon strip: Overview, Address/pin, Heatmap toggle, Demographics, Reports, Add data, Favorites, **Sparkle (Advanced)**, **Camera (Screenshot)**, Zoom+/−, Help
+- **`AreaCreator.tsx`** — Address autocomplete (Google Places), travel-mode (car/bike/walk), time-budget or radius, color picker, live demographics preview
+- **`ImportWizard.tsx`** — Upload, column-mapping preview, configure-and-run
+
+### Advanced Panel tabs (each lazy-loaded ~2KB gz)
+
+| Tab | Component | Purpose |
+|---|---|---|
+| Territories | TerritoriesTab | k-means generator: target count, balance metric, bbox=current viewport, name prefix |
+| Cannibalize | CannibalizeTab | Per-area uniqueness + overlap matrix with low/moderate/high/critical badges |
+| Traffic | TrafficTab | Featured "▶ Watch drive-time over a full day" button + single-hour calculator |
+| Optimize | OptimizeTab | MCLP grid: picks, radius, grid_step, demand_metric |
+| Segments | SegmentsTab | Project-wide segment mix with per-segment % bars |
+| Comments | CommentsTab | Threaded comments with resolve/delete, anchored to selected area |
+| Versions | VersionsTab | Snapshot button + version list + recent activity (change_log) |
+| Competitors | CompetitorsTab | Create monitor + list + per-monitor Scan/Remove |
+| Field notes | FieldTab | Geolocate-or-map-center + body + tags; lists notes with author + timestamp |
+
+### Daypart strip (the time machine — completely redesigned)
+
+**Layout** — full-width media-player strip docked along the bottom (`left-4 right-20 bottom-4`), 3 rows tall:
+
+- **Row 1 (28px)**: `⏰ Daypart` · `24-HOUR REACH` pill · Day select · Duration select · Run button · "X unique routes" status · Collapse chevron · Close
+- **Row 2 (44px)**: ▶ play (36px violet circle) · `06:00` (22px extrabold tabular) · `5,088 km² · 1.0× traffic` · peak-shrink summary chip · speed select (0.5×/1×/2×/4×)
+- **Row 3 (44px)**: 24 color-coded clickable bars (overnight blues → cool morning → warm midday → evening purples; height = relative reach vs day's best); time scale `00:00 06:00 12:00 18:00 23:00`
+
+The heatstrip IS the scrubber — click any bar to jump. Playing wraps midnight → 1am automatically.
+
+The polygon morphs on the map in real time via `mapStore.timeMachine`, drawn by `MapCanvas` as an overlay polygon at zIndex 999.
+
+Backend dedupes by `adjusted_minutes` so a 24-hour request on a Monday only needs ~6-8 ORS calls per origin per day; remaining hours hit the IsochroneService cache.
+
+Launched from two places:
+1. Right panel's Overview tab on an isochrone area
+2. Advanced panel's Traffic tab, big dashed-violet button
+
+Both route through `mapStore.openTimeMachine(opts?)` → renders `TimeMachinePanel` at the AppLayout level.
+
+---
+
+## Feature catalog
+
+### Mapping core
+- 4 area types: `isochrone` (travel-time), `isodistance` (travel-distance), `radius` (circle), `manual` (drawn polygon)
+- Travel modes: car, bike, walk, wheelchair
+- Live demographics preview while drafting (population, median income, area km², density)
+- "Smallest circle reaching N people" via binary-search radius (`POST /api/areas/reach`)
+- Folders (color-coded) for grouping areas within a project
+- Notes per area
+- 4-pt drawing tools: polygon, circle, pin, freehand
+
+### Demographics
+- US Census ACS 5-year (2023 vintage) at tract level: 50-variable batches split to fit the 50-per-request limit
+- Aggregations: population total, age buckets (under-18, 18-34, 35-54, 55-64, 65+), income buckets (under-25k, 25-50k, 50-75k, 75-100k, 100k+), median income, median home value, housing units, labor force / unemployment
+- Coverage: DC + MD + VA + WV (~4,425 tracts)
+- Cached in `areas.demographics_cache` JSON; refreshed annually via `scripts/refresh-census.php`
+
+### Heatmap (choropleth)
+- 6 metrics: population density, population, median income, median home value, unemployment rate, housing units
+- 3 LOD levels (auto by zoom): state (z≤7), county (8-9), tract (10+)
+- **11 named palettes** (Smappen Pastel, Vivid Rainbow, Viridis, Plasma, Magma, Inferno, Turbo, Heat, Cool-Warm, Sunset, Mono Purple) with weighted stop positions; legend bar + polygon coloring derive from the same active palette
+- Quantile-aware decile breaks for accurate hue distribution
+- Hover-marker on the legend gradient shows current tract's position
+- "cached" badge when served from server tile cache
+- Truncation badge with guidance when polygon cap is hit
+- **Tiered caching**: server-side bbox-quantized 7-day cache (`heatmap_tile_cache`), 1h browser `Cache-Control`, 200-entry client memCache LRU, adjacent-tile prefetch on idle (warms 8 surrounding viewports)
+- ST_AsGeoJSON precision=4 (~11m, ~4× smaller payload than default)
+- mod_deflate gzip: 12MB → ~2MB on the wire
+
+### POI / Businesses
+- Google Places nearby + text search
+- Type filter + keyword filter
+- Per-area POI cache (`poi_cache` table, 48h)
+- POI markers rendered with clustering on the map
+
+### Reports (PDF)
+- TCPDF default + wkhtmltopdf if installed (auto-detected)
+- Includes area name, demographics, POIs, static map preview
+- **Fixed in this audit cycle**: was using `window.open(downloadUrl, '_blank')` → silent 401 in new tab without auth header. Now fetches via authed axios as a blob, triggers a real `<a download>`. Verified: 159KB valid PDF with `%PDF` magic header.
+
+### Import / Export
+- Upload CSV (10MB cap) or XLSX
+- Column mapping (address OR lat/lng + name + custom columns)
+- Per-row geocoding via Google with the address-column path
+- **Streaming**: row-by-row processing (`fgetcsv` + `getRowIterator`); no full-file load
+- Imports as `imported_points` (POINT SRID 4326)
+- Export: CSV, GeoJSON, KML for areas; CSV for POIs and imported points; signed download via storage layer
+
+### Auth & accounts
+- Email + password registration (bcrypt)
+- JWT issuance with embedded `jti`, 24h expiry
+- **JWT revocation**: per-token via `revoked_tokens` table OR bulk via `users.tokens_invalid_before` (set on password reset)
+- API keys: `sm_<48 hex>` prefix, sha256 at rest, last4 visible, shown raw once at creation
+- Two auth methods supported on every protected endpoint: `Authorization: Bearer <JWT>` or `X-Api-Key: sm_…`
+- Password reset email (1h token) — via Postmark/Resend or log driver
+- Email verification (7-day token); UI nudge on profile page when unverified
+- StrictMode-safe verify page (useRef lock prevents double-redemption)
+- Logout = local-state-first then fire-and-forget server revocation
+
+### Settings
+- Profile: name, email (with verification status), theme (light/dark/auto), notification toggles (email, competitor alerts, team activity), Slack webhook URL, change password
+- Team: invite by email → role select (viewer/editor/admin/owner) → table with badges + remove
+- Integrations: API key tile, webhooks tile, Slack tile, email status
+- API key: regenerate with confirm (rotates), curl/JS/Python snippets
+- Webhooks: up to 10 per org, URL + event checkboxes (`competitor.alert`, `territory.generated`, `import.completed`, `comment.created`, `approval.requested`, `approval.decided`, `project.shared`), HMAC secret shown once, test ping, delivery history
+- Billing: plan badge + Stripe portal link
+
+### Team & collaboration
+- Project collaborators: viewer / editor / admin / owner roles
+- Comments: per-project + per-area, threaded (`parent_comment_id`), anchored to lat/lng (for map pins), resolve/unresolve
+- Change log: every mutation (area create/update/delete, comment create/resolve, approval decisions) logged with diff JSON
+- Snapshots (project versions): manual snapshot button stores full JSON payload (project meta + folders + areas + geometries) keyed by monotonically increasing version_number per project
+- Approval requests: title + description + payload, decided by admin+ with note
+- All actions emit in-app notifications to non-actor collaborators
+
+### Notifications
+- In-app dropdown in header; unread badge with count (max display "99+"); 60s polling that skips when logged out
+- Click-outside-to-close
+- "Mark all read" action
+- Types: `comment`, `approval_request`, `competitor_alert`, custom
+- Email fanout for warn/high competitor alerts when user opted in (`users.notify_competitor_alerts` AND `users.notify_email`)
+- Slack fanout if user has webhook URL configured
+
+### Public sharing
+- Per-project share token (32-hex) + `is_shared` toggle
+- Token rotation only on off→on transition (re-PUTting `is_shared:true` does NOT rotate, so existing links don't break)
+- Optional `share_expires_at`
+- `share_view_count` bumped on each load
+- Read-only React view at `/share/{token}` with map + polygons (no demographics)
+- Lighter `/embed` payload for iframe embedding
+
+### Time Machine / Daypart
+See full Daypart strip section above.
+
+Backend: `POST /api/isochrone/traffic/day` returns 24 hour-frames; dedupes by adjusted_minutes so 24 hours collapse to ~6-8 unique ORS calls per origin per day.
+
+Live polygon morphs on the map. Heatstrip bars are the scrubber. Play/pause auto-wraps midnight. 4 playback speeds (0.5× to 4×). Collapse mode hides the player row, leaving just title + heatstrip.
+
+### Cost tracking
+- Every Google-API-fronting response carries `_meta: {api_name, estimated_cost_usd}`
+- Axios interceptor fires a 💸 toast bottom-right per call ("geocode · $0.005")
+- `useCostStore` (zustand) maintains running daily total + session total + per-API calls
+- Header widget shows `$X.XX today` (color goes rose when >$1); click for popover with per-API breakdown + footer disclaimer "real billing lives in GCP"
+- Backend persists costs to `api_usage_log.estimated_cost_usd` (DECIMAL(10,6))
+- Endpoints: `/api/usage/today`, `/api/usage/days`, `/api/usage/pricing` (public price card)
+- Pricing source of truth: `GooglePricing::COSTS` (geocode $0.005, places $0.032, place_details $0.020, static_map $0.002, routes $0.005, etc.)
+
+### Advanced features
+
+**Territory generation** — k-means++ initialization with weighted Lloyd iterations (up to 25), boundary swap (up to 8 passes) targeting balanced totals (configurable `max_imbalance_pct`, default 12%). Convex hull dissolves for fast deterministic territory polygons. Cluster naming via 8-point compass (N, NE, E, SE, S, SW, W, NW) relative to bbox centroid — "NW Territory", "NW Territory 2", etc., ordered by population descending within each direction. Optional async path queues a job and returns `202` with poll URL. Optional `POST /api/areas/{id}/rebuild-boundary` does pairwise `ST_Union` over the territory's source tracts for prettier (slower) borders.
+
+**Cannibalization** — pairwise overlap demographics for every project area. Returns:
+- Per-area: population, housing, % unique (not shared with any other area), % cannibalized
+- Per pair: shared population, shared housing, shared area_sq_km, pct_of_a, pct_of_b
+- **Severity tiers** (driven by worse-of-pct_of_a/pct_of_b): `low` (<10%) / `moderate` (10-25%) / `high` (25-50%) / `critical` (50%+) with colored badge + recommendation string ("Consider adjusting territory boundaries…")
+
+**MCLP** — Maximum Coverage Location Problem with greedy + local-search refinement (4 swap-improvement passes). Inputs: explicit candidates OR auto-grid over bbox with `grid_step_km`; pick_count (1-20); radius_km (1-80); demand_metric (population / housing_units / income_weighted_pop). Returns ranked picks with unique demand added per pick, cumulative demand, and total coverage % of universe.
+
+**Customer segmentation** — 10 personas derived from Census ACS features via percentile-cutoff rule cascade:
+1. `retirement` — pct65+ ≥ 40%
+2. `college-towns` — pct18-34 ≥ 40% AND not high income
+3. `affluent-suburbs` — high income AND high home value AND not high density
+4. `urban-professionals` — high density AND mid-high income
+5. `low-income-urban` — high density AND low income
+6. `family-suburbs` — pctU18 ≥ 25% AND not low density AND not low income
+7. `rural-stable` — low density AND not low income
+8. `working-class-urban` — high density (catch-all)
+9. `emerging-growth` — housing/population > 0.55
+10. `moderate-suburbs` — default
+
+Each tract stored in `tract_segments` with segment_id + segment_name + confidence + features_json. Cutoffs computed lazily from the population on first run.
+
+**Traffic isochrones** — 7×24 multiplier matrix calibrated against FHWA/INRIX. Mon 8AM rush ~1.5×, Fri 5PM ~1.8×, overnight 1.0×. Single-hour endpoint + 8-window grid + 24-hour Daypart timeline.
+
+**Competitor monitoring** — Per-org monitors track Google Places nearby search results over time. Daily/weekly/monthly cron via `next_run_at`. Diff against `tracked_places`: new (place_id appeared), gone (didn't appear in latest scan), moved (centroid shift >150m via Haversine), rating drift (±0.3 stars). Alerts persisted to `competitor_alerts`; warn/high severity fans out to in-app + email + Slack notifications.
+
+**Field notes (mobile PWA)** — manifest.webmanifest + service worker:
+- Shell cache: app shell + assets, network-first navigation with offline fallback
+- API GETs: network-first with cached fallback
+- POST `/api/projects/*/field-notes`: when offline, queues to IndexedDB outbox (`sm-outbox`); registers a `sync` event tag; flushes when back online
+- Note model: body, lat, lng, location POINT, accuracy_m, photo_url, tags JSON, captured_at, author
+- `/api/projects/*/where-am-i?lat=&lng=` resolves a coordinate to containing areas + tract + segment
+
+**AI site scoring** — Anthropic Claude Haiku 4.5 when `ANTHROPIC_API_KEY` is set, deterministic local heuristic otherwise. Gathers facts: population, median income, top-5 segments, competitor density inside the polygon. Prompts for `{score:1-100, verdict, reasons:[≤5]}`. 24h cache per (area, geometry signature). Always returns something usable.
+
+### OpenAPI / docs
+- OpenAPI 3.1 spec auto-served at `/api/openapi.json`
+- Swagger UI at `/api/docs`
+- Covers: health, all auth endpoints, projects, areas, demographics, segmentation, AI score, cannibalization, territory generation, MCLP, competitor monitors, traffic isochrones (single + day), field notes, where-am-i, notifications, webhooks, jobs, public share
+- Security schemes: `BearerAuth` (HTTP bearer JWT) + `ApiKeyAuth` (`X-Api-Key`)
+- Public endpoints flagged `security: []`
+
+---
+
+## Visual design system
+
+### Typography
+- **Nunito** body font (loaded from Google Fonts in `styles.css`, weights 400-900)
+- Tabular nums on times, km², percentages
+- Body: `#111827` / `#1f2937` near-black at weight 500+
+- Subheads / labels: `#475569` (slate-600) at weight 600
+- Decorative: never light gray for body text
+
+### Color tokens (CSS variables in `:root`)
+- `--brand: #7848BB` (Smappen violet)
+- `--brand-dark: #6B37A6`, `--brand-light: #EDE5F7`
+- `--ink: #1A1A2E`, `--ink-2: #2D2D44`
+- `--body: #4A4A5A`, `--slate: #6B6B7B`, `--muted: #8E8E9A`
+- `--line: #D1D1DB`, `--line-soft: #E8E8EE`
+- `--bg-panel: #F3F3F7`, `--bg: #F9F9FB`
+
+### Dark mode
+- Toggle via `data-theme="dark"` on `<html>`
+- Resolution priority: `user.theme` (Profile setting) → `localStorage('smappen-theme')` → OS `prefers-color-scheme`
+- `useTheme()` hook in App.tsx; auto-mode listener properly cleaned up
+- CSS overrides via `[data-theme="dark"]` selectors for cards, inputs, area rows, kbd, btn-secondary
+
+### Radii & shadows
+- `--radius-sm: 6px`, `--radius: 10px`, `--radius-lg: 14px`, `--radius-xl: 16px`
+- Subtle shadows only — `--shadow-sm/md/lg`
+- Float shadows on cards (`shadow-float`)
+
+### Heatmap palettes (11)
+Each has stops + optional weighted positions:
+1. **Smappen Pastel** (default) — lavender → sky → cyan → mint → lime → sunny → peach → coral → pink
+2. Vivid Rainbow — full hue rotation
+3. Viridis — perceptually uniform purple → yellow
+4. Plasma — purple → orange
+5. Magma — black → cream
+6. Inferno — black → yellow
+7. Turbo — Google's perceptual rainbow
+8. Heat — black → red → yellow → white
+9. Cool-Warm — blue ↔ red diverging
+10. Sunset — purple → orange
+11. Mono Purple — single-hue tint
+
+### Daypart palette (24 colors)
+Hour-anchored circadian wheel — overnight blues (`#1e3a8a`) → cool morning (`#06b6d4`) → warm midday (`#22c55e`, `#eab308`) → red rush (`#dc2626`) → evening purples (`#7848BB`) → back to deep blue at 23:00.
+
+### Skeleton loader
+`.skeleton` class with shimmer animation (1.4s ease-in-out infinite, 200% background slide). Dark-mode variant.
+
+### Density target
+Not minimalist, not dense. "Real usefulness over visual sophistication" — every panel surfaces actionable info, no decorative whitespace.
+
+---
+
+## Performance & caching
+
+### Frontend
+- Code-splitting: each Advanced panel tab lazy-loaded as a separate ~2KB gz chunk (`TerritoriesTab-*.js`, `CannibalizeTab-*.js`, etc.)
+- 200-entry client memCache LRU for heatmap responses (`memCache.ts`)
+- Adjacent-tile prefetch on map idle (8 surrounding viewports, fire-and-forget)
+- React Query installed but partial coverage (header notif + cost queries imperative; advanced tabs imperative; many components could benefit)
+- Optimistic cost-store bumps so widget updates between 60s server polls
+
+### Backend
+- **Heatmap pipeline**:
+  - bbox-quantized server cache (`heatmap_tile_cache`) with 7-day TTL
+  - Cached responses streamed via `str_replace` patch — no JSON decode/encode round-trip
+  - 1h browser `Cache-Control`
+  - mod_deflate gzip (12MB → 2MB on wire)
+  - ST_AsGeoJSON precision=4 (~4× smaller payload)
+  - `ini_set('memory_limit', '512M')` per request
+  - 10K feature cap (vs our 4,425-tract universe = no truncation in practice)
+  - `SET SESSION sort_buffer_size = 67108864` + sort-then-JOIN-for-geometry pattern (avoids MySQL 1038)
+- **Isochrone cache**: 24h, keyed `lat,lng,minutes,mode`. Daypart benefits massively (24 hours → ~6-8 unique calls)
+- **Reach cache**: 30d, keyed by 3-decimal coords + target snapped to 500
+- **POI cache**: 48h via Google
+- **CacheService**: Redis when `REDIS_URL` set (with soft-fail to MySQL on Redis errors)
+- **Streaming CSV import**: row-by-row, no full-file load
+- **Job queue**: `SELECT … FOR UPDATE SKIP LOCKED` for atomic claim, retry-on-failure with attempt counter
+- **Database backups**: nightly mysqldump → gzipped → 30 daily + 12 monthly retention, optional rclone to Spaces
+
+---
+
+## Security & auth
+
+- **Sessions**: JWT 24h with `jti`. Logout inserts jti into `revoked_tokens`; auth middleware checks every request. Bulk revoke via `users.tokens_invalid_before` (timestamp; tokens with `iat <` rejected)
+- **API keys**: sha256 at rest, shown raw once. Auth middleware accepts `X-Api-Key` as alternative to JWT
+- **Password reset**: 1h token sha256-hashed at rest; redeem also stamps `tokens_invalid_before` to kill any stolen old JWTs
+- **Email verification**: 7-day token, optional gate
+- **Rate limits** (per user via `api_usage_log`):
+  - geocode 500/hr, geocode_batch 20/hr
+  - places 300/hr
+  - imports 20/hr
+  - territory_gen 30/hr, mclp 30/hr
+  - traffic_iso 60/hr, competitor_scan 60/hr
+  - reach 120/hr, report 50/hr, export 60/hr
+- **Roles**: project_collaborators (viewer / editor / admin / owner). `requireAccess(minRole)` helper across collaboration controllers
+- **CORS**: explicit allow-list from `config/cors.php` (env-overridable via `CORS_ORIGINS`). Never echoes `*` with credentials. OPTIONS preflight handled at router level → 204
+- **Stripe webhooks**: signature verified at controller AND service (defense-in-depth)
+- **Webhook outbound deliveries**: HMAC-SHA256 signed using subscription `secret_hash` as key (so receivers verify by hashing their stored raw secret first)
+- **CSRF**: not needed for JWT-bearer API (cross-origin requires the user to opt-in via Authorization header)
+- **SQL**: prepared statements throughout via PDO; no string interpolation of user input
+- **Multi-tenant scoping**: every query filters by `organization_id` OR validates `project_collaborators` membership
+- **Tokens cleanup**: cleanup-cron expires `auth_tokens`, `revoked_tokens`, old `jobs` (30d), old `webhook_deliveries` (30d)
+
+---
+
+## Infrastructure & deploy
+
+### Local dev
+- `php -S localhost:8080 -t public` for API
+- `cd frontend && npm run dev` for SPA (port 5173, proxies /api → :8080)
+- MySQL via Docker or local install; load migrations 001-009 in order
+
+### Docker (alternative)
+- `Dockerfile` (PHP 8.3-FPM + redis ext + composer prod deps + opcache)
+- `docker-compose.yml`: app + nginx (`docker/nginx.conf`) + mysql + redis
+- Designed so `docker compose up` brings a full dev stack to localhost:8080
+
+### Production droplet
+- DigitalOcean Ubuntu 24.04 at 143.244.144.7
+- Apache 2.4 + PHP-FPM 8.3 + MySQL 8.0.45
+- Coexists with GreenDock under the same Apache via separate vhost
+- Let's Encrypt SSL (ACME alias in deploy script)
+- SSH deploy key at `/c/Users/adams/.ssh/claude_deploy`
+- Deploy: `git pull && composer install --no-dev && (cd frontend && npm ci && npm run build) && systemctl reload php8.3-fpm`
+
+### GitHub Actions CI (`.github/workflows/ci.yml`)
+- **lint-backend**: `php -l` every PHP file + PHPUnit if configured
+- **lint-frontend**: `tsc -b --noEmit` + `npm run build`
+- **deploy** (on push to main, secrets-gated): SSH + git pull + composer + npm + reload PHP-FPM
+
+### Cron jobs (recommended on droplet)
+- `*/10 * * * *` — `php scripts/job-worker.php` (background jobs)
+- `*/15 * * * *` — `php scripts/competitor-scan.php` (due monitors)
+- `0 * * * *` — `php scripts/cleanup-cron.php` (cache + tokens + old jobs)
+- `0 3 * * *` — `bash scripts/backup-db.sh` (nightly DB backup)
+- `0 4 15 1 *` — `php scripts/refresh-census.php` (annual Census refresh, Jan 15)
+
+### Storage
+- Local: `storage/uploads`, `storage/exports`, `storage/reports`, `storage/backups`, `storage/logs`, `storage/cache` (when no Redis)
+- Optional Spaces: SigV4 virtual-hosted-style, presigned URLs for private downloads. `StorageService::put/get/delete/url` abstracts both
+
+### Logging
+- Monolog with JSON rotating file handler
+- `storage/logs/app.log` — 14d retention, INFO+
+- `storage/logs/error.log` — 30d retention, ERROR+
+- Stderr in dev for tail-while-coding
+- UidProcessor adds per-request UID for cross-file correlation
+- Stub fallback if Monolog not installed (writes via `error_log`)
+
+---
+
+## Testing
+
+### PHPUnit (12 tests, 45 assertions, ~9ms)
+- `tests/Services/TrafficServiceTest.php` — multiplier never <1, rush hour heavier than midday, adjusted minutes scales correctly, invalid day falls back, hour clamped, windows cover full week
+- `tests/Services/GeoUtilsTest.php` — WKT round-trip, point-in-polygon, circle polygon shape (65 points), area calculation within 10% of πr² for a 5km circle, coordinate swap, bounding box
+
+### Vitest (frontend)
+- `src/utils/__tests__/geo.test.ts` — polygonCentroid, polygonBounds
+- `src/utils/__tests__/format.test.ts` — formatNumber, formatCurrency, formatPercent, formatCompact, formatArea
+- More tests not yet written
+
+### Manual smoke tests (verified in this audit cycle)
+- Login + JWT issuance
+- AI score endpoint (was 500 due to wrong cache column names — fixed in B2, now 200)
+- Public share endpoint (null token handling fixed in B4)
+- Time Machine 24h endpoint (returned 200 with 7 unique ORS calls for 24 hours)
+- Report download (159KB PDF, valid `%PDF` magic header — fixed silent 401 from window.open)
+- Geocode response includes `_meta.estimated_cost_usd: 0.005`
+- `/api/usage/today` shows `$0.005` after a geocode call
+- Token revocation: stamping `tokens_invalid_before` causes old JWTs to return 401 with "Token revoked — please sign in again"
+
+---
+
+## Known gaps & roadmap
+
+### Things that work but could be tighter
+- **React Query coverage** — installed but only ~4 of ~40 components use it. Big payoff on AreaList (reload-from-scratch on every panel open), POISearchPanel (re-fire on tab switch), advanced-panel tabs
+- **Mobile layout** — three-panel desktop layout doesn't reflow well below 768px. driver-app.php / customerfacing/ are mobile-first but the planner UI is desktop-first. Needs left-panel-as-bottom-sheet treatment
+- **Time-of-day Routes API integration** — current Daypart uses an empirical multiplier table. Google Routes API with `departureTime` would give real-time traffic numbers (~$0.005/call, so 24 calls = $0.12 per Daypart run)
+- **ST_Union territory boundaries by default** — currently convex hull (fast, deterministic, ugly); manual rebuild endpoint exists for real boundaries
+- **Field-photo upload** — `field_notes.photo_url` column exists but no upload UI yet
+- **Onboarding tour** — new users land on a blank map with no guidance
+- **Undo/redo for area operations** — header buttons exist but disabled
+
+### Plumbing wired but inactive without env keys
+- Anthropic AI scoring (without `ANTHROPIC_API_KEY` → falls back to local heuristic — works, just less smart)
+- Postmark / Resend email (without keys → writes to `storage/logs/mail.log`)
+- Slack alerts (per-user; activates when user fills in slack_webhook_url in Profile)
+- Redis cache (without `REDIS_URL` → falls back to MySQL `cache` table)
+- DigitalOcean Spaces (without `SPACES_*` → falls back to local filesystem)
+- Auto-deploy GitHub Action (without `DEPLOY_SSH_KEY` secret → no-op)
+
+### Not yet shipped
+- Statistics Canada demographics (only US Census currently)
+- Self-hosted OpenRouteService (uses public ORS; rate-limited at ~40 req/min on free tier — would need self-host for production scale)
+- Map screenshot embedded in PDF reports (currently fetched via Static Maps inside the report controller; image only, no overlay)
+- Customer-facing public dashboards beyond the basic read-only share page
+- Multi-region / Canada FSA support
+- iframe embed widget (route exists at `/api/public/projects/{token}/embed` but no `<iframe>`-friendly HTML page yet)
+
+### Visible UI debt
+- The static `Undo` / `Redo` buttons in the header are disabled placeholders
+- "Favorites" toolbar button has no handler
+- Some POI cluster icons render via the old `Hexagon` icon path on areas with no `travel_mode`
+- Demographics panel uses ECharts donuts; could benefit from sparkline-style historical trends once we have time-series data
+
+---
+
+*Last updated: 2026-05-24 after the Daypart redesign (3-row media-player strip docked along the bottom width of the map, renamed from "Drive-time over a full day").*
