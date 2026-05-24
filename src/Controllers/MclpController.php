@@ -114,6 +114,42 @@ class MclpController
             foreach ($candidateCoverage[$bestIdx] as $g => $w) $covered[$g] = $w;
         }
 
+        // Local-search refinement (#43): for each selected location, try
+        // swapping it with each non-selected candidate. If the swap raises
+        // total covered demand, keep it. Bounded iterations so we don't
+        // get stuck — the greedy already gets close enough.
+        $maxPasses = 4;
+        for ($pass = 0; $pass < $maxPasses; $pass++) {
+            $improvedThisPass = false;
+            foreach ($picked as $pickIdx => $selectedCandIdx) {
+                $totalBest = array_sum($covered);
+                $bestSwap = null;
+                $bestSwapCovered = null;
+                foreach ($candidateCoverage as $altIdx => $altCov) {
+                    if (in_array($altIdx, $picked, true)) continue;
+                    // Rebuild "covered" without the swapped-out pick, then add the candidate.
+                    $tempCovered = [];
+                    foreach ($picked as $pi => $ci) {
+                        if ($pi === $pickIdx) continue;
+                        foreach ($candidateCoverage[$ci] as $g => $w) $tempCovered[$g] = $w;
+                    }
+                    foreach ($altCov as $g => $w) $tempCovered[$g] = $w;
+                    $alt = array_sum($tempCovered);
+                    if ($alt > $totalBest) {
+                        $totalBest = $alt;
+                        $bestSwap = $altIdx;
+                        $bestSwapCovered = $tempCovered;
+                    }
+                }
+                if ($bestSwap !== null) {
+                    $picked[$pickIdx] = $bestSwap;
+                    $covered = $bestSwapCovered;
+                    $improvedThisPass = true;
+                }
+            }
+            if (!$improvedThisPass) break;
+        }
+
         $totalCovered = array_sum($covered);
         $totalUniverse = self::totalUniverseDemand($metric, $bbox, $candidates);
 

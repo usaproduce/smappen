@@ -2,6 +2,7 @@
 namespace App\Services;
 
 use App\Core\Database;
+use App\Services\MailService;
 
 /**
  * One run = one scan. Pulls current Places search results for each
@@ -259,7 +260,7 @@ class CompetitorScanner
     {
         try {
             $db = Database::getInstance();
-            $project = $db->fetch('SELECT created_by FROM projects WHERE id = ?', [$monitor['project_id']]);
+            $project = $db->fetch('SELECT created_by, name FROM projects WHERE id = ?', [$monitor['project_id']]);
             $collabs = $db->fetchAll(
                 'SELECT user_id FROM project_collaborators WHERE project_id = ?',
                 [$monitor['project_id']]
@@ -267,8 +268,9 @@ class CompetitorScanner
             $targets = array_column($collabs, 'user_id');
             if (!empty($project['created_by'])) $targets[] = $project['created_by'];
             $targets = array_values(array_unique($targets));
-            // Don't fanout for "info" rating jumps — only warn/high
+            // Don't fanout for "info" rating jumps — only new/warn/high
             if ($alert['severity'] === 'info' && $alert['type'] !== 'new') return;
+
             foreach ($targets as $uid) {
                 $db->query(
                     'INSERT INTO notifications
@@ -282,9 +284,82 @@ class CompetitorScanner
                     ]
                 );
             }
+
+            // Email + Slack fanout (#16). Only for warn/high — info would be noisy.
+            if (in_array($alert['severity'], ['warn', 'high'], true)) {
+                $this->fanoutExternal($monitor, $alert, $project, $targets);
+            }
         } catch (\Throwable $e) {
             error_log('competitor fanout: ' . $e->getMessage());
         }
+    }
+
+    /** Email-per-user + one Slack post if the user has a webhook URL configured. */
+    private function fanoutExternal(array $monitor, array $alert, ?array $project, array $userIds): void
+    {
+        if (empty($userIds)) return;
+        $db = Database::getInstance();
+        $users = $db->fetchAll(
+            'SELECT id, email, name, notify_email, notify_competitor_alerts, slack_webhook_url
+             FROM users
+             WHERE id IN (' . implode(',', array_fill(0, count($userIds), '?')) . ')',
+            $userIds
+        );
+        foreach ($users as $u) {
+            if (empty($u['notify_competitor_alerts'])) continue;
+            if (!empty($u['notify_email']) && !empty($u['email'])) {
+                $this->sendAlertEmail($u, $monitor, $alert, $project);
+            }
+            if (!empty($u['slack_webhook_url'])) {
+                $this->postSlackAlert($u['slack_webhook_url'], $monitor, $alert, $project);
+            }
+        }
+    }
+
+    private function sendAlertEmail(array $user, array $monitor, array $alert, ?array $project): void
+    {
+        try {
+            $mail = new MailService();
+            $projectName = $project['name'] ?? 'project';
+            $html = '<p>Hi ' . htmlspecialchars($user['name']) . ',</p>'
+                  . '<p>New competitor alert for <b>' . htmlspecialchars($projectName) . '</b>:</p>'
+                  . '<blockquote style="border-left:3px solid #7848BB;margin:8px 0;padding:6px 10px;background:#f8f6ff">'
+                  . '<b>' . htmlspecialchars($alert['title']) . '</b><br>'
+                  . 'Monitor: ' . htmlspecialchars($monitor['name'])
+                  . '</blockquote>'
+                  . '<p style="color:#666;font-size:12px">You can change competitor notification preferences in your account settings.</p>';
+            $mail->send($user['email'], '[Smappen] ' . $alert['title'], $html);
+        } catch (\Throwable $e) {
+            error_log('competitor email failed: ' . $e->getMessage());
+        }
+    }
+
+    private function postSlackAlert(string $webhookUrl, array $monitor, array $alert, ?array $project): void
+    {
+        $color = match ($alert['severity']) {
+            'high' => '#dc2626',
+            'warn' => '#f59e0b',
+            default => '#7848BB',
+        };
+        $payload = [
+            'attachments' => [[
+                'color' => $color,
+                'title' => $alert['title'],
+                'text' => 'Monitor: ' . $monitor['name'] . ' · Project: ' . ($project['name'] ?? ''),
+                'footer' => 'Smappen',
+                'ts' => time(),
+            ]],
+        ];
+        $ch = curl_init($webhookUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => json_encode($payload),
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_TIMEOUT => 5,
+        ]);
+        curl_exec($ch);
+        curl_close($ch);
     }
 
     private static function haversineMeters(float $lat1, float $lng1, float $lat2, float $lng2): float

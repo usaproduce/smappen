@@ -294,8 +294,17 @@ export default function Header() {
                 <div className="text-sm font-semibold" style={{ color: '#1A1A2E' }}>{user?.name}</div>
                 <div className="text-xs text-slate-500">{user?.email}</div>
               </div>
-              <Link to="/settings/billing" className="block px-3 py-2 hover:bg-slate-50 text-sm flex items-center gap-2" onClick={() => setShowUserMenu(false)}>
-                <Settings size={14} /> Account settings
+              <Link to="/settings/profile" className="block px-3 py-2 hover:bg-slate-50 text-sm flex items-center gap-2" onClick={() => setShowUserMenu(false)}>
+                <Settings size={14} /> Profile
+              </Link>
+              <Link to="/settings/team" className="block px-3 py-2 hover:bg-slate-50 text-sm" onClick={() => setShowUserMenu(false)}>
+                Team
+              </Link>
+              <Link to="/settings/integrations" className="block px-3 py-2 hover:bg-slate-50 text-sm" onClick={() => setShowUserMenu(false)}>
+                Integrations
+              </Link>
+              <Link to="/settings/billing" className="block px-3 py-2 hover:bg-slate-50 text-sm" onClick={() => setShowUserMenu(false)}>
+                Billing
               </Link>
               <button
                 className="block w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-t border-slate-100 flex items-center gap-2 text-red-600"

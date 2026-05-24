@@ -52,27 +52,73 @@ class Response
         exit;
     }
 
+    /**
+     * Hint to browsers (and CDNs) that this response is cacheable. Call BEFORE
+     * Response::success / Response::json. Pass null/0 for no-store on mutating
+     * endpoints. The Vary header is set so cached responses aren't shared
+     * across users.
+     */
+    public static function cacheable(?int $maxAgeSeconds, bool $public = false): void
+    {
+        if ($maxAgeSeconds === null || $maxAgeSeconds <= 0) {
+            header('Cache-Control: no-store');
+            return;
+        }
+        $scope = $public ? 'public' : 'private';
+        header('Cache-Control: ' . $scope . ', max-age=' . $maxAgeSeconds);
+        header('Vary: Authorization, Origin');
+    }
+
     public static function corsHeaders(): void
     {
         $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-        // Only echo the origin back if it matches our allow-list.
-        // Defaults to FRONTEND_URL plus its http variant (handy in dev).
-        $configured = \App\Core\Config::get('FRONTEND_URL', '');
-        $appUrl = \App\Core\Config::get('APP_URL', '');
-        $allowed = array_filter([$configured, $appUrl, 'http://localhost:5173', 'http://localhost:8080']);
-        $isAllowed = $origin !== '' && in_array($origin, $allowed, true);
+        $cfg = self::corsConfig();
+        $allowed = $cfg['allowed_origins'];
+        $isAllowed = $origin !== '' && (in_array('*', $allowed, true) || in_array($origin, $allowed, true));
 
-        if ($isAllowed) {
+        if ($isAllowed && $origin !== '') {
+            // Always echo the specific origin so Access-Control-Allow-Credentials works
+            // (browsers reject "*" with credentials).
             header('Access-Control-Allow-Origin: ' . $origin);
             header('Vary: Origin');
-            header('Access-Control-Allow-Credentials: true');
+            if (!empty($cfg['allow_credentials'])) {
+                header('Access-Control-Allow-Credentials: true');
+            }
+        } elseif ($origin === '') {
+            // Same-origin (no Origin header) — no ACAO needed; skip silently.
         } else {
-            // Same-origin & token-bearer requests work without these.
-            // Cross-origin requests from unapproved hosts get blocked by the browser.
-            header('Access-Control-Allow-Origin: ' . ($configured ?: '*'));
+            // Disallowed cross-origin: don't echo back. The browser blocks the response.
+            // We still need to emit the method/header allowlists so the preflight
+            // returns 204 cleanly (browser will reject the actual request).
         }
-        header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS, PATCH');
-        header('Access-Control-Allow-Headers: Authorization, Content-Type, X-Requested-With, X-CSRF-Token, Stripe-Signature');
-        header('Access-Control-Max-Age: 86400');
+        header('Access-Control-Allow-Methods: ' . implode(', ', $cfg['allowed_methods']));
+        header('Access-Control-Allow-Headers: ' . implode(', ', $cfg['allowed_headers']));
+        header('Access-Control-Max-Age: ' . (int) $cfg['max_age']);
+    }
+
+    private static array $corsCache = [];
+    private static function corsConfig(): array
+    {
+        if (!empty(self::$corsCache)) return self::$corsCache;
+        $file = dirname(__DIR__, 2) . '/config/cors.php';
+        if (file_exists($file)) {
+            $cfg = require $file;
+            if (is_array($cfg)) {
+                self::$corsCache = $cfg + self::corsDefaults();
+                return self::$corsCache;
+            }
+        }
+        self::$corsCache = self::corsDefaults();
+        return self::$corsCache;
+    }
+    private static function corsDefaults(): array
+    {
+        return [
+            'allowed_origins' => ['https://smappen.mygreendock.com', 'http://localhost:5173', 'http://localhost:8080'],
+            'allowed_methods' => ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+            'allowed_headers' => ['Authorization', 'Content-Type', 'X-Requested-With', 'X-CSRF-Token', 'Stripe-Signature'],
+            'max_age' => 86400,
+            'allow_credentials' => true,
+        ];
     }
 }

@@ -37,6 +37,21 @@ class BillingController
         // Use the raw body cached on the Request — php://input may already be consumed.
         $payload = $request->getRawBody();
         $sig = $request->getHeader('Stripe-Signature') ?? ($_SERVER['HTTP_STRIPE_SIGNATURE'] ?? '');
+
+        // Defense in depth: verify the signature here too, in case a future
+        // refactor of StripeService accidentally drops its own check. A double
+        // verify is cheap (it's one HMAC); a missing verify means anyone on
+        // the internet can fake billing events.
+        $secret = Config::get('STRIPE_WEBHOOK_SECRET', '');
+        if ($secret !== '' && class_exists('\\Stripe\\Webhook')) {
+            try {
+                \Stripe\Webhook::constructEvent($payload, $sig, $secret);
+            } catch (\Throwable $e) {
+                error_log('Stripe webhook signature rejected at controller: ' . $e->getMessage());
+                Response::error('Invalid signature', 400);
+            }
+        }
+
         try {
             $type = (new StripeService())->handleWebhook($payload, $sig);
             Response::success(['handled' => $type]);

@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-backend:
+    runs-on: ubuntu-latest
+    name: PHP lint + tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo_mysql, gd, zip, curl, redis
+          coverage: none
+      - name: Composer install
+        run: composer install --prefer-dist --no-progress
+      - name: Syntax-check every PHP file
+        run: |
+          set -e
+          # `find -print0 | xargs -0` so paths with spaces don't break.
+          find src scripts config public bin -name '*.php' -print0 \
+            | xargs -0 -n1 -P4 php -l > /tmp/lint.out 2>&1 \
+            || (cat /tmp/lint.out; exit 1)
+          echo "All PHP files parse cleanly."
+      - name: PHPUnit
+        run: |
+          if [ -f phpunit.xml ] || [ -f phpunit.xml.dist ]; then
+            vendor/bin/phpunit --testdox
+          else
+            echo "No phpunit config — skipping."
+          fi
+
+  lint-frontend:
+    runs-on: ubuntu-latest
+    name: TypeScript + build
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Type-check
+        run: npx tsc -b --noEmit
+      - name: Build
+        run: npm run build
+
+  deploy:
+    needs: [lint-backend, lint-frontend]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    name: Deploy to droplet
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add SSH key
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        # No-op if the secret isn't configured — keeps the workflow green
+        # until the user wires up auto-deploy.
+        run: |
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "DEPLOY_SSH_KEY secret not set — skipping deploy."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+      - name: SSH deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          [ -z "$DEPLOY_HOST" ] && exit 0
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && \
+            git fetch --all && git reset --hard origin/main && \
+            composer install --no-dev --prefer-dist --no-progress && \
+            (cd frontend && npm ci && npm run build) && \
+            (systemctl reload php8.3-fpm || true)"

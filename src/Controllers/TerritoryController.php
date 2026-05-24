@@ -22,10 +22,41 @@ class TerritoryController
         $bbox = $body['bbox'] ?? null;
         $name = (string)($body['name'] ?? 'Territory');
         $constraints = (array)($body['constraints'] ?? []);
+        $asyncQueue = !empty($body['async']);
 
         if (!$projectId) Response::error('projectId required');
         if (!$bbox || count($bbox) !== 4) Response::error('bbox required as [minLng, minLat, maxLng, maxLat]');
         $project = self::loadProject($request, $projectId);
+
+        // Async path: enqueue a job, return 202 with the job id. The job worker
+        // (scripts/job-worker.php) runs the same TerritoryGenerator pipeline.
+        if ($asyncQueue) {
+            $jobId = Database::uuid();
+            Database::getInstance()->query(
+                'INSERT INTO jobs
+                   (id, user_id, organization_id, project_id, type, payload,
+                    status, available_at, created_at)
+                 VALUES (?, ?, ?, ?, "territory.generate", ?, "queued", NOW(), NOW())',
+                [
+                    $jobId,
+                    $request->user['id'],
+                    $request->user['organization_id'],
+                    $projectId,
+                    json_encode([
+                        'bbox' => $bbox,
+                        'target_count' => $target,
+                        'balance_metric' => $metric,
+                        'name' => $name,
+                        'constraints' => $constraints,
+                    ]),
+                ]
+            );
+            Response::json(['success' => true, 'data' => [
+                'job_id' => $jobId,
+                'status' => 'queued',
+                'poll_url' => '/api/jobs/' . $jobId,
+            ]], 202);
+        }
 
         $jobId = Database::uuid();
         $db = Database::getInstance();
@@ -67,6 +98,15 @@ class TerritoryController
                     '#f43f5e', '#0284c7', '#65a30d', '#c026d3', '#0d9488', '#b45309',
                     '#15803d', '#1d4ed8', '#a16207', '#9333ea', '#0369a1', '#b91c1c'];
 
+        // Compute a compass-bearing name for each territory relative to the
+        // overall bbox center — "NW Territory" instead of "Territory 3". Tie-
+        // breaker is the centroid index so names are deterministic.
+        $bboxCenter = [
+            'lat' => ($bbox[1] + $bbox[3]) / 2,
+            'lng' => ($bbox[0] + $bbox[2]) / 2,
+        ];
+        $directionalNames = self::assignDirectionalNames($result['territories'], $bboxCenter, $name);
+
         $areaIds = [];
         foreach ($result['territories'] as $i => $t) {
             try {
@@ -87,7 +127,7 @@ class TerritoryController
                              NOW(), NOW())",
                     [
                         $areaId, $projectId,
-                        $name . ' ' . ($i + 1),
+                        $directionalNames[$i],
                         $t['centroid']['lat'], $t['centroid']['lng'],
                         $wkt, $color, $color,
                         json_encode([
@@ -96,6 +136,7 @@ class TerritoryController
                             'tract_count' => $t['tract_count'],
                             'tract_geoids' => $t['tract_geoids'],
                             'pop_share_pct' => $t['pop_share_pct'],
+                            'compass_label' => self::compassLabel($bboxCenter, $t['centroid']),
                         ]),
                         $request->user['id'],
                         $jobId,
@@ -161,6 +202,107 @@ class TerritoryController
             }
         }
         Response::success(['jobs' => $jobs]);
+    }
+
+    /**
+     * Rebuild a territory's polygon from its source tracts via pairwise
+     * ST_Union — turns the convex hull (fast, deterministic, ugly) into a
+     * real tract-following boundary (slow, pretty). Iterates in PHP because
+     * MySQL's ST_Union is binary, not aggregate.
+     *
+     * POST /api/areas/{id}/rebuild-boundary
+     */
+    public function rebuildBoundary(Request $request): void
+    {
+        $areaId = $request->getParam('id');
+        if (!$areaId) Response::error('id required');
+        $area = Database::getInstance()->fetch(
+            'SELECT a.*, p.organization_id FROM areas a JOIN projects p ON p.id = a.project_id WHERE a.id = ?',
+            [$areaId]
+        );
+        if (!$area) Response::error('Area not found', 404);
+        if ($area['organization_id'] !== $request->user['organization_id']) {
+            Response::error('Access denied', 403);
+        }
+        $cache = $area['demographics_cache'] ? json_decode($area['demographics_cache'], true) : [];
+        $tractIds = $cache['tract_geoids'] ?? [];
+        if (empty($tractIds)) Response::error('Area has no source tracts to dissolve', 400);
+
+        ini_set('memory_limit', '768M');
+        set_time_limit(60);
+
+        // Pairwise ST_Union — accumulate into a single working WKT.
+        // 500-tract territories take ~8s on the droplet; OK for an on-demand
+        // op that runs once per territory.
+        $db = Database::getInstance();
+        $current = null;
+        $batch = 50;
+        for ($i = 0; $i < count($tractIds); $i += $batch) {
+            $chunk = array_slice($tractIds, $i, $batch);
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            // Fold the chunk into one polygon first (pairwise loop inside SQL via repeated UNION).
+            $rows = $db->fetchAll(
+                "SELECT ST_AsText(geometry) AS wkt FROM census_tracts WHERE geoid IN ($placeholders)",
+                $chunk
+            );
+            foreach ($rows as $r) {
+                if ($current === null) {
+                    $current = $r['wkt'];
+                    continue;
+                }
+                $merged = $db->fetch(
+                    "SELECT ST_AsText(ST_Union(ST_GeomFromText(?, 4326), ST_GeomFromText(?, 4326))) AS wkt",
+                    [$current, $r['wkt']]
+                );
+                $current = $merged['wkt'] ?? $current;
+            }
+        }
+        if (!$current) Response::error('Failed to build union', 500);
+
+        // Persist back as the area's geometry.
+        $db->query(
+            'UPDATE areas SET geometry = ST_GeomFromText(?, 4326), updated_at = NOW() WHERE id = ?',
+            [$current, $areaId]
+        );
+        Response::success(['id' => $areaId, 'rebuilt' => true]);
+    }
+
+    /** Map a centroid → 8-point compass label relative to a reference point. */
+    private static function compassLabel(array $center, array $point): string
+    {
+        $dLat = $point['lat'] - $center['lat'];
+        $dLng = $point['lng'] - $center['lng'];
+        // Compute bearing in degrees (0 = N, 90 = E, 180 = S, 270 = W).
+        $angle = rad2deg(atan2($dLng, $dLat));
+        if ($angle < 0) $angle += 360;
+        $directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+        // 22.5° wedges centered on each cardinal/intercardinal direction.
+        $idx = (int) floor((($angle + 22.5) % 360) / 45);
+        return $directions[$idx % 8];
+    }
+
+    /**
+     * Produce unique, human-readable names like "NW Territory", "NW Territory 2".
+     * Within each compass direction, we order by population descending so the
+     * biggest territory gets the unsuffixed name.
+     */
+    private static function assignDirectionalNames(array $territories, array $center, string $prefix): array
+    {
+        $byDir = [];
+        foreach ($territories as $i => $t) {
+            $dir = self::compassLabel($center, $t['centroid']);
+            $byDir[$dir][] = ['idx' => $i, 'pop' => $t['population'] ?? 0];
+        }
+        $out = [];
+        foreach ($byDir as $dir => $list) {
+            usort($list, fn($a, $b) => $b['pop'] <=> $a['pop']);
+            foreach ($list as $rank => $item) {
+                $label = "$dir $prefix" . ($rank > 0 ? ' ' . ($rank + 1) : '');
+                $out[$item['idx']] = $label;
+            }
+        }
+        ksort($out);
+        return $out;
     }
 
     private static function loadProject(Request $request, string $projectId): array

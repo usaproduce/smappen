@@ -19,6 +19,9 @@ class DemographicsController
         }
         try {
             $demo = (new CensusService())->getDemographicsForArea($area['id']);
+            // Demographics change ~once a year — long client cache is safe; the
+            // Vary header makes sure the cached entry doesn't leak across users.
+            Response::cacheable(86400);
             Response::success($demo);
         } catch (\Throwable $e) {
             Response::error('Demographics fetch failed: ' . $e->getMessage(), 502);

@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS project_collaborators (
     id CHAR(36) PRIMARY KEY,
     project_id CHAR(36) NOT NULL,
     user_id CHAR(36) NOT NULL,
-    role ENUM('viewer','editor','approver','owner') NOT NULL DEFAULT 'viewer',
+    role ENUM('viewer','editor','admin','owner') NOT NULL DEFAULT 'viewer',
     invited_by CHAR(36) NULL,
     invited_at DATETIME NOT NULL,
     accepted_at DATETIME NULL,

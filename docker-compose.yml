@@ -1,0 +1,46 @@
+services:
+  app:
+    build: .
+    environment:
+      DB_HOST: mysql
+      DB_NAME: smappen
+      DB_USER: smappen
+      DB_PASS: smappen
+      REDIS_URL: redis://redis:6379
+      APP_ENV: development
+    volumes:
+      - ./:/app
+    depends_on:
+      - mysql
+      - redis
+
+  web:
+    image: nginx:1.27-alpine
+    ports: ["8080:80"]
+    volumes:
+      - ./:/app:ro
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: smappen
+      MYSQL_USER: smappen
+      MYSQL_PASSWORD: smappen
+      MYSQL_ROOT_PASSWORD: rootpw
+    command:
+      - --default-authentication-plugin=caching_sha2_password
+      - --sql_mode=
+      - --max_allowed_packet=64M
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports: ["3306:3306"]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+volumes:
+  mysql_data:

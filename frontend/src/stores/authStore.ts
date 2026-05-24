@@ -12,6 +12,7 @@ interface AuthState {
   register: (payload: { email: string; password: string; name: string; organization_name?: string }) => Promise<void>;
   logout: () => void;
   loadUser: () => Promise<void>;
+  setUser: (u: User) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -41,9 +42,12 @@ export const useAuthStore = create<AuthState>()(
           throw e;
         }
       },
-      logout() {
+      async logout() {
+        // Best-effort revocation so the JWT can't be replayed if it leaks.
+        try { await authApi.logout(); } catch {}
         set({ user: null, token: null, isAuthenticated: false });
       },
+      setUser(user) { set({ user }); },
       async loadUser() {
         if (!get().token) return;
         try {

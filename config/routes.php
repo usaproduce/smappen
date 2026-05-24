@@ -24,15 +24,46 @@ use App\Controllers\CollaborationController;
 use App\Controllers\NotificationController;
 use App\Controllers\CompetitorController;
 use App\Controllers\FieldNoteController;
+use App\Controllers\HealthController;
+use App\Controllers\JobController;
+use App\Controllers\WebhookSubscriptionController;
+use App\Controllers\PublicShareController;
+use App\Controllers\AiScoringController;
+use App\Controllers\OpenApiController;
 
 return function (Router $r) {
     $auth = [Middleware::auth()];
+    // Rate-limit profiles — windowed counts on api_usage_log.
+    // Tuned so legitimate heavy users never hit them but bots/runaway scripts do.
+    $rlGeocode      = [Middleware::auth(), Middleware::rateLimit('geocode',         500,  3600)]; // 500/hour
+    $rlGeocodeBatch = [Middleware::auth(), Middleware::rateLimit('geocode_batch',    20, 3600)];  // 20/hour
+    $rlImport       = [Middleware::auth(), Middleware::rateLimit('import',           20, 3600)];  // 20/hour
+    $rlPlaces       = [Middleware::auth(), Middleware::rateLimit('places',         300,  3600)];
+    $rlTerritory    = [Middleware::auth(), Middleware::rateLimit('territory_gen',   30,  3600)];
+    $rlMclp         = [Middleware::auth(), Middleware::rateLimit('mclp',            30,  3600)];
+    $rlTraffic      = [Middleware::auth(), Middleware::rateLimit('traffic_iso',     60,  3600)];
+    $rlCompetitor   = [Middleware::auth(), Middleware::rateLimit('competitor_scan', 60,  3600)];
+    $rlReach        = [Middleware::auth(), Middleware::rateLimit('reach',          120,  3600)];
+    $rlReport       = [Middleware::auth(), Middleware::rateLimit('report',          50,  3600)];
+    $rlExport       = [Middleware::auth(), Middleware::rateLimit('export',          60,  3600)];
+
+    // Health (public)
+    $r->get('/api/health', [HealthController::class, 'show']);
 
     // Auth
     $r->post('/api/auth/register', [AuthController::class, 'register']);
     $r->post('/api/auth/login', [AuthController::class, 'login']);
     $r->post('/api/auth/refresh', [AuthController::class, 'refresh'], $auth);
+    $r->post('/api/auth/logout', [AuthController::class, 'logout'], $auth);
     $r->get('/api/auth/me', [AuthController::class, 'me'], $auth);
+    $r->post('/api/auth/request-reset', [AuthController::class, 'requestPasswordReset']);
+    $r->post('/api/auth/reset', [AuthController::class, 'resetPassword']);
+    $r->get('/api/auth/verify-email', [AuthController::class, 'verifyEmail']);
+    $r->post('/api/auth/resend-verification', [AuthController::class, 'resendVerification'], $auth);
+    $r->put('/api/auth/profile', [AuthController::class, 'updateProfile'], $auth);
+    $r->post('/api/auth/change-password', [AuthController::class, 'changePassword'], $auth);
+    $r->get('/api/auth/api-key', [AuthController::class, 'showApiKey'], $auth);
+    $r->post('/api/auth/api-key/regenerate', [AuthController::class, 'regenerateApiKey'], $auth);
 
     // Projects
     $r->get('/api/projects', [ProjectController::class, 'index'], $auth);
@@ -62,33 +93,33 @@ return function (Router $r) {
     $r->get('/api/heatmap/tracts', [HeatmapController::class, 'tracts'], $auth);
 
     // Smart area sizing + live demographics preview
-    $r->post('/api/areas/reach', [ReachController::class, 'calculate'], $auth);
+    $r->post('/api/areas/reach', [ReachController::class, 'calculate'], $rlReach);
     $r->post('/api/demographics/preview', [ReachController::class, 'preview'], $auth);
 
     // Isochrone
     $r->post('/api/isochrone/calculate', [IsochroneController::class, 'calculate'], $auth);
 
     // Geocoding
-    $r->post('/api/geocode', [GeocodingController::class, 'geocode'], $auth);
-    $r->post('/api/geocode/batch', [GeocodingController::class, 'batchGeocode'], $auth);
+    $r->post('/api/geocode', [GeocodingController::class, 'geocode'], $rlGeocode);
+    $r->post('/api/geocode/batch', [GeocodingController::class, 'batchGeocode'], $rlGeocodeBatch);
 
     // Places
-    $r->post('/api/places/nearby', [PlacesController::class, 'nearby'], $auth);
-    $r->post('/api/places/search', [PlacesController::class, 'search'], $auth);
+    $r->post('/api/places/nearby', [PlacesController::class, 'nearby'], $rlPlaces);
+    $r->post('/api/places/search', [PlacesController::class, 'search'], $rlPlaces);
     $r->get('/api/places/{placeId}', [PlacesController::class, 'show'], $auth);
 
     // Import / Export
-    $r->post('/api/projects/{projectId}/import/upload', [ImportController::class, 'upload'], $auth);
-    $r->post('/api/projects/{projectId}/import/configure', [ImportController::class, 'configure'], $auth);
+    $r->post('/api/projects/{projectId}/import/upload', [ImportController::class, 'upload'], $rlImport);
+    $r->post('/api/projects/{projectId}/import/configure', [ImportController::class, 'configure'], $rlImport);
     $r->get('/api/imports/{batchId}/status', [ImportController::class, 'status'], $auth);
     $r->delete('/api/imports/{batchId}', [ImportController::class, 'deleteImport'], $auth);
-    $r->get('/api/projects/{projectId}/export/areas', [ExportController::class, 'exportAreas'], $auth);
-    $r->get('/api/areas/{areaId}/export/pois', [ExportController::class, 'exportPOIs'], $auth);
-    $r->get('/api/projects/{projectId}/export/points', [ExportController::class, 'exportImportedPoints'], $auth);
+    $r->get('/api/projects/{projectId}/export/areas', [ExportController::class, 'exportAreas'], $rlExport);
+    $r->get('/api/areas/{areaId}/export/pois', [ExportController::class, 'exportPOIs'], $rlExport);
+    $r->get('/api/projects/{projectId}/export/points', [ExportController::class, 'exportImportedPoints'], $rlExport);
     $r->get('/api/exports/{filename}', [ExportController::class, 'download'], $auth);
 
     // Reports
-    $r->post('/api/areas/{id}/report', [ReportController::class, 'generate'], $auth);
+    $r->post('/api/areas/{id}/report', [ReportController::class, 'generate'], $rlReport);
     $r->get('/api/reports', [ReportController::class, 'list'], $auth);
     $r->get('/api/reports/{id}/download', [ReportController::class, 'download'], $auth);
 
@@ -100,18 +131,19 @@ return function (Router $r) {
     $r->post('/api/billing/cancel', [BillingController::class, 'cancel'], $auth);
 
     // Traffic-aware isochrones
-    $r->post('/api/isochrone/traffic', [TrafficIsochroneController::class, 'calculate'], $auth);
-    $r->post('/api/isochrone/traffic/grid', [TrafficIsochroneController::class, 'grid'], $auth);
+    $r->post('/api/isochrone/traffic', [TrafficIsochroneController::class, 'calculate'], $rlTraffic);
+    $r->post('/api/isochrone/traffic/grid', [TrafficIsochroneController::class, 'grid'], $rlTraffic);
 
     // Cannibalization
     $r->get('/api/projects/{projectId}/cannibalization', [CannibalizationController::class, 'analyze'], $auth);
 
     // Territory generation
-    $r->post('/api/projects/{projectId}/territories/generate', [TerritoryController::class, 'generate'], $auth);
+    $r->post('/api/projects/{projectId}/territories/generate', [TerritoryController::class, 'generate'], $rlTerritory);
     $r->get('/api/projects/{projectId}/territories/jobs', [TerritoryController::class, 'listJobs'], $auth);
+    $r->post('/api/areas/{id}/rebuild-boundary', [TerritoryController::class, 'rebuildBoundary'], $auth);
 
     // Multi-location optimization (MCLP)
-    $r->post('/api/projects/{projectId}/optimize/locations', [MclpController::class, 'optimize'], $auth);
+    $r->post('/api/projects/{projectId}/optimize/locations', [MclpController::class, 'optimize'], $rlMclp);
 
     // Segmentation
     $r->get('/api/segmentation/segments', [SegmentationController::class, 'catalog'], $auth);
@@ -154,7 +186,7 @@ return function (Router $r) {
     $r->get('/api/competitor-monitors/{id}', [CompetitorController::class, 'show'], $auth);
     $r->put('/api/competitor-monitors/{id}', [CompetitorController::class, 'update'], $auth);
     $r->delete('/api/competitor-monitors/{id}', [CompetitorController::class, 'destroy'], $auth);
-    $r->post('/api/competitor-monitors/{id}/scan', [CompetitorController::class, 'scanNow'], $auth);
+    $r->post('/api/competitor-monitors/{id}/scan', [CompetitorController::class, 'scanNow'], $rlCompetitor);
     $r->get('/api/competitor-monitors/{id}/places', [CompetitorController::class, 'listPlaces'], $auth);
     $r->get('/api/competitor-monitors/{id}/alerts', [CompetitorController::class, 'listAlerts'], $auth);
     $r->post('/api/competitor-alerts/{id}/read', [CompetitorController::class, 'markAlertRead'], $auth);
@@ -164,4 +196,26 @@ return function (Router $r) {
     $r->post('/api/projects/{projectId}/field-notes', [FieldNoteController::class, 'create'], $auth);
     $r->delete('/api/field-notes/{id}', [FieldNoteController::class, 'destroy'], $auth);
     $r->get('/api/projects/{projectId}/where-am-i', [FieldNoteController::class, 'whereAmI'], $auth);
+
+    // Background jobs (queued processing for territory gen / MCLP / scans / imports)
+    $r->get('/api/jobs/{id}', [JobController::class, 'show'], $auth);
+    $r->post('/api/jobs/{id}/cancel', [JobController::class, 'cancel'], $auth);
+
+    // Webhook subscriptions (#50)
+    $r->get('/api/webhooks', [WebhookSubscriptionController::class, 'index'], $auth);
+    $r->post('/api/webhooks', [WebhookSubscriptionController::class, 'create'], $auth);
+    $r->put('/api/webhooks/{id}', [WebhookSubscriptionController::class, 'update'], $auth);
+    $r->delete('/api/webhooks/{id}', [WebhookSubscriptionController::class, 'destroy'], $auth);
+    $r->post('/api/webhooks/{id}/test', [WebhookSubscriptionController::class, 'test'], $auth);
+
+    // Public share (#45) — no auth, validates share_token
+    $r->get('/api/public/projects/{token}', [PublicShareController::class, 'show']);
+    $r->get('/api/public/projects/{token}/embed', [PublicShareController::class, 'embed']);
+
+    // AI site scoring (#41) — uses ANTHROPIC_API_KEY if set
+    $r->post('/api/areas/{id}/ai-score', [AiScoringController::class, 'score'], $auth);
+
+    // OpenAPI docs (#47)
+    $r->get('/api/openapi.json', [OpenApiController::class, 'spec']);
+    $r->get('/api/docs', [OpenApiController::class, 'docs']);
 };

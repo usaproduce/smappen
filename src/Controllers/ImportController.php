@@ -71,10 +71,6 @@ class ImportController
             Response::error("Import has {$info['total_rows']} rows but $plan plan allows max $maxRows. Upgrade to import more.", 403);
         }
 
-        $rows = $this->parseFile($info['file'], $info['ext']);
-        $headers = array_shift($rows);
-        $headerIdx = array_flip($headers);
-
         $addrCol = $mapping['address_column'] ?? null;
         $nameCol = $mapping['name_column'] ?? null;
         $latCol = $mapping['lat_column'] ?? null;
@@ -85,11 +81,16 @@ class ImportController
         $svc = new GoogleMapsService();
         $geocodedCount = 0;
         $failures = [];
+        $imported = 0;
+        $total = 0;
 
-        foreach ($rows as $i => $row) {
-            $rowAssoc = [];
-            foreach ($headers as $j => $h) $rowAssoc[$h] = $row[$j] ?? null;
-
+        // Stream rows one at a time instead of loading the whole file (#23).
+        // For CSV: fgetcsv. For XLSX: PhpSpreadsheet's rowIterator with
+        // getRowIterator(2, ...) skipping the header row.
+        $processed = function (array $rowAssoc, int $rowNum) use (
+            $batchId, $project, $svc, &$geocodedCount, &$failures, &$imported,
+            $addrCol, $nameCol, $latCol, $lngCol, $customCols
+        ) {
             $lat = null; $lng = null; $address = null;
             if ($latCol && $lngCol && isset($rowAssoc[$latCol], $rowAssoc[$lngCol])) {
                 $lat = (float)$rowAssoc[$latCol];
@@ -101,19 +102,15 @@ class ImportController
                     $lat = $geo['lat']; $lng = $geo['lng'];
                     $geocodedCount++;
                 } catch (\Throwable $e) {
-                    $failures[] = ['row' => $i + 2, 'address' => $address, 'error' => $e->getMessage()];
-                    continue;
+                    $failures[] = ['row' => $rowNum, 'address' => $address, 'error' => $e->getMessage()];
+                    return;
                 }
             } else {
-                $failures[] = ['row' => $i + 2, 'address' => null, 'error' => 'No address or coordinates'];
-                continue;
+                $failures[] = ['row' => $rowNum, 'address' => null, 'error' => 'No address or coordinates'];
+                return;
             }
-
             $custom = [];
-            foreach ($customCols as $c) {
-                if (isset($rowAssoc[$c])) $custom[$c] = $rowAssoc[$c];
-            }
-
+            foreach ($customCols as $c) if (isset($rowAssoc[$c])) $custom[$c] = $rowAssoc[$c];
             try {
                 ImportedPoint::create([
                     'project_id' => $project['id'],
@@ -124,8 +121,44 @@ class ImportController
                     'lng' => $lng,
                     'custom_data' => $custom,
                 ]);
+                $imported++;
             } catch (\Throwable $e) {
-                $failures[] = ['row' => $i + 2, 'address' => $address, 'error' => $e->getMessage()];
+                $failures[] = ['row' => $rowNum, 'address' => $address, 'error' => $e->getMessage()];
+            }
+        };
+
+        $headers = $info['headers'];
+        if ($info['ext'] === 'csv') {
+            $f = fopen($info['file'], 'r');
+            if (!$f) Response::error('Cannot read upload', 500);
+            $first = true;
+            $rowNum = 1;
+            while (($r = fgetcsv($f)) !== false) {
+                $rowNum++;
+                if ($first) { $first = false; continue; } // skip header row
+                $assoc = [];
+                foreach ($headers as $j => $h) $assoc[$h] = $r[$j] ?? null;
+                $total++;
+                $processed($assoc, $rowNum);
+            }
+            fclose($f);
+        } else {
+            // XLSX: row-iterator in 500-row chunks so memory stays bounded.
+            $spreadsheet = IOFactory::load($info['file']);
+            $sheet = $spreadsheet->getActiveSheet();
+            $rowIter = $sheet->getRowIterator(2);
+            foreach ($rowIter as $rowObj) {
+                $rowNum = $rowObj->getRowIndex();
+                $cellIter = $rowObj->getCellIterator();
+                $cellIter->setIterateOnlyExistingCells(false);
+                $assoc = [];
+                $j = 0;
+                foreach ($cellIter as $cell) {
+                    $assoc[$headers[$j] ?? "col$j"] = $cell->getValue();
+                    $j++;
+                }
+                $total++;
+                $processed($assoc, $rowNum);
             }
         }
 
@@ -134,11 +167,11 @@ class ImportController
 
         Response::success([
             'batch_id' => $batchId,
-            'total_rows' => count($rows),
+            'total_rows' => $total,
             'geocoded_count' => $geocodedCount,
-            'imported' => count($rows) - count($failures),
+            'imported' => $imported,
             'failed_count' => count($failures),
-            'failures' => $failures,
+            'failures' => array_slice($failures, 0, 100), // cap response size
         ]);
     }
 

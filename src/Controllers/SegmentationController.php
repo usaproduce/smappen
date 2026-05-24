@@ -17,6 +17,7 @@ class SegmentationController
 {
     public function catalog(Request $request): void
     {
+        Response::cacheable(3600, true);
         Response::success([
             'segments' => SegmentationService::SEGMENTS,
             'description' => 'Tracts are auto-classified into one of these 10 segments using Census ACS features.',
@@ -37,6 +38,7 @@ class SegmentationController
         if (!$area) Response::error('Area not found', 404);
 
         $rows = self::segmentBreakdown($area['wkt']);
+        Response::cacheable(86400);
         Response::success([
             'area_id' => $areaId,
             'segments' => $rows,

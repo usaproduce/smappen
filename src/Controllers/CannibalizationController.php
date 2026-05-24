@@ -79,6 +79,9 @@ class CannibalizationController
 
                 $popA = (float)$areaTotals[$A['id']]['pop'];
                 $popB = (float)$areaTotals[$B['id']]['pop'];
+                $pctA = $popA > 0 ? round(100 * $overlapStats['pop'] / $popA, 1) : 0;
+                $pctB = $popB > 0 ? round(100 * $overlapStats['pop'] / $popB, 1) : 0;
+                $worse = max($pctA, $pctB);
                 $overlaps[] = [
                     'area_a_id' => $A['id'],
                     'area_b_id' => $B['id'],
@@ -87,8 +90,11 @@ class CannibalizationController
                     'shared_population' => (int) round($overlapStats['pop']),
                     'shared_housing_units' => (int) round($overlapStats['housing']),
                     'shared_area_sq_km' => round($overlapStats['area_sq_km'], 2),
-                    'pct_of_a' => $popA > 0 ? round(100 * $overlapStats['pop'] / $popA, 1) : 0,
-                    'pct_of_b' => $popB > 0 ? round(100 * $overlapStats['pop'] / $popB, 1) : 0,
+                    'pct_of_a' => $pctA,
+                    'pct_of_b' => $pctB,
+                    'severity' => self::severityFor($worse),
+                    'severity_label' => self::severityLabel($worse),
+                    'recommendation' => self::recommendationFor($worse),
                 ];
             }
         }
@@ -126,6 +132,36 @@ class CannibalizationController
                 'total_shared_population' => array_sum(array_column($overlaps, 'shared_population')),
             ],
         ]);
+    }
+
+    /**
+     * 4-tier severity from the worse of pct_of_a / pct_of_b.
+     * Thresholds picked to match the action plan's color stops.
+     */
+    private static function severityFor(float $worsePct): string
+    {
+        if ($worsePct < 10) return 'low';
+        if ($worsePct < 25) return 'moderate';
+        if ($worsePct < 50) return 'high';
+        return 'critical';
+    }
+    private static function severityLabel(float $worsePct): string
+    {
+        return match (self::severityFor($worsePct)) {
+            'low' => 'Low overlap',
+            'moderate' => 'Moderate overlap',
+            'high' => 'High overlap',
+            default => 'Critical overlap',
+        };
+    }
+    private static function recommendationFor(float $worsePct): string
+    {
+        return match (self::severityFor($worsePct)) {
+            'low' => 'No action needed — coverage is mostly distinct.',
+            'moderate' => 'Acceptable — monitor for drift.',
+            'high' => 'Consider adjusting territory boundaries to reduce overlap.',
+            default => 'Critical — territories materially compete for the same population. Redraw.',
+        };
     }
 
     /**

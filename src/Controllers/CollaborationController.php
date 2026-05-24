@@ -219,8 +219,8 @@ class CollaborationController
         self::requireAccess($request, $projectId, 'owner');
         $email = trim((string)($request->input('email') ?? ''));
         $role = (string)($request->input('role') ?? 'viewer');
-        if (!in_array($role, ['viewer', 'editor', 'approver', 'owner'], true)) {
-            Response::error('Invalid role');
+        if (!in_array($role, ['viewer', 'editor', 'admin', 'owner'], true)) {
+            Response::error('Invalid role (allowed: viewer, editor, admin, owner)');
         }
         $user = Database::getInstance()->fetch('SELECT id FROM users WHERE email = ?', [$email]);
         if (!$user) Response::error('User with that email not found', 404);
@@ -297,7 +297,7 @@ class CollaborationController
         $id = $request->getParam('id');
         $row = Database::getInstance()->fetch('SELECT * FROM approval_requests WHERE id = ?', [$id]);
         if (!$row) Response::error('Approval not found', 404);
-        self::requireAccess($request, $row['project_id'], 'approver');
+        self::requireAccess($request, $row['project_id'], 'admin');
 
         $decision = (string)($request->input('decision') ?? 'approved');
         if (!in_array($decision, ['approved', 'rejected'], true)) {
@@ -331,7 +331,9 @@ class CollaborationController
             [$projectId, $user['id']]
         );
         if (!$pc) Response::error('Access denied', 403);
-        $rank = ['viewer' => 1, 'editor' => 2, 'approver' => 3, 'owner' => 4];
+        // Higher = more permissive. 'admin' covers both team management (invite/remove)
+        // and approval authority — owner is the only role that can change ownership.
+        $rank = ['viewer' => 1, 'editor' => 2, 'admin' => 3, 'owner' => 4];
         if (($rank[$pc['role']] ?? 0) < ($rank[$minRole] ?? 0)) {
             Response::error('Insufficient role for this action (need ' . $minRole . ')', 403);
         }

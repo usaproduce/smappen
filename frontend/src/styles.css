@@ -220,3 +220,54 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
   z-index: 99999 !important;
   font-family: 'Nunito', sans-serif;
 }
+
+/* ── Dark mode (#37) ────────────────────────────────────────────────────── */
+:root[data-theme="dark"] {
+  --ink: #f3f4f6;
+  --ink-2: #e5e7eb;
+  --body: #cbd5e1;
+  --slate: #94a3b8;
+  --muted: #64748b;
+  --line: #334155;
+  --line-soft: #1e293b;
+  --bg-panel: #1f2937;
+  --bg: #0f172a;
+  --brand-50: #1e1b2e;
+  --brand-light: #2d2147;
+}
+:root[data-theme="dark"] body {
+  background: var(--bg);
+  color: var(--body);
+}
+:root[data-theme="dark"] .card,
+:root[data-theme="dark"] .area-row,
+:root[data-theme="dark"] .input,
+:root[data-theme="dark"] select.input,
+:root[data-theme="dark"] textarea.input {
+  background: #1f2937;
+  color: #e5e7eb;
+  border-color: #334155;
+}
+:root[data-theme="dark"] .area-row:hover { background: #2d2147; }
+:root[data-theme="dark"] .btn-secondary {
+  background: #1f2937;
+  color: #e5e7eb;
+  border-color: #334155;
+}
+:root[data-theme="dark"] .area-row.selected { background: #2d2147; }
+:root[data-theme="dark"] kbd { background: #334155; color: #e5e7eb; }
+
+/* ── Skeleton loader for #31 ────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, #e2e8f0 0%, #f1f5f9 50%, #e2e8f0 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: 6px;
+}
+:root[data-theme="dark"] .skeleton {
+  background: linear-gradient(90deg, #1e293b 0%, #334155 50%, #1e293b 100%);
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

@@ -10,12 +10,31 @@ class Middleware
     {
         return function (Request $request) {
             $token = $request->getBearerToken();
-            if (!$token) {
+            // Allow API-key auth as an alternative to JWT for programmatic clients.
+            $apiKey = $request->getHeader('X-Api-Key') ?? null;
+            if (!$token && !$apiKey) {
                 Response::error('Authentication required', 401);
                 return false;
             }
-            try {
-                $decoded = JWT::decode($token, new Key(Config::get('JWT_SECRET'), 'HS256'));
+
+            if ($token) {
+                try {
+                    $decoded = JWT::decode($token, new Key(Config::get('JWT_SECRET'), 'HS256'));
+                } catch (\Throwable $e) {
+                    Response::error('Invalid or expired token: ' . $e->getMessage(), 401);
+                    return false;
+                }
+                $jti = $decoded->jti ?? null;
+                if ($jti) {
+                    $revoked = Database::getInstance()->fetch(
+                        'SELECT jti FROM revoked_tokens WHERE jti = ? AND expires_at > NOW()',
+                        [$jti]
+                    );
+                    if ($revoked) {
+                        Response::error('Token has been revoked', 401);
+                        return false;
+                    }
+                }
                 $user = Database::getInstance()->fetch(
                     'SELECT u.*, o.plan, o.name AS organization_name
                      FROM users u
@@ -30,10 +49,24 @@ class Middleware
                 unset($user['password_hash']);
                 $request->user = $user;
                 return true;
-            } catch (\Throwable $e) {
-                Response::error('Invalid or expired token: ' . $e->getMessage(), 401);
+            }
+
+            // API-key path
+            $hash = hash('sha256', $apiKey);
+            $user = Database::getInstance()->fetch(
+                'SELECT u.*, o.plan, o.name AS organization_name
+                 FROM users u
+                 LEFT JOIN organizations o ON o.id = u.organization_id
+                 WHERE u.api_key_hash = ? AND u.is_active = 1',
+                [$hash]
+            );
+            if (!$user) {
+                Response::error('Invalid API key', 401);
                 return false;
             }
+            unset($user['password_hash']);
+            $request->user = $user;
+            return true;
         };
     }
 
@@ -66,8 +99,53 @@ class Middleware
                 'SELECT COALESCE(SUM(request_count),0) AS total FROM api_usage_log WHERE user_id = ? AND api_name = ? AND created_at >= ?',
                 [$request->user['id'], $apiName, $since]
             );
-            if ((int)$row['total'] >= $maxRequests) {
-                Response::error('Rate limit exceeded. Upgrade your plan for higher limits.', 429);
+            $used = (int)($row['total'] ?? 0);
+            if ($used >= $maxRequests) {
+                Response::error("Rate limit reached ($apiName: $used/$maxRequests). Try again later.", 429);
+                return false;
+            }
+            // Log this call so the next check sees it. Use raw INSERT — table has BIGINT auto-inc id.
+            try {
+                Database::getInstance()->query(
+                    'INSERT INTO api_usage_log (user_id, api_name, endpoint, request_count, created_at)
+                     VALUES (?, ?, ?, 1, ?)',
+                    [$request->user['id'], $apiName, $request->getPath(), date('Y-m-d H:i:s')]
+                );
+            } catch (\Throwable $e) {}
+            return true;
+        };
+    }
+
+    /**
+     * Require the authenticated user to have an organization role in the
+     * given list. Useful for restricting team/billing actions to owners/admins.
+     */
+    public static function requireRole(array $roles): callable
+    {
+        return function (Request $request) use ($roles) {
+            if (!$request->user) {
+                Response::error('Authentication required', 401);
+                return false;
+            }
+            $role = $request->user['role'] ?? 'member';
+            if (!in_array($role, $roles, true)) {
+                Response::error("Requires role: " . implode('/', $roles), 403);
+                return false;
+            }
+            return true;
+        };
+    }
+
+    /** Require verified email — used for actions that touch money or invitations. */
+    public static function requireVerifiedEmail(): callable
+    {
+        return function (Request $request) {
+            if (!$request->user) {
+                Response::error('Authentication required', 401);
+                return false;
+            }
+            if (empty($request->user['email_verified_at'])) {
+                Response::error('Please verify your email address before doing this.', 403);
                 return false;
             }
             return true;

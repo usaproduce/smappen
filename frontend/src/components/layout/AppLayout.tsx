@@ -9,18 +9,35 @@ import AreaCreator from '../areas/AreaCreator';
 import ImportWizard from '../data/ImportWizard';
 import MiniMapToggle from '../map/MiniMapToggle';
 import AdvancedPanel from '../advanced/AdvancedPanel';
+import ErrorBoundary from '../ErrorBoundary';
 import { useMapStore } from '../../stores/mapStore';
+import { useProjectStore } from '../../stores/projectStore';
+import { useShortcuts } from '../../hooks/useShortcuts';
+import { saveProjectSnapshot, downloadMapSnapshot } from '../../utils/mapExport';
 
 const LIBRARIES: ('drawing' | 'visualization' | 'geometry' | 'places')[] = [
   'drawing', 'visualization', 'geometry', 'places',
 ];
 
 export default function AppLayout() {
-  const { selectedAreaId } = useMapStore();
+  const { selectedAreaId, mapInstance } = useMapStore();
+  const { currentProject } = useProjectStore();
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [stuckLoading, setStuckLoading] = useState(false);
+
+  useShortcuts({
+    onCreateArea: () => setCreatorOpen(true),
+    onSaveSnapshot: () => currentProject && saveProjectSnapshot(currentProject.id),
+  });
+
+  const screenshot = () => {
+    const c = mapInstance?.getCenter();
+    const z = mapInstance?.getZoom();
+    if (!c || z == null) return;
+    downloadMapSnapshot({ lat: c.lat(), lng: c.lng(), zoom: z });
+  };
   const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY ?? '';
 
   const { isLoaded, loadError } = useJsApiLoader({
@@ -61,29 +78,52 @@ export default function AppLayout() {
             )}
           </div>
         )}
-        {isLoaded && <MapCanvas />}
+        {isLoaded && (
+          <ErrorBoundary scope="Map" inline>
+            <MapCanvas />
+          </ErrorBoundary>
+        )}
 
         {isLoaded && (
           <>
-            <LeftPanel
-              onCreateArea={() => setCreatorOpen(true)}
-              onImport={() => setImportOpen(true)}
-            />
-            {selectedAreaId && <RightPanel />}
+            <ErrorBoundary scope="Left panel" inline>
+              <LeftPanel
+                onCreateArea={() => setCreatorOpen(true)}
+                onImport={() => setImportOpen(true)}
+              />
+            </ErrorBoundary>
+            {selectedAreaId && (
+              <ErrorBoundary scope="Area details" inline>
+                <RightPanel />
+              </ErrorBoundary>
+            )}
             <RightToolbar
               onCreateArea={() => setCreatorOpen(true)}
               onImport={() => setImportOpen(true)}
               onOpenAdvanced={() => setAdvancedOpen((v) => !v)}
               advancedOpen={advancedOpen}
+              onScreenshot={screenshot}
             />
             <MiniMapToggle />
-            {advancedOpen && <AdvancedPanel onClose={() => setAdvancedOpen(false)} />}
+            {advancedOpen && (
+              <ErrorBoundary scope="Advanced tools" inline onReset={() => setAdvancedOpen(false)}>
+                <AdvancedPanel onClose={() => setAdvancedOpen(false)} />
+              </ErrorBoundary>
+            )}
           </>
         )}
       </div>
 
-      {creatorOpen && isLoaded && <AreaCreator onClose={() => setCreatorOpen(false)} />}
-      {importOpen && <ImportWizard onClose={() => setImportOpen(false)} />}
+      {creatorOpen && isLoaded && (
+        <ErrorBoundary scope="Area creator" inline onReset={() => setCreatorOpen(false)}>
+          <AreaCreator onClose={() => setCreatorOpen(false)} />
+        </ErrorBoundary>
+      )}
+      {importOpen && (
+        <ErrorBoundary scope="Import wizard" inline onReset={() => setImportOpen(false)}>
+          <ImportWizard onClose={() => setImportOpen(false)} />
+        </ErrorBoundary>
+      )}
     </div>
   );
 }

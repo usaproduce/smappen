@@ -1,6 +1,6 @@
 import {
   PieChart, MapPin, Building, ClipboardList, DatabaseZap, Star,
-  ZoomIn, ZoomOut, MessageCircle, Map as MapIcon, Sparkles,
+  ZoomIn, ZoomOut, MessageCircle, Map as MapIcon, Sparkles, Camera,
 } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 
@@ -9,9 +9,10 @@ interface Props {
   onImport: () => void;
   onOpenAdvanced?: () => void;
   advancedOpen?: boolean;
+  onScreenshot?: () => void;
 }
 
-export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, advancedOpen }: Props) {
+export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, advancedOpen, onScreenshot }: Props) {
   const { mapInstance, showHeatmap, toggleHeatmap, selectArea } = useMapStore();
 
   function zoom(by: number) {
@@ -52,6 +53,9 @@ export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, a
         onClick={onOpenAdvanced}
       >
         <Sparkles size={20} />
+      </button>
+      <button className="toolbar-btn" title="Download map screenshot" onClick={onScreenshot}>
+        <Camera size={20} />
       </button>
 
       <div className="flex-1" />
