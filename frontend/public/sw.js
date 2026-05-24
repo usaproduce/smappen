@@ -3,12 +3,15 @@
 //
 // Versioning: bump CACHE_VERSION on every deploy so old shells get evicted.
 
-// NF4 — bumped v3 → v4 with broader offline coverage:
-//   • GPS breadcrumb buffer (mirrored from main thread via postMessage)
-//   • Photo upload outbox (alongside field-notes outbox)
-//   • Cached-tile read for map tiles when offline
-//   • Skip-waiting prompt UI so users see updates on next reload
-const CACHE_VERSION = 'sm-v4';
+// Bumped v4 → v5 to evict stale Vite chunk caches from clients that hit
+// "Failed to fetch dynamically imported module" after a deploy. Each bump
+// invalidates all prior shell + runtime caches via the activate handler.
+//
+// Earlier bumps:
+//   v4 — broader offline coverage (GPS buffer, photo outbox, tile cache,
+//        skip-waiting prompt).
+//   v3 — initial offline shell + field-note outbox.
+const CACHE_VERSION = 'sm-v5';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const OUTBOX_DB = 'sm-outbox';
@@ -80,16 +83,34 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // App static assets (JS/CSS/SVG under /app/) — cache-first
+  // App static assets (JS/CSS/SVG under /app/) — stale-while-revalidate.
+  //
+  // Cache-first was the old policy and is great for offline, but it has a
+  // sharp edge: after a deploy rewrites Vite chunk hashes, an open tab on
+  // the new shell tries to dynamically import a chunk that was deleted
+  // from /public/app/assets/ AND is not yet in any cache. The old code
+  // tried cache, missed, then network 404'd — which surfaces as "Failed
+  // to fetch dynamically imported module" and crashes the lazy tab.
+  //
+  // The new policy:
+  //   1. Hashed asset path (Vite emits content-hashed names): return cache
+  //      if present, else fetch from network and cache for next time.
+  //   2. If both cache + network fail (e.g. server deleted the chunk after
+  //      a redeploy), let the rejection bubble — main.tsx catches the
+  //      "stale chunk" failure mode and triggers a clean reload with cache
+  //      purge so the user gets the fresh chunks.
   if (url.pathname.startsWith(APP_SCOPE)) {
     event.respondWith(
-      caches.match(request).then((m) => {
-        if (m) return m;
-        return fetch(request).then((r) => {
-          const copy = r.clone();
-          caches.open(RUNTIME_CACHE).then((c) => c.put(request, copy));
+      caches.match(request).then((cached) => {
+        const network = fetch(request).then((r) => {
+          if (r.ok) {
+            const copy = r.clone();
+            caches.open(RUNTIME_CACHE).then((c) => c.put(request, copy));
+          }
           return r;
         });
+        // Cache-first if we have it; otherwise wait on the network.
+        return cached || network;
       })
     );
     return;

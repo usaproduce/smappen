@@ -17,6 +17,41 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   });
 }
 
+// When a fresh deploy rewrites Vite chunk hashes, a tab opened against the
+// previous build can have the *new* index.html (served network-first by
+// the service worker) but a *stale* runtime cache that no longer has the
+// dynamic-import chunks the new shell asks for — and the old chunks were
+// removed from /public/app/assets/ by the build. Result: "Failed to fetch
+// dynamically imported module" when the user opens any lazy tab (Analogs,
+// Analytics, etc.). React's error boundary catches it and shows the inline
+// "tab crashed" card.
+//
+// Catch those rejections and recover by clearing the SW caches + reloading
+// once. The sessionStorage guard prevents an infinite reload loop if the
+// underlying chunk really is missing (vs just stale).
+window.addEventListener('unhandledrejection', (event) => {
+  const msg = String(event.reason?.message || event.reason || '');
+  const looksLikeStaleChunk =
+    /Failed to fetch dynamically imported module/i.test(msg) ||
+    /Importing a module script failed/i.test(msg) ||
+    /error loading dynamically imported module/i.test(msg);
+  if (!looksLikeStaleChunk) return;
+  if (sessionStorage.getItem('sm_chunk_reload_done') === '1') return;
+  sessionStorage.setItem('sm_chunk_reload_done', '1');
+  // Best-effort cache purge so the next load fetches fresh chunks.
+  if ('caches' in window) {
+    caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+      .finally(() => location.reload());
+  } else {
+    location.reload();
+  }
+});
+// Clear the reload guard on a successful navigation that completed without
+// chunk failures, so a future stale-cache incident can recover again.
+window.addEventListener('load', () => {
+  setTimeout(() => sessionStorage.removeItem('sm_chunk_reload_done'), 5000);
+});
+
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
 });
