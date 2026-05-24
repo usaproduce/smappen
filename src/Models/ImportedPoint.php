@@ -18,7 +18,10 @@ class ImportedPoint
 
         $cols = array_keys($data);
         $placeholders = array_map(fn($c) => ':' . $c, $cols);
-        $wkt = sprintf('POINT(%.7f %.7f)', $lng, $lat);
+        // MySQL 8 SRID 4326 strictly enforces (lat lng) axis order. Building
+        // "POINT(lng lat)" here threw "Latitude out of range" on any row
+        // with a negative longitude (i.e. all US data).
+        $wkt = sprintf('POINT(%.7f %.7f)', $lat, $lng);
         $sql = 'INSERT INTO imported_points (' . implode(',', array_map(fn($c) => "`$c`", $cols))
              . ', point) VALUES (' . implode(',', $placeholders) . ', ST_GeomFromText(:wkt, 4326))';
         $stmt = Database::getInstance()->pdo()->prepare($sql);

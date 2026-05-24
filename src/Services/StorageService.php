@@ -83,6 +83,7 @@ class StorageService
             CURLOPT_CUSTOMREQUEST => 'PUT',
             CURLOPT_POSTFIELDS => $body,
             CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_TIMEOUT => 30,
         ]);
         $resp = curl_exec($ch);
@@ -98,6 +99,7 @@ class StorageService
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_TIMEOUT => 30,
         ]);
         $resp = curl_exec($ch);
@@ -116,6 +118,7 @@ class StorageService
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CUSTOMREQUEST => 'DELETE',
             CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_TIMEOUT => 30,
         ]);
         curl_exec($ch);

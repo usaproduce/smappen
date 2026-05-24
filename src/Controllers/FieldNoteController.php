@@ -81,7 +81,7 @@ class FieldNoteController
                 $request->user['id'],
                 $note,
                 $lat, $lng,
-                "POINT({$lng} {$lat})",
+                "POINT({$lat} {$lng})",
                 isset($body['accuracy_m']) ? (float)$body['accuracy_m'] : null,
                 $body['photo_url'] ?? null,
                 isset($body['tags']) ? json_encode((array)$body['tags']) : null,
@@ -118,7 +118,8 @@ class FieldNoteController
         $lng = (float)$request->getQuery('lng');
         if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) Response::error('Invalid coordinates');
 
-        $point = "POINT({$lng} {$lat})";
+        // MySQL 8 SRID 4326 = (lat lng) axis order; emit lat first.
+        $point = "POINT({$lat} {$lng})";
         // Areas containing this point in the project
         $areas = Database::getInstance()->fetchAll(
             "SELECT id, name, fill_color, area_type

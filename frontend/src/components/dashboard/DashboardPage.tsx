@@ -29,10 +29,18 @@ export default function DashboardPage() {
       try {
         const r = await projectsApi.list();
         if (!cancelled) setProjects(r.data ?? []);
-      } catch {}
+      } catch (e) {
+        if (!cancelled && import.meta.env.DEV) console.warn('dashboard projects load failed:', e);
+      }
       finally { if (!cancelled) setLoadingProjects(false); }
     })();
-    api.get('/api/activity').then((r) => !cancelled && setActivity(r.data?.data?.activity ?? [])).catch(() => {});
+    // The activity load used to ignore the `cancelled` flag on the .catch
+    // branch — setActivity would still fire if the request errored after
+    // the component unmounted. Use the same guard pattern as the projects
+    // load so both branches respect cancellation.
+    api.get('/api/activity')
+      .then((r) => { if (!cancelled) setActivity(r.data?.data?.activity ?? []); })
+      .catch((e) => { if (!cancelled && import.meta.env.DEV) console.warn('dashboard activity load failed:', e); });
     return () => { cancelled = true; };
   }, []);
 

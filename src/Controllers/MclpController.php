@@ -109,7 +109,7 @@ class MclpController
                          ST_SRID(ST_Centroid(ST_SRID(ct.geometry, 0)), 4326),
                          ST_GeomFromText(?, 4326)
                        ) <= ?",
-                [$metric, $bboxWkt, "POINT({$c['lng']} {$c['lat']})", $radiusKm * 1000]
+                [$metric, $bboxWkt, "POINT({$c['lat']} {$c['lng']})", $radiusKm * 1000]
             );
             $cov = [];
             foreach ($rows as $r) {

@@ -51,6 +51,19 @@ class AlertsController
         $config = $b['config'] ?? [];
         if (!is_array($config)) Response::error('config must be an object', 422);
 
+        // Verify the referenced area belongs to the caller's org. Without this,
+        // a user could create an alert wired to another org's area and later
+        // read that area's demographics through the alert delivery payload.
+        if ($areaId) {
+            $row = Database::getInstance()->fetch(
+                'SELECT a.id FROM areas a
+                   JOIN projects p ON p.id = a.project_id
+                  WHERE a.id = ? AND p.organization_id = ?',
+                [$areaId, $request->user['organization_id']]
+            );
+            if (!$row) Response::error('Area not found', 404);
+        }
+
         $id = Database::uuid();
         Database::getInstance()->query(
             'INSERT INTO alerts (id, organization_id, user_id, area_id, kind, config_json, active, created_at)

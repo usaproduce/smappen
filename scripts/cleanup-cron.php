@@ -24,6 +24,30 @@ try {
     echo "Cleared $revoked expired revoked_tokens rows\n";
 } catch (\Throwable $e) { echo "revoked_tokens cleanup skipped: " . $e->getMessage() . "\n"; }
 try {
+    // Stuck-job sweeper: if a job's been "running" for >30 minutes it almost
+    // certainly died (OOM, segfault, manual kill). Mark it failed so the UI
+    // stops showing a perpetual spinner and the user can retry. 30min is
+    // generous — the heaviest job (territory generation for a state) is
+    // typically <60s under the new memory caps. set_time_limit(0) jobs that
+    // legitimately run longer should not use the `jobs` table.
+    $stuck = $db->pdo()->exec(
+        "UPDATE jobs SET status = 'failed',
+                         error_message = 'Killed by sweeper after 30min stuck running',
+                         finished_at = NOW()
+          WHERE status = 'running' AND started_at < NOW() - INTERVAL 30 MINUTE"
+    );
+    if ($stuck > 0) echo "Swept $stuck stuck-running jobs\n";
+    // Same for territory_generation_jobs (parallel jobs table).
+    try {
+        $stuckTerr = $db->pdo()->exec(
+            "UPDATE territory_generation_jobs SET status = 'failed',
+                                                  error_message = 'Killed by sweeper after 30min stuck running',
+                                                  finished_at = NOW()
+              WHERE status = 'running' AND started_at < NOW() - INTERVAL 30 MINUTE"
+        );
+        if ($stuckTerr > 0) echo "Swept $stuckTerr stuck territory_generation_jobs\n";
+    } catch (\Throwable $e) { /* table may not exist on older deploys */ }
+
     // Job rows: keep done/failed for 30 days, then drop. cancelled too.
     $oldJobs = $db->pdo()->exec("DELETE FROM jobs WHERE status IN ('done','failed','cancelled') AND finished_at < NOW() - INTERVAL 30 DAY");
     echo "Cleared $oldJobs old job rows\n";

@@ -284,6 +284,7 @@ class CrmController
             CURLOPT_POSTFIELDS => http_build_query($form),
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
+            CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_TIMEOUT => 15,
         ]);
         $body = curl_exec($ch);
@@ -306,6 +307,7 @@ class CrmController
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER => $h,
+            CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_TIMEOUT => 20,
         ]);
         if ($body !== null) curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));

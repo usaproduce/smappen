@@ -52,6 +52,38 @@ class BillingController
             }
         }
 
+        // Idempotency. Stripe retries webhook deliveries on its own (network
+        // hiccups, 5xx, timeouts), so the same event.id can arrive 2-3 times
+        // within seconds. Without this guard, a duplicate
+        // checkout.session.completed would re-bump the plan + activation
+        // flags. Decode just enough of the payload to read event.id, then
+        // INSERT IGNORE into a dedupe table keyed on the event id (unique).
+        // A second arrival hits the unique constraint, the insert affects 0
+        // rows, and we ack quickly without re-processing.
+        $eventId = null;
+        $parsed = json_decode($payload, true);
+        if (is_array($parsed) && isset($parsed['id']) && is_string($parsed['id'])) {
+            $eventId = $parsed['id'];
+        }
+        if ($eventId) {
+            try {
+                $stmt = \App\Core\Database::getInstance()->pdo()->prepare(
+                    'INSERT IGNORE INTO stripe_webhook_events (event_id, received_at) VALUES (?, NOW())'
+                );
+                $stmt->execute([$eventId]);
+                if ($stmt->rowCount() === 0) {
+                    // Duplicate — already processed. Return 200 so Stripe stops retrying.
+                    Response::success(['handled' => 'duplicate', 'event_id' => $eventId]);
+                    return;
+                }
+            } catch (\Throwable $e) {
+                // If the dedupe table doesn't exist yet (pre-migration) or any
+                // other write error, log + continue. Better to risk a duplicate
+                // than to reject a real event.
+                error_log('Stripe webhook dedupe write failed: ' . $e->getMessage());
+            }
+        }
+
         try {
             $type = (new StripeService())->handleWebhook($payload, $sig);
             Response::success(['handled' => $type]);

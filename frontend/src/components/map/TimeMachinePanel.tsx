@@ -60,8 +60,13 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
   const [collapsed, setCollapsed] = useState(false);
   const playRef = useRef<number | null>(null);
 
-  // Initial load on first mount.
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  // Initial load on first mount only. The day + minutes dropdowns don't
+  // auto-fetch on change (it would burn ORS calls every dropdown tweak);
+  // users click the Load button to re-fetch with the latest values. So
+  // the eslint exhaustive-deps complaint about load() being unlisted is
+  // intentional — we EXPLICITLY do not want this useEffect to re-fire.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, []);
 
   // Push the current hour's polygon into mapStore for MapCanvas to render.
   useEffect(() => {

@@ -257,6 +257,7 @@ class CensusService
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_TIMEOUT => 60,
         ]);
         $resp = curl_exec($ch);

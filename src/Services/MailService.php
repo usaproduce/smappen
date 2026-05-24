@@ -98,6 +98,7 @@ class MailService
             CURLOPT_HTTPHEADER => array_merge([
                 'Content-Type: application/json; charset=utf-8',
             ], $extraHeaders),
+            CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_TIMEOUT => 15,
         ]);
         $resp = curl_exec($ch);

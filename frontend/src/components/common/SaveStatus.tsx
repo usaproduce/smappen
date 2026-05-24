@@ -30,8 +30,14 @@ export function markSaved() {
 export default function SaveStatus() {
   const [s, setS] = useState<Status>(current);
   useEffect(() => {
-    listeners.add(setS);
-    return () => { listeners.delete(setS); };
+    // Capture the setter reference into a ref-stable variable so the cleanup
+    // removes the SAME function it added — previously the closure relied on
+    // `setS` being stable (it is in React), but if a render between add and
+    // cleanup ever swapped it the cleanup would no-op and we'd leak the
+    // listener across mount cycles. Belt-and-braces.
+    const fn: (s: Status) => void = setS;
+    listeners.add(fn);
+    return () => { listeners.delete(fn); };
   }, []);
   if (s === 'idle') return null;
   return (

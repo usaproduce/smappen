@@ -323,6 +323,7 @@ class GoogleMapsService
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_CUSTOMREQUEST => $method,
                 CURLOPT_HTTPHEADER => $headers,
+                CURLOPT_CONNECTTIMEOUT => 3,
                 CURLOPT_TIMEOUT => 30,
             ];
             if ($body !== null) $opts[CURLOPT_POSTFIELDS] = $body;

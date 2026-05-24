@@ -71,7 +71,7 @@ class CompetitorScanner
                      VALUES (?, ?, ?, ?, ?, ?, ST_GeomFromText(?, 4326), ?, ?, ?, ?, ?, ?, 0)',
                     [
                         $tpId, $monitor['id'], $pid, $name, $pLat, $pLng,
-                        $pLat !== null && $pLng !== null ? "POINT({$pLng} {$pLat})" : 'POINT(0 0)',
+                        $pLat !== null && $pLng !== null ? "POINT({$pLat} {$pLng})" : 'POINT(0 0)',
                         $rating, $reviews,
                         json_encode($types),
                         $scanId, $now, $now,
@@ -130,7 +130,7 @@ class CompetitorScanner
                      WHERE id = ?',
                     [
                         $name, $pLat, $pLng,
-                        $pLat !== null && $pLng !== null ? "POINT({$pLng} {$pLat})" : 'POINT(0 0)',
+                        $pLat !== null && $pLng !== null ? "POINT({$pLat} {$pLng})" : 'POINT(0 0)',
                         $rating, $reviews, json_encode($types),
                         $scanId, $now, $prev['id'],
                     ]
@@ -356,6 +356,7 @@ class CompetitorScanner
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($payload),
             CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_TIMEOUT => 5,
         ]);
         curl_exec($ch);

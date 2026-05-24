@@ -128,7 +128,7 @@ class AiScoringController
                  WHERE cm.project_id = ? AND tp.is_gone = 0
                    AND tp.lat IS NOT NULL AND tp.lng IS NOT NULL
                    AND ST_Contains(ST_GeomFromText(?, 4326),
-                                   ST_GeomFromText(CONCAT('POINT(', tp.lng, ' ', tp.lat, ')'), 4326))",
+                                   ST_GeomFromText(CONCAT('POINT(', tp.lat, ' ', tp.lng, ')'), 4326))",
                 [$area['project_id'], $area['wkt']]
             );
             $competitors = (int)($row['n'] ?? 0);
@@ -277,6 +277,7 @@ class AiScoringController
                 'x-api-key: ' . Config::get('ANTHROPIC_API_KEY'),
                 'anthropic-version: 2023-06-01',
             ],
+            CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_TIMEOUT => 25,
         ]);
         $resp = curl_exec($ch);

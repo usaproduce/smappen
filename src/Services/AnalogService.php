@@ -320,7 +320,9 @@ class AnalogService
         // Parameterize the centroid coords as WKT — avoids string interpolation
         // into SQL. Even though the values are float-cast (un-injectable),
         // parameterizing keeps the convention consistent across the service.
-        $centerWkt = 'POINT(' . $centerLng . ' ' . $centerLat . ')';
+        // MySQL 8 SRID 4326 axis order is (lat lng) — earlier (lng lat) build
+        // threw "Latitude out of range" for any US center point.
+        $centerWkt = 'POINT(' . $centerLat . ' ' . $centerLng . ')';
 
         // Resolve the source area's intersecting tract geoids ONCE, up front.
         // Old approach embedded a NOT IN (SELECT ... ST_Intersects ...) subquery
