@@ -24,6 +24,9 @@ interface MapState {
   mapInstance: google.maps.Map | null;
   /** Active time-machine polygon. Set by TimeMachinePanel; MapCanvas draws it. */
   timeMachine: { geometry: any; hour: number; label: string; areaSqKm: number | null; color: string } | null;
+  /** When set, AppLayout renders the TimeMachinePanel slide-up. Lets any
+   *  surface (selected-area card, advanced panel, toolbar) open it the same way. */
+  timeMachineRequest: { lat: number; lng: number; minutes: number; color: string } | null;
   setCenter: (c: { lat: number; lng: number }) => void;
   setZoom: (z: number) => void;
   selectArea: (id: string | null) => void;
@@ -40,6 +43,8 @@ interface MapState {
   setMapInstance: (m: google.maps.Map | null) => void;
   fitBoundsToArea: (geometry: any) => void;
   setTimeMachine: (tm: MapState['timeMachine']) => void;
+  openTimeMachine: (opts?: Partial<NonNullable<MapState['timeMachineRequest']>>) => void;
+  closeTimeMachine: () => void;
 }
 
 export const useMapStore = create<MapState>((set, get) => ({
@@ -61,6 +66,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   pendingIsochrone: null,
   mapInstance: null,
   timeMachine: null,
+  timeMachineRequest: null,
   setCenter: (center) => set({ center }),
   setZoom: (zoom) => set({ zoom }),
   selectArea: (id) => set({ selectedAreaId: id }),
@@ -77,6 +83,19 @@ export const useMapStore = create<MapState>((set, get) => ({
   setPendingIsochrone: (pendingIsochrone) => set({ pendingIsochrone }),
   setMapInstance: (mapInstance) => set({ mapInstance }),
   setTimeMachine: (timeMachine) => set({ timeMachine }),
+  openTimeMachine: (opts) => {
+    // Default origin = current map center; default minutes = 15; default color = brand.
+    const map = get().mapInstance;
+    const c = map?.getCenter();
+    const fallback = {
+      lat: c?.lat() ?? get().center.lat,
+      lng: c?.lng() ?? get().center.lng,
+      minutes: 15,
+      color: '#7848BB',
+    };
+    set({ timeMachineRequest: { ...fallback, ...(opts ?? {}) } });
+  },
+  closeTimeMachine: () => set({ timeMachineRequest: null, timeMachine: null }),
   fitBoundsToArea: (geometry) => {
     const map = get().mapInstance;
     if (!map || !geometry?.coordinates?.[0]) return;

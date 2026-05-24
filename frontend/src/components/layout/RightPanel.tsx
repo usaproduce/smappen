@@ -6,7 +6,6 @@ import DemographicsPanel from '../analytics/DemographicsPanel';
 import POISearchPanel from '../analytics/POISearchPanel';
 import ReportButton from '../data/ReportButton';
 import ExportDialog from '../data/ExportDialog';
-import TimeMachinePanel from '../map/TimeMachinePanel';
 
 type Tab = 'overview' | 'demographics' | 'businesses' | 'data';
 
@@ -23,11 +22,10 @@ const modeLabel: Record<string, string> = {
 };
 
 export default function RightPanel() {
-  const { selectedAreaId, selectArea } = useMapStore();
+  const { selectedAreaId, selectArea, openTimeMachine } = useMapStore();
   const { areas } = useProjectStore();
   const [tab, setTab] = useState<Tab>('overview');
   const [exportOpen, setExportOpen] = useState(false);
-  const [timeMachineOpen, setTimeMachineOpen] = useState(false);
 
   const area = areas.find((a) => a.id === selectedAreaId);
 
@@ -132,7 +130,12 @@ export default function RightPanel() {
                 computed from a drive-time budget. */}
             {area.area_type === 'isochrone' && area.center_lat != null && area.center_lng != null && (
               <button
-                onClick={() => setTimeMachineOpen(true)}
+                onClick={() => openTimeMachine({
+                  lat: area.center_lat!,
+                  lng: area.center_lng!,
+                  minutes: area.travel_time_minutes ?? 15,
+                  color: area.fill_color ?? '#7848BB',
+                })}
                 className="w-full rounded-lg p-3 border-2 border-dashed border-violet-300 hover:border-violet-500 hover:bg-violet-50 transition flex items-center gap-3 text-left group"
               >
                 <div className="w-9 h-9 rounded-full bg-violet-100 group-hover:bg-violet-200 flex items-center justify-center transition">
@@ -167,15 +170,6 @@ export default function RightPanel() {
         )}
       </div>
       {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} areaId={area.id} />}
-      {timeMachineOpen && area.center_lat != null && area.center_lng != null && (
-        <TimeMachinePanel
-          lat={area.center_lat}
-          lng={area.center_lng}
-          defaultMinutes={area.travel_time_minutes ?? 15}
-          color={area.fill_color ?? '#7848BB'}
-          onClose={() => setTimeMachineOpen(false)}
-        />
-      )}
     </aside>
   );
 }

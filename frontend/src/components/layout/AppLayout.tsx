@@ -9,6 +9,7 @@ import AreaCreator from '../areas/AreaCreator';
 import ImportWizard from '../data/ImportWizard';
 import MiniMapToggle from '../map/MiniMapToggle';
 import AdvancedPanel from '../advanced/AdvancedPanel';
+import TimeMachinePanel from '../map/TimeMachinePanel';
 import ErrorBoundary from '../ErrorBoundary';
 import { useMapStore } from '../../stores/mapStore';
 import { useProjectStore } from '../../stores/projectStore';
@@ -20,7 +21,7 @@ const LIBRARIES: ('drawing' | 'visualization' | 'geometry' | 'places')[] = [
 ];
 
 export default function AppLayout() {
-  const { selectedAreaId, mapInstance } = useMapStore();
+  const { selectedAreaId, mapInstance, timeMachineRequest, closeTimeMachine } = useMapStore();
   const { currentProject } = useProjectStore();
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -108,6 +109,17 @@ export default function AppLayout() {
             {advancedOpen && (
               <ErrorBoundary scope="Advanced tools" inline onReset={() => setAdvancedOpen(false)}>
                 <AdvancedPanel onClose={() => setAdvancedOpen(false)} />
+              </ErrorBoundary>
+            )}
+            {timeMachineRequest && (
+              <ErrorBoundary scope="Time machine" inline onReset={closeTimeMachine}>
+                <TimeMachinePanel
+                  lat={timeMachineRequest.lat}
+                  lng={timeMachineRequest.lng}
+                  defaultMinutes={timeMachineRequest.minutes}
+                  color={timeMachineRequest.color}
+                  onClose={closeTimeMachine}
+                />
               </ErrorBoundary>
             )}
           </>
