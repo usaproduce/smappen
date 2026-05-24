@@ -18,11 +18,19 @@ class GooglePricing
         // Geocoding API
         'geocode'           => 0.005,   // $5 / 1000
         'reverse_geocode'   => 0.005,
-        'geocode_batch'     => 0.005,   // per address in the batch
+        // 'geocode_batch' is a rate-limit pool, NOT a Google API. The real
+        // per-address geocode billing is logged under 'geocode' (count=N)
+        // from the batch controller. Keeping this at 0 here prevents the
+        // rate-limit row from double-counting the batch cost.
+        'geocode_batch'     => 0,
 
         // Places API (new) — Essentials SKU
         'places_nearby'     => 0.032,   // $32 / 1000
         'places_search'     => 0.032,
+        // 'places' is the rate-limit pool name; 'places_nearby' / 'places_text'
+        // are the cost-bearing api_names attached to controller responses.
+        // Keeping 'places' at 0 stops the middleware row from double-charging.
+        'places'            => 0,
         'places_text'       => 0.032,
         'place_details'     => 0.020,   // basic fields
         'places_autocomplete' => 0.00283, // $2.83 / 1000 — per session token

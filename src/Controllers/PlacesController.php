@@ -25,9 +25,12 @@ class PlacesController
         try {
             $svc = new GoogleMapsService();
             $places = $svc->searchPlacesNearby($lat, $lng, $radius, $type, $keyword);
+            // No explicit logApiUsage — rateLimit middleware logged 'places'
+            // (cost=0) for rate limiting; we log a separate 'places_nearby'
+            // row here for the actual cost so they don't conflict.
             $svc->logApiUsage('places_nearby', $request->user['id'], 'places_nearby');
         } catch (\Throwable $e) {
-            Response::error('Places search failed: ' . $e->getMessage(), 502);
+            self::handleGoogleError($e, 'places');
         }
 
         if ($areaId) {
@@ -86,7 +89,7 @@ class PlacesController
                 ],
             ]);
         } catch (\Throwable $e) {
-            Response::error('Places search failed: ' . $e->getMessage(), 502);
+            self::handleGoogleError($e, 'places');
         }
     }
 
@@ -103,7 +106,7 @@ class PlacesController
             ];
             Response::success($details);
         } catch (\Throwable $e) {
-            Response::error('Place details failed: ' . $e->getMessage(), 502);
+            self::handleGoogleError($e, 'place_details');
         }
     }
 
@@ -121,5 +124,53 @@ class PlacesController
             Response::success(['places' => $cached['results'], 'cached_at' => $cached['cached_at']]);
         }
         Response::success(['places' => [], 'message' => 'No POIs cached. Run a nearby search first.']);
+    }
+
+    /**
+     * Translate the raw Google API failure (which is a giant JSON blob in the
+     * exception message) into a user-friendly error. Specifically detects the
+     * "API not enabled" 403 and surfaces a direct enable URL pulled from the
+     * details payload, so users don't have to parse Google's response themselves.
+     */
+    private static function handleGoogleError(\Throwable $e, string $kind = 'places'): void
+    {
+        $msg = $e->getMessage();
+        // The exception from makeRequest looks like: "HTTP 403 from https://...: {json}"
+        $reason = null;
+        $enableUrl = null;
+        $serviceTitle = null;
+        if (preg_match('/HTTP\s+(\d+)/', $msg, $hm)) {
+            $code = (int) $hm[1];
+            // Try to extract the JSON body.
+            $jsonStart = strpos($msg, '{');
+            if ($jsonStart !== false) {
+                $body = substr($msg, $jsonStart);
+                $parsed = json_decode($body, true);
+                if (is_array($parsed)) {
+                    $reason = $parsed['error']['details'][0]['reason'] ?? null;
+                    $serviceTitle = $parsed['error']['details'][0]['metadata']['serviceTitle'] ?? null;
+                    foreach (($parsed['error']['details'] ?? []) as $d) {
+                        if (!empty($d['metadata']['activationUrl'])) { $enableUrl = $d['metadata']['activationUrl']; break; }
+                        if (!empty($d['links'][0]['url']) && str_contains($d['links'][0]['url'], 'console')) {
+                            $enableUrl = $d['links'][0]['url']; break;
+                        }
+                    }
+                }
+            }
+            if ($reason === 'SERVICE_DISABLED' || ($code === 403 && $enableUrl)) {
+                $name = $serviceTitle ?: 'Google Places API';
+                Response::error(
+                    "$name is not enabled on your Google Cloud project. Enable it in the Google Cloud Console, then wait ~5 minutes for the change to propagate before retrying.",
+                    403,
+                    ['enable_url' => $enableUrl, 'service' => $name]
+                );
+            }
+            if ($code === 429) {
+                Response::error('Google rate-limited this request. Wait a moment and try again.', 429);
+            }
+        }
+        // Generic fallback — don't leak the raw Google JSON payload to the user.
+        error_log('[places] ' . $kind . ' upstream error: ' . substr($msg, 0, 1000));
+        Response::error('Search failed upstream. Please try again.', 502);
     }
 }

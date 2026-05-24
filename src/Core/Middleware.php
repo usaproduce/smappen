@@ -123,12 +123,18 @@ class Middleware
                 Response::error("Rate limit reached ($apiName: $used/$maxRequests). Try again later.", 429);
                 return false;
             }
-            // Log this call so the next check sees it. Use raw INSERT — table has BIGINT auto-inc id.
+            // Insert ONE row per call here, with the Google-Pricing cost if
+            // this api_name has one. Controllers must NOT also call
+            // logApiUsage with the same api_name — earlier draft had both
+            // middleware + controller inserting, which double-counted every
+            // rate-limited endpoint (request_count inflated 2×).
+            $cost = \App\Services\GooglePricing::costFor($apiName);
             try {
                 Database::getInstance()->query(
-                    'INSERT INTO api_usage_log (user_id, api_name, endpoint, request_count, created_at)
-                     VALUES (?, ?, ?, 1, ?)',
-                    [$request->user['id'], $apiName, $request->getPath(), date('Y-m-d H:i:s')]
+                    'INSERT INTO api_usage_log
+                       (user_id, api_name, endpoint, request_count, estimated_cost_usd, created_at)
+                     VALUES (?, ?, ?, 1, ?, ?)',
+                    [$request->user['id'], $apiName, $request->getPath(), $cost, date('Y-m-d H:i:s')]
                 );
             } catch (\Throwable $e) {}
             return true;

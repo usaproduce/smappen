@@ -28,7 +28,31 @@ export default function POISearchPanel({ area }: { area: Area }) {
       setPoiResults(r.places);
       toast.success(`${r.count} results`);
     } catch (e: any) {
-      toast.error(e?.response?.data?.error ?? 'Search failed');
+      const err = e?.response?.data?.error ?? 'Search failed';
+      const enableUrl = e?.response?.data?.details?.enable_url;
+      if (enableUrl) {
+        // Toast with an embedded clickable Enable link, so the user doesn't
+        // have to copy the URL out of the message into a new tab.
+        toast.error(
+          (t) => (
+            <div className="text-sm leading-snug">
+              <div className="font-semibold mb-1">{err}</div>
+              <a
+                href={enableUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-violet-700 underline font-semibold text-xs"
+                onClick={() => toast.dismiss(t.id)}
+              >
+                Open Google Cloud Console →
+              </a>
+            </div>
+          ) as any,
+          { duration: 10000 }
+        );
+      } else {
+        toast.error(err);
+      }
     } finally { setLoading(false); }
   }
 

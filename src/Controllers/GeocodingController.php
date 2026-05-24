@@ -17,10 +17,10 @@ class GeocodingController
         try {
             $svc = new GoogleMapsService();
             $result = $svc->geocode($address);
-            $svc->logApiUsage('geocode', $request->user['id'], 'geocode');
+            // No explicit logApiUsage — the rateLimit middleware already
+            // wrote the row WITH cost via GooglePricing. Calling it here
+            // too would duplicate the row and inflate the call count 2×.
             $cost = \App\Services\GooglePricing::costFor('geocode');
-            // Attach the per-call cost so the frontend can show a toast.
-            // It's tiny (~$0.005) but informational is the whole point.
             $result['_meta'] = ['api_name' => 'geocode', 'estimated_cost_usd' => $cost];
             Response::success($result);
         } catch (\Throwable $e) {
