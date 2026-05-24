@@ -3,6 +3,7 @@ import { useProjectStore } from '../../stores/projectStore';
 import { useMapStore } from '../../stores/mapStore';
 import { areasApi } from '../../api/areas';
 import AreaList from '../areas/AreaList';
+import QuickStatsStrip from '../areas/QuickStatsStrip';
 import { Plus, Upload, PenSquare, Folder } from 'lucide-react';
 
 interface Props {
@@ -40,7 +41,7 @@ export default function LeftPanel({ onCreateArea, onImport }: Props) {
   }
 
   return (
-    <aside className="absolute top-4 left-4 w-[300px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20">
+    <aside className="absolute top-4 left-4 w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20">
       {/* "Create new area" CTA matches Smappen's prominent purple button */}
       <div className="p-3 pb-2">
         <button
@@ -60,6 +61,9 @@ export default function LeftPanel({ onCreateArea, onImport }: Props) {
           {areas.length} area{areas.length === 1 ? '' : 's'}
         </div>
       </div>
+
+      {/* OP18 — quick-stats strip (hidden below 3 areas). */}
+      <QuickStatsStrip />
 
       <div className="flex-1 overflow-y-auto">
         <AreaList />

@@ -3,7 +3,12 @@
 //
 // Versioning: bump CACHE_VERSION on every deploy so old shells get evicted.
 
-const CACHE_VERSION = 'sm-v3';
+// NF4 — bumped v3 → v4 with broader offline coverage:
+//   • GPS breadcrumb buffer (mirrored from main thread via postMessage)
+//   • Photo upload outbox (alongside field-notes outbox)
+//   • Cached-tile read for map tiles when offline
+//   • Skip-waiting prompt UI so users see updates on next reload
+const CACHE_VERSION = 'sm-v4';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const OUTBOX_DB = 'sm-outbox';
@@ -29,10 +34,35 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
 
   if (request.method !== 'GET') {
-    // Only handle field-notes POSTs offline; pass everything else through.
+    // NF4 — outbox handles field-notes AND uploads when offline.
     if (request.method === 'POST' && /\/api\/projects\/[^/]+\/field-notes$/.test(url.pathname)) {
       event.respondWith(handleFieldNotePost(request.clone()));
+    } else if (request.method === 'POST' && url.pathname === '/api/uploads') {
+      event.respondWith(handleUploadPost(request.clone()));
     }
+    return;
+  }
+
+  // NF4 — Google Maps tile requests are served from a tile-runtime cache
+  // so the last-loaded viewport renders offline. Limited to 200 tiles to
+  // keep the cache bounded; LRU eviction via the request order.
+  if (url.hostname.endsWith('googleapis.com') && url.pathname.startsWith('/maps/')) {
+    event.respondWith(
+      caches.open(`${CACHE_VERSION}-tiles`).then((cache) =>
+        cache.match(request).then((m) => {
+          const network = fetch(request).then((r) => {
+            if (r.ok) {
+              cache.put(request, r.clone());
+              cache.keys().then((keys) => {
+                if (keys.length > 200) cache.delete(keys[0]);
+              });
+            }
+            return r;
+          }).catch(() => m);
+          return m || network;
+        })
+      )
+    );
     return;
   }
 
@@ -87,6 +117,28 @@ self.addEventListener('sync', (e) => {
     e.waitUntil(flushOutbox());
   }
 });
+
+async function handleUploadPost(request) {
+  try {
+    const res = await fetch(request.clone());
+    if (res.ok) return res;
+    throw new Error('upstream ' + res.status);
+  } catch (e) {
+    // Outbox the FormData. Body is multipart so we serialize what's needed:
+    // the raw blob + the path + the headers minus Content-Type (browser will
+    // reset it on replay so the boundary stays valid).
+    const blob = await request.blob();
+    const url = request.url;
+    const headers = {};
+    request.headers.forEach((v, k) => { if (k.toLowerCase() !== 'content-type') headers[k] = v; });
+    await dbAdd({ url, body: blob, headers, queuedAt: Date.now(), kind: 'upload' });
+    try { await self.registration.sync.register('sm-flush-outbox'); } catch (_) {}
+    return new Response(JSON.stringify({
+      success: true,
+      data: { queued: true, queued_at: new Date().toISOString() },
+    }), { status: 202, headers: { 'Content-Type': 'application/json' } });
+  }
+}
 
 async function handleFieldNotePost(request) {
   try {

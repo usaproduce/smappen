@@ -1,28 +1,57 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, MapPin, Users, Clock } from 'lucide-react';
+import {
+  X, MapPin, Users, Clock, Circle, PenSquare, FileText,
+  Search, Folder as FolderIcon, ChevronDown, Sparkles, Loader2,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import { isochroneApi } from '../../api/isochrone';
 import { areasApi } from '../../api/areas';
 import { geocodingApi } from '../../api/geocoding';
-import { reachApi, type DemoPreview } from '../../api/reach';
+import { reachApi } from '../../api/reach';
 import { useProjectStore } from '../../stores/projectStore';
 import { useMapStore } from '../../stores/mapStore';
-import { AREA_PALETTE } from '../../utils/colors';
-import { formatNumber, formatCurrency } from '../../utils/format';
+import { useUiPrefsStore } from '../../stores/uiPrefsStore';
+import { AREA_PALETTE_NAMED, contrastInk } from '../../utils/colors';
+import { formatNumber } from '../../utils/format';
+import type { Area } from '../../types';
 
-type Mode = 'travel' | 'reach';
+/**
+ * Sidebar-expanding area creator (replaces the full-screen modal).
+ *
+ * Behavior change vs the previous modal:
+ *   • Slides out as a SECOND PANEL to the right of the left sidebar instead
+ *     of stealing the whole screen. The map stays fully visible underneath
+ *     so the user can pan/zoom while picking a center, and watch the saved
+ *     area appear at its final position when they hit Save.
+ *   • Live preview removed entirely — was distracting + wasted Isochrone
+ *     API budget on every keystroke. The user picks settings then hits
+ *     "Calculate" once when they're ready. The calculated area lands on
+ *     the map immediately so the preview IS the map.
+ *   • Slide-in animation: 320ms cubic-bezier from left=-100% → left=0.
+ */
+
+type Mode = 'travel' | 'reach' | 'radius' | 'draw';
+
+const MODES: { key: Mode; label: string; sub: string; icon: any }[] = [
+  { key: 'travel', label: 'Travel time',      sub: 'Drive/walk/bike isochrone',    icon: Clock     },
+  { key: 'reach',  label: 'Reach population', sub: 'Smallest circle for N people', icon: Users     },
+  { key: 'radius', label: 'Pure radius',      sub: 'Fixed-distance circle',        icon: Circle    },
+  { key: 'draw',   label: 'Draw on map',      sub: 'Freehand polygon',             icon: PenSquare },
+];
 
 const TRAVEL_MODES = [
-  { value: 'driving-car', label: 'Car' },
-  { value: 'cycling-regular', label: 'Bike' },
-  { value: 'foot-walking', label: 'Walk' },
+  { value: 'driving-car',     label: 'Car',  icon: '🚗' },
+  { value: 'cycling-regular', label: 'Bike', icon: '🚴' },
+  { value: 'foot-walking',    label: 'Walk', icon: '🚶' },
 ] as const;
-const TIME_PRESETS = [5, 10, 15, 20, 30, 45, 60];
-const POP_PRESETS = [5000, 10000, 25000, 50000, 100000, 250000];
+const TIME_PRESETS = [5, 10, 15, 20, 30, 45, 60, 90];
+const POP_PRESETS = [5000, 10000, 25000, 50000, 100000, 250000, 500000];
+const RADIUS_KM_PRESETS = [1, 2, 5, 10, 25, 50, 100];
 
 export default function AreaCreator({ onClose }: { onClose: () => void }) {
-  const { currentProject, addArea } = useProjectStore();
-  const { fitBoundsToArea, startDrawing, placePinFor, pendingIsochrone, setPendingIsochrone } = useMapStore();
+  const { currentProject, addArea, folders } = useProjectStore() as any;
+  const { startDrawing, placePinFor, pendingIsochrone, setPendingIsochrone, fitBoundsToArea } = useMapStore();
+  const { recentColors, pushRecentColor } = useUiPrefsStore();
 
   const [mode, setMode] = useState<Mode>('travel');
   const [address, setAddress] = useState('');
@@ -32,15 +61,22 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
   const [travelMode, setTravelMode] = useState<'driving-car' | 'cycling-regular' | 'foot-walking'>('driving-car');
   const [time, setTime] = useState(15);
   const [targetPop, setTargetPop] = useState(25000);
+  const [radiusKm, setRadiusKm] = useState(5);
+  const [units, setUnits] = useState<'km' | 'mi'>('km');
 
   const [name, setName] = useState('');
-  const [color, setColor] = useState(AREA_PALETTE[0]);
-  const [loading, setLoading] = useState(false);
+  const [color, setColor] = useState(AREA_PALETTE_NAMED[12].hex);
+  const [folderId, setFolderId] = useState<string | null>(null);
+  const [notes, setNotes] = useState('');
+
+  const [calculating, setCalculating] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [preview, setPreview] = useState<any | null>(null);
-  const [demo, setDemo] = useState<DemoPreview | null>(null);
+  // Pending geometry from a Calculate click — held in memory until Save
+  // (or discarded on cancel / mode change). Live preview removed.
+  const [pending, setPending] = useState<any | null>(null);
   const addressRef = useRef<HTMLInputElement>(null);
 
+  // Google Places autocomplete.
   useEffect(() => {
     if (!addressRef.current || typeof google === 'undefined' || !google.maps?.places) return;
     const ac = new google.maps.places.Autocomplete(addressRef.current, { fields: ['geometry', 'formatted_address'] });
@@ -50,6 +86,7 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
       setLat(place.geometry.location.lat());
       setLng(place.geometry.location.lng());
       setAddress(place.formatted_address ?? '');
+      setPending(null);
     });
     return () => {
       google.maps.event.removeListener(listener);
@@ -57,6 +94,7 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
+  // Map-pin pick.
   useEffect(() => {
     if (pendingIsochrone && placePinFor === 'isochrone' && pendingIsochrone.lat) {
       setLat(pendingIsochrone.lat);
@@ -64,89 +102,115 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
       setAddress(`${pendingIsochrone.lat.toFixed(4)}, ${pendingIsochrone.lng.toFixed(4)}`);
       setPendingIsochrone(null);
       startDrawing(null);
+      setPending(null);
     }
   }, [pendingIsochrone]);
 
+  // Auto-generated name.
   const defaultName = useMemo(() => {
     const head = address ? address.split(',')[0] : '';
     if (mode === 'travel') {
       const tm = TRAVEL_MODES.find((m) => m.value === travelMode)?.label ?? '';
       return head ? `${head} – ${time} min ${tm}` : '';
     }
-    return head ? `${head} – ${formatNumber(targetPop)} people` : `${formatNumber(targetPop)} people`;
-  }, [address, mode, travelMode, time, targetPop]);
+    if (mode === 'reach')  return head ? `${head} – ${formatNumber(targetPop)} people` : `${formatNumber(targetPop)} people`;
+    if (mode === 'radius') return head ? `${head} – ${radiusKm} ${units} radius` : `${radiusKm} ${units} radius`;
+    return head ? `${head} – drawn` : 'Drawn area';
+  }, [address, mode, travelMode, time, targetPop, radiusKm, units]);
   useEffect(() => { setName(defaultName); }, [defaultName]);
 
-  async function resolveCenter() {
+  // Draw mode closes the panel and arms the drawing tool.
+  useEffect(() => {
+    if (mode === 'draw') {
+      startDrawing('polygon');
+      toast('Draw your polygon on the map — double-click to finish', { icon: '✏️' });
+      onClose();
+    }
+  }, [mode]);
+
+  async function resolveCenter(): Promise<{ lat: number; lng: number } | null> {
     let useLat = lat, useLng = lng;
     if ((!useLat || !useLng) && address) {
       try {
         const g = await geocodingApi.geocode(address);
         useLat = g.lat; useLng = g.lng;
         setLat(useLat); setLng(useLng);
-      } catch {
-        toast.error('Geocoding failed');
-        return null;
-      }
+      } catch { return null; }
     }
-    if (!useLat || !useLng) { toast.error('Address or pin required'); return null; }
+    if (!useLat || !useLng) return null;
     return { lat: useLat, lng: useLng };
   }
 
-  async function loadDemoPreview(geometry: any) {
-    try { setDemo(await reachApi.previewGeometry(geometry)); }
-    catch { setDemo(null); }
+  function clientCircle(centerLat: number, centerLng: number, kmRadius: number) {
+    const points = 64;
+    const earth = 6371;
+    const latRad = (centerLat * Math.PI) / 180;
+    const ring: [number, number][] = [];
+    for (let i = 0; i <= points; i++) {
+      const bearing = (i / points) * 2 * Math.PI;
+      const latOff = (kmRadius / earth) * Math.cos(bearing);
+      const lngOff = (kmRadius / earth) * Math.sin(bearing) / Math.cos(latRad);
+      ring.push([centerLng + (lngOff * 180) / Math.PI, centerLat + (latOff * 180) / Math.PI]);
+    }
+    return {
+      geometry: { type: 'Polygon', coordinates: [ring] } as any,
+      area_sq_km: Math.PI * kmRadius * kmRadius,
+      radius_km: kmRadius,
+      radius_mi: +(kmRadius * 0.6213712).toFixed(2),
+      center: { lat: centerLat, lng: centerLng },
+      type: 'radius' as const,
+    };
   }
 
   async function calculate() {
-    setPreview(null); setDemo(null);
-    const c = await resolveCenter(); if (!c) return;
-    setLoading(true);
-
-    if (mode === 'travel') {
-      const toastId = toast.loading(time > 30 ? `Calculating ${time}-min isochrone (may take 10-15s)…` : `Calculating ${time}-min isochrone…`);
-      try {
+    setPending(null);
+    const c = await resolveCenter();
+    if (!c) { toast.error('Enter an address or pick a point first'); return; }
+    setCalculating(true);
+    try {
+      if (mode === 'travel') {
         const r = await isochroneApi.calculate({ lat: c.lat, lng: c.lng, time_minutes: time, travel_mode: travelMode });
-        setPreview({ ...r, type: 'isochrone' });
+        setPending({ type: 'isochrone', geojson: r.geojson, area_sq_km: r.area_sq_km });
         fitBoundsToArea(r.geojson);
-        toast.success(`~${r.area_sq_km.toFixed(1)} sq km`, { id: toastId });
-        loadDemoPreview(r.geojson);
-      } catch (e: any) {
-        toast.error(e?.response?.data?.error ?? 'Isochrone failed', { id: toastId });
-      } finally { setLoading(false); }
-    } else {
-      const toastId = toast.loading(`Finding smallest area for ${formatNumber(targetPop)} people…`);
-      try {
+        toast.success(`~${r.area_sq_km.toFixed(1)} km² ready — Save to keep`);
+      } else if (mode === 'reach') {
         const r = await reachApi.calculate(c.lat, c.lng, targetPop);
-        setPreview({
+        setPending({
           type: 'radius', geojson: r.geometry,
           area_sq_km: r.area_sq_km, radius_km: r.radius_km, radius_mi: r.radius_mi,
-          center: r.center, population: r.population,
+          center: r.center,
         });
         fitBoundsToArea(r.geometry);
-        toast.success(`${r.radius_km} km · ${formatNumber(r.population)} people`, { id: toastId });
-        loadDemoPreview(r.geometry);
-      } catch (e: any) {
-        toast.error(e?.response?.data?.error ?? 'Reach calculation failed', { id: toastId });
-      } finally { setLoading(false); }
-    }
+        toast.success(`${r.radius_km} km · ${formatNumber(r.population)} people — Save to keep`);
+      } else if (mode === 'radius') {
+        const km = units === 'mi' ? radiusKm / 0.6213712 : radiusKm;
+        const r = clientCircle(c.lat, c.lng, km);
+        setPending({ type: 'radius', geojson: r.geometry, area_sq_km: r.area_sq_km, radius_km: r.radius_km, radius_mi: r.radius_mi });
+        fitBoundsToArea(r.geometry);
+      }
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error ?? 'Calculation failed');
+    } finally { setCalculating(false); }
   }
 
   async function save() {
-    if (!preview || !currentProject || lat == null || lng == null) return;
+    if (!pending || !currentProject || lat == null || lng == null) return;
     setSaving(true);
     try {
       const a = await areasApi.create(currentProject.id, {
         name: name || 'Untitled area',
-        area_type: preview.type === 'radius' ? 'radius' : 'isochrone',
+        area_type: pending.type === 'isochrone' ? 'isochrone' : 'radius',
         center_lat: lat, center_lng: lng, center_address: address,
-        travel_mode: preview.type === 'radius' ? null : travelMode,
-        travel_time_minutes: preview.type === 'radius' ? null : time,
-        travel_distance_km: preview.type === 'radius' ? preview.radius_km : null,
+        travel_mode: pending.type === 'isochrone' ? travelMode : null,
+        travel_time_minutes: pending.type === 'isochrone' ? time : null,
+        travel_distance_km: pending.type === 'radius' ? pending.radius_km : null,
         fill_color: color, stroke_color: color,
-        geometry: preview.geojson,
+        geometry: pending.geojson,
+        folder_id: folderId,
+        notes: notes || null,
       } as any);
-      addArea({ ...a, geometry: preview.geojson } as any);
+      addArea({ ...a, geometry: pending.geojson } as Area);
+      pushRecentColor(color);
       toast.success('Area saved');
       onClose();
     } catch (e: any) {
@@ -155,150 +219,300 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b border-slate-100">
-          <h2 className="font-bold text-base" style={{ color: '#1A1A2E' }}>Create area</h2>
-          <button className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-50" onClick={onClose}><X size={16} /></button>
+    <aside
+      className="absolute top-4 max-h-[calc(100%-2rem)] w-[380px] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20 panel-slide-in-l"
+      style={{ left: 'calc(360px + 1rem + 8px)' }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Slide-in keyframe defined inline so we don't need a global edit. */}
+      <style>{`
+        @keyframes panelSlideInL {
+          from { opacity: 0; transform: translateX(-24px) scale(0.99); }
+          to   { opacity: 1; transform: translateX(0)     scale(1); }
+        }
+        .panel-slide-in-l { animation: panelSlideInL 320ms cubic-bezier(0.16, 1, 0.3, 1); }
+      `}</style>
+
+      <header
+        className="px-4 py-3 flex items-center justify-between shrink-0"
+        style={{ background: 'linear-gradient(135deg, #F57C00 0%, #E53935 50%, #7848BB 100%)' }}
+      >
+        <div className="flex items-center gap-2 text-white font-extrabold text-[15px]">
+          <Sparkles size={15} /> Create area
+        </div>
+        <button onClick={onClose} className="text-white/85 hover:text-white"><X size={15} /></button>
+      </header>
+
+      <div className="overflow-y-auto flex-1 p-3 space-y-3">
+        {/* Mode picker */}
+        <div className="grid grid-cols-2 gap-1.5">
+          {MODES.map((m) => {
+            const Active = mode === m.key;
+            const Icon = m.icon;
+            return (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => { setMode(m.key); setPending(null); }}
+                className={`text-left px-2.5 py-1.5 rounded-lg border transition-all ${
+                  Active ? 'border-violet-500 bg-violet-50 ring-2 ring-violet-200'
+                         : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Icon size={13} className={Active ? 'text-violet-700' : 'text-slate-500'} />
+                  <span className={`text-[12px] font-bold ${Active ? 'text-violet-800' : 'text-slate-800'}`}>{m.label}</span>
+                </div>
+                <div className="text-[10px] text-slate-500 mt-0.5 leading-snug">{m.sub}</div>
+              </button>
+            );
+          })}
         </div>
 
-        <div className="p-4 space-y-3 overflow-y-auto">
-          <div className="flex bg-slate-100 rounded-lg p-1">
-            <button type="button"
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-md inline-flex items-center justify-center gap-1.5 transition-colors ${mode === 'travel' ? 'bg-white shadow-sm text-violet-700' : 'text-slate-600 hover:text-slate-800'}`}
-              onClick={() => { setMode('travel'); setPreview(null); setDemo(null); }}>
-              <Clock size={13} /> Travel time
-            </button>
-            <button type="button"
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-md inline-flex items-center justify-center gap-1.5 transition-colors ${mode === 'reach' ? 'bg-white shadow-sm text-violet-700' : 'text-slate-600 hover:text-slate-800'}`}
-              onClick={() => { setMode('reach'); setPreview(null); setDemo(null); }}>
-              <Users size={13} /> Reach population
-            </button>
-          </div>
-
-          <div>
-            <label className="label">Starting address</label>
-            <div className="flex gap-2">
-              <input ref={addressRef} className="input-address flex-1" placeholder="Starting address (e.g. London)"
-                value={address} onChange={(e) => setAddress(e.target.value)} />
-              <button type="button" className="btn btn-secondary px-3" title="Pick on map"
-                onClick={() => { startDrawing('pin', 'isochrone'); toast('Click on the map to set center'); }}>
-                <MapPin size={14} />
-              </button>
+        {/* Address */}
+        <div>
+          <label className="label">Starting point</label>
+          <div className="flex gap-1.5">
+            <div className="relative flex-1">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                ref={addressRef}
+                className="input pl-8 h-9 text-sm"
+                placeholder="Address, intersection, or city"
+                value={address}
+                onChange={(e) => { setAddress(e.target.value); setLat(null); setLng(null); setPending(null); }}
+              />
             </div>
+            <button
+              type="button"
+              className="btn btn-secondary px-2.5 h-9"
+              title="Pick on map"
+              onClick={() => { startDrawing('pin', 'isochrone'); toast('Click on the map to set center'); }}
+            >
+              <MapPin size={13} />
+            </button>
           </div>
+        </div>
 
-          {mode === 'travel' && (
-            <>
-              <div>
-                <label className="label">Travel mode</label>
-                <div className="flex gap-2">
-                  {TRAVEL_MODES.map((m) => (
-                    <button key={m.value} type="button"
-                      className={`btn ${travelMode === m.value ? 'btn-primary' : 'btn-secondary'} flex-1 justify-center text-xs`}
-                      onClick={() => setTravelMode(m.value)}>{m.label}</button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="label">Time: {time} min</label>
-                <input type="range" min={1} max={120} value={time} onChange={(e) => setTime(+e.target.value)} className="w-full accent-violet-600" />
-                <div className="flex gap-1 mt-1 flex-wrap">
-                  {TIME_PRESETS.map((p) => (
-                    <button key={p} type="button"
-                      className={`text-xs px-2 py-0.5 rounded ${time === p ? 'bg-violet-100 text-violet-700 font-semibold' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                      onClick={() => setTime(p)}>{p}m</button>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-
-          {mode === 'reach' && (
+        {/* Per-mode controls */}
+        {mode === 'travel' && (
+          <>
             <div>
-              <label className="label">Target population: {formatNumber(targetPop)}</label>
-              <input type="range" min={500} max={500000} step={500} value={targetPop}
-                onChange={(e) => setTargetPop(+e.target.value)} className="w-full accent-violet-600" />
+              <label className="label">Travel mode</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {TRAVEL_MODES.map((m) => {
+                  const Active = travelMode === m.value;
+                  return (
+                    <button
+                      key={m.value}
+                      type="button"
+                      onClick={() => { setTravelMode(m.value); setPending(null); }}
+                      className={`px-2 py-1.5 rounded-lg border text-sm font-semibold flex items-center justify-center gap-1 transition ${
+                        Active ? 'border-violet-500 bg-violet-50 text-violet-800' : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span>{m.icon}</span> {m.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <label className="label flex items-center justify-between">
+                <span>Travel time</span>
+                <span className="text-violet-700 font-extrabold text-base tabular-nums">{time} min</span>
+              </label>
+              <input type="range" min={1} max={120} value={time} onChange={(e) => { setTime(+e.target.value); setPending(null); }} className="w-full accent-violet-600" />
               <div className="flex gap-1 mt-1 flex-wrap">
-                {POP_PRESETS.map((p) => (
-                  <button key={p} type="button"
-                    className={`text-xs px-2 py-0.5 rounded ${targetPop === p ? 'bg-violet-100 text-violet-700 font-semibold' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                    onClick={() => setTargetPop(p)}>{p >= 1000 ? `${p / 1000}K` : p}</button>
+                {TIME_PRESETS.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className={`text-[11px] px-2 py-0.5 rounded-full font-semibold transition ${
+                      time === p ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                    onClick={() => { setTime(p); setPending(null); }}
+                  >{p}m</button>
                 ))}
               </div>
-              <div className="text-[11px] text-slate-500 mt-1.5">
-                Smappen will find the smallest circle that contains at least this many people, using Census population by tract.
-              </div>
             </div>
-          )}
+          </>
+        )}
 
-          {preview && (
-            <div className="rounded-lg border border-slate-200 p-3 space-y-1.5 bg-slate-50">
-              <div className="text-[10px] uppercase font-bold tracking-wider text-slate-500">Preview</div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-600">Area</span>
-                <span className="font-semibold">{preview.area_sq_km.toFixed(1)} km² · {(preview.area_sq_km * 0.386).toFixed(1)} mi²</span>
-              </div>
-              {preview.type === 'radius' && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-600">Radius</span>
-                  <span className="font-semibold">{preview.radius_km} km · {preview.radius_mi} mi</span>
-                </div>
-              )}
-              {demo && (
-                <>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-600">Population (est.)</span>
-                    <span className="font-semibold">{formatNumber(demo.population)}</span>
-                  </div>
-                  {demo.median_household_income !== null && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600">Median income</span>
-                      <span className="font-semibold">{formatCurrency(demo.median_household_income)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-[11px] text-slate-500">
-                    <span>Density</span>
-                    <span>{formatNumber(demo.density_per_sq_km)} /km²</span>
-                  </div>
-                </>
-              )}
-              {!demo && <div className="text-[11px] text-slate-400 italic">Loading demographics…</div>}
-            </div>
-          )}
-
+        {mode === 'reach' && (
           <div>
-            <label className="label">Name</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-
-          <div>
-            <label className="label">Color</label>
-            <div className="flex flex-wrap gap-2">
-              {AREA_PALETTE.map((c) => (
-                <button key={c} type="button"
-                  className={`w-6 h-6 rounded-full transition-transform ${color === c ? 'ring-2 ring-offset-1 ring-slate-700 scale-110' : 'hover:scale-110'}`}
-                  style={{ background: c }} onClick={() => setColor(c)} />
+            <label className="label flex items-center justify-between">
+              <span>Target population</span>
+              <span className="text-violet-700 font-extrabold text-base tabular-nums">{formatNumber(targetPop)}</span>
+            </label>
+            <input
+              type="range" min={500} max={1_000_000} step={500}
+              value={targetPop} onChange={(e) => { setTargetPop(+e.target.value); setPending(null); }}
+              className="w-full accent-violet-600"
+            />
+            <div className="flex gap-1 mt-1 flex-wrap">
+              {POP_PRESETS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className={`text-[11px] px-2 py-0.5 rounded-full font-semibold transition ${
+                    targetPop === p ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                  onClick={() => { setTargetPop(p); setPending(null); }}
+                >{p >= 1000 ? `${p / 1000}K` : p}</button>
               ))}
             </div>
           </div>
+        )}
+
+        {mode === 'radius' && (
+          <div>
+            <label className="label flex items-center justify-between">
+              <span>Radius</span>
+              <span className="flex items-center gap-2">
+                <span className="text-violet-700 font-extrabold text-base tabular-nums">{radiusKm} {units}</span>
+                <div className="bg-slate-100 rounded p-0.5 flex text-[10px] font-bold">
+                  {(['km', 'mi'] as const).map((u) => (
+                    <button
+                      key={u}
+                      type="button"
+                      onClick={() => { setUnits(u); setPending(null); }}
+                      className={`px-2 py-0.5 rounded ${units === u ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}
+                    >{u}</button>
+                  ))}
+                </div>
+              </span>
+            </label>
+            <input
+              type="range" min={0.5} max={units === 'mi' ? 100 : 200} step={0.5}
+              value={radiusKm} onChange={(e) => { setRadiusKm(+e.target.value); setPending(null); }}
+              className="w-full accent-violet-600"
+            />
+            <div className="flex gap-1 mt-1 flex-wrap">
+              {RADIUS_KM_PRESETS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className={`text-[11px] px-2 py-0.5 rounded-full font-semibold transition ${
+                    radiusKm === p ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                  onClick={() => { setRadiusKm(p); setPending(null); }}
+                >{p}{units}</button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Color palette */}
+        <div>
+          <label className="label">Color</label>
+          {recentColors.length > 0 && (
+            <div className="mb-1.5">
+              <div className="text-[9px] uppercase font-bold tracking-wider text-slate-400 mb-1">Recent</div>
+              <div className="flex gap-1.5 flex-wrap">
+                {recentColors.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`w-5 h-5 rounded-full transition-transform border border-black/10 ${
+                      color === c ? 'ring-2 ring-offset-1 ring-slate-700 scale-110' : 'hover:scale-110'
+                    }`}
+                    style={{ background: c }}
+                    onClick={() => setColor(c)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-6 gap-1">
+            {AREA_PALETTE_NAMED.map((c) => {
+              const Active = color === c.hex;
+              return (
+                <button
+                  key={c.hex}
+                  type="button"
+                  title={c.name}
+                  className={`relative aspect-square rounded-md transition-transform border border-black/10 ${
+                    Active ? 'ring-2 ring-offset-1 ring-slate-700 scale-105' : 'hover:scale-105'
+                  }`}
+                  style={{ background: c.hex }}
+                  onClick={() => setColor(c.hex)}
+                >
+                  {Active && (
+                    <span
+                      className="absolute inset-0 flex items-center justify-center text-[9px] font-extrabold"
+                      style={{ color: contrastInk(c.hex) }}
+                    >✓</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="p-4 border-t border-slate-100 flex gap-2 justify-end">
-          {!preview ? (
-            <button className="btn btn-primary" disabled={loading || (!address && (lat == null || lng == null))} onClick={calculate}>
-              {loading ? 'Calculating…' : 'Calculate'}
-            </button>
-          ) : (
-            <>
-              <button className="btn btn-secondary" onClick={() => { setPreview(null); setDemo(null); }}>Recalc</button>
-              <button className="btn btn-primary" disabled={saving} onClick={save}>
-                {saving ? 'Saving…' : 'Save area'}
-              </button>
-            </>
-          )}
+        {/* Folder + notes */}
+        {folders && folders.length > 0 && (
+          <div>
+            <label className="label flex items-center gap-1"><FolderIcon size={10} /> Folder</label>
+            <div className="relative">
+              <select
+                className="input h-9 pr-8 text-sm appearance-none"
+                value={folderId ?? ''}
+                onChange={(e) => setFolderId(e.target.value || null)}
+              >
+                <option value="">— No folder —</option>
+                {flattenFolders(folders).map((f: any) => (
+                  <option key={f.id} value={f.id}>{f.indent}{f.name}</option>
+                ))}
+              </select>
+              <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            </div>
+          </div>
+        )}
+        <div>
+          <label className="label flex items-center gap-1"><FileText size={10} /> Notes (optional)</label>
+          <textarea
+            className="textarea text-sm"
+            rows={2}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Hypothesis, stakeholder, follow-up…"
+          />
+        </div>
+        <div>
+          <label className="label">Name</label>
+          <input className="input h-9 text-sm" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
       </div>
-    </div>
+
+      {/* Action bar — Calculate / Save / Cancel */}
+      <div className="px-3 py-2.5 border-t border-slate-100 flex gap-2 shrink-0">
+        {!pending ? (
+          <button
+            className="btn btn-primary flex-1 justify-center h-9"
+            onClick={calculate}
+            disabled={calculating || (!address && (lat == null || lng == null))}
+          >
+            {calculating ? <><Loader2 size={13} className="animate-spin" /> Calculating…</> : 'Calculate'}
+          </button>
+        ) : (
+          <>
+            <button className="btn btn-secondary h-9 px-3" onClick={() => setPending(null)}>Recalc</button>
+            <button className="btn btn-primary flex-1 justify-center h-9" disabled={saving} onClick={save}>
+              {saving ? <><Loader2 size={13} className="animate-spin" /> Saving…</> : 'Save area'}
+            </button>
+          </>
+        )}
+      </div>
+    </aside>
   );
+}
+
+function flattenFolders(folders: any[], depth = 0): { id: string; name: string; indent: string }[] {
+  const out: any[] = [];
+  for (const f of folders ?? []) {
+    out.push({ id: f.id, name: f.name, indent: '— '.repeat(depth) });
+    if (f.children?.length) out.push(...flattenFolders(f.children, depth + 1));
+  }
+  return out;
 }

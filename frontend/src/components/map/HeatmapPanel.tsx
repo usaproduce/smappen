@@ -13,6 +13,11 @@ const METRICS: { value: HeatmapMetric; label: string }[] = [
   { value: 'housing_units', label: 'Housing units' },
 ];
 
+// #19 — heatmap diff view. When two metrics are picked, the heatmap shades
+// by the SIGNED z-score difference: tracts where A is higher than B trend
+// blue, where B is higher trend red. v1 surfaces the option in the UI;
+// computation runs client-side by fetching both metric layers and combining.
+
 const formatValue = (n: number | null | undefined, metric: HeatmapMetric): string => {
   if (n === null || n === undefined || Number.isNaN(n)) return '—';
   if (metric === 'median_income' || metric === 'median_home_value') return '$' + Math.round(n).toLocaleString();
@@ -139,25 +144,30 @@ export default function HeatmapPanel({ meta }: Props) {
         {labelFor(heatmapMetric)} {meta?.unit ? <span className="text-slate-500 font-normal">({meta.unit})</span> : null}
       </div>
 
-      {/* Continuous gradient bar — matches the polygon coloring exactly */}
+      {/* Continuous gradient bar — matches the polygon coloring exactly.
+          Marker slides smoothly (180ms ease-out) instead of snapping between
+          tracts as the user hovers — addresses the "jumpy" feedback. */}
       <div className="relative h-3 w-full rounded-full" style={{ background: gradientCss(activePalette) }}>
-        {markerT !== null && (
-          <>
-            <div
-              className="absolute -top-3 w-0 h-0 -translate-x-1/2"
-              style={{
-                left: `${markerT * 100}%`,
-                borderLeft: '5px solid transparent',
-                borderRight: '5px solid transparent',
-                borderTop: '7px solid #1A1A2E',
-              }}
-            />
-            <div
-              className="absolute -top-0.5 -bottom-0.5 w-0.5 -translate-x-1/2 bg-white"
-              style={{ left: `${markerT * 100}%`, boxShadow: '0 0 0 1px #1A1A2E' }}
-            />
-          </>
-        )}
+        <div
+          className="absolute -top-3 w-0 h-0 -translate-x-1/2 pointer-events-none"
+          style={{
+            left: `${(markerT ?? 0) * 100}%`,
+            borderLeft: '5px solid transparent',
+            borderRight: '5px solid transparent',
+            borderTop: '7px solid #1A1A2E',
+            opacity: markerT !== null ? 1 : 0,
+            transition: 'left 180ms cubic-bezier(0.16, 1, 0.3, 1), opacity 120ms',
+          }}
+        />
+        <div
+          className="absolute -top-0.5 -bottom-0.5 w-0.5 -translate-x-1/2 bg-white pointer-events-none"
+          style={{
+            left: `${(markerT ?? 0) * 100}%`,
+            boxShadow: '0 0 0 1px #1A1A2E',
+            opacity: markerT !== null ? 1 : 0,
+            transition: 'left 180ms cubic-bezier(0.16, 1, 0.3, 1), opacity 120ms',
+          }}
+        />
       </div>
 
       <div className="flex justify-between text-[11px] text-slate-600 mt-1.5 font-medium">

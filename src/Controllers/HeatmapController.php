@@ -92,8 +92,14 @@ class HeatmapController
             exit;
         }
 
+        // MySQL 8 strict SRID-4326 axis order is (lat, lng). The bbox comes
+        // in as [minLng, minLat, maxLng, maxLat]; emit WKT in (lat lng) order
+        // to match how census_tracts/counties/states were inserted (see
+        // seed-census.php for the same pre-swap convention). Without this,
+        // any viewport west of ~longitude 90 throws "Latitude out of range".
+        // $qbbox = [minLng=0, minLat=1, maxLng=2, maxLat=3]
         $wkt = sprintf(
-            'POLYGON((%1$.7f %2$.7f, %3$.7f %2$.7f, %3$.7f %4$.7f, %1$.7f %4$.7f, %1$.7f %2$.7f))',
+            'POLYGON((%2$.7f %1$.7f, %2$.7f %3$.7f, %4$.7f %3$.7f, %4$.7f %1$.7f, %2$.7f %1$.7f))',
             $qbbox[0], $qbbox[1], $qbbox[2], $qbbox[3]
         );
 
@@ -126,9 +132,13 @@ class HeatmapController
             $val = $r['metric_value'] === null ? null : (float)$r['metric_value'];
             if ($val !== null) $values[] = $val;
             $geom = $r['geom'] ? json_decode($r['geom'], true) : null;
-            if ($geom && isset($geom['coordinates'])) {
-                $geom['coordinates'] = self::swapCoords($geom['coordinates']);
-            }
+            // Census tract/county/state geometries are stored with X=lat,
+            // Y=lng after the DMV normalize. MySQL's ST_AsGeoJSON for SRID
+            // 4326 emits [Y, X] which under that storage is [lng, lat] —
+            // i.e., STANDARD GeoJSON already. The old swapCoords call was
+            // needed when DMV was stored in the legacy convention; now it
+            // corrupts every polygon by flipping correct [lng, lat] to a
+            // bogus [lat, lng] (which paints features in the wrong hemisphere).
             $features[] = [
                 'type' => 'Feature',
                 'id' => $r['id'],
@@ -181,7 +191,7 @@ class HeatmapController
                   LEFT JOIN census_demographics d ON d.geoid = ct.geoid
                   WHERE ST_Intersects(ct.geometry, ST_GeomFromText(?, 4326))
                     AND ($expr) IS NOT NULL
-                  ORDER BY metric_value DESC
+                  ORDER BY metric_value DESC, id ASC
                   LIMIT $limit
                 ) q
                 JOIN census_tracts ct ON ct.geoid = q.id";
@@ -200,7 +210,7 @@ class HeatmapController
                   FROM census_counties g
                   WHERE ST_Intersects(g.geometry, ST_GeomFromText(?, 4326))
                     AND ($expr) IS NOT NULL
-                  ORDER BY metric_value DESC
+                  ORDER BY metric_value DESC, id ASC
                   LIMIT $limit
                 ) q
                 JOIN census_counties g ON g.geoid = q.id";
@@ -219,7 +229,7 @@ class HeatmapController
                   FROM census_states g
                   WHERE ST_Intersects(g.geometry, ST_GeomFromText(?, 4326))
                     AND ($expr) IS NOT NULL
-                  ORDER BY metric_value DESC
+                  ORDER BY metric_value DESC, id ASC
                   LIMIT $limit
                 ) q
                 JOIN census_states g ON g.state_fips = q.id";

@@ -147,46 +147,124 @@ class AiScoringController
 
     private static function scoreLocal(array $area, array $facts): array
     {
-        // Deterministic fallback — components weighted to roughly mirror Claude's reasoning.
-        $score = 50;
-        $reasons = [];
-        $pop = $facts['population'];
-        if ($pop >= 100000) { $score += 15; $reasons[] = 'High reach (>=100k people)'; }
-        elseif ($pop >= 30000) { $score += 7; $reasons[] = 'Solid reach (' . number_format($pop) . ')'; }
-        elseif ($pop < 5000) { $score -= 15; $reasons[] = 'Low reach (<5k people)'; }
-
-        $inc = (int)($facts['median_income'] ?? 0);
-        if ($inc >= 100000) { $score += 12; $reasons[] = 'High median income ($' . number_format($inc) . ')'; }
-        elseif ($inc >= 70000) { $score += 6; $reasons[] = 'Upper-middle income ($' . number_format($inc) . ')'; }
-        elseif ($inc > 0 && $inc < 40000) { $score -= 10; $reasons[] = 'Low median income ($' . number_format($inc) . ')'; }
-
-        $comp = $facts['competitor_count'];
-        if ($comp >= 15) { $score -= 18; $reasons[] = 'Saturated market (' . $comp . ' competitors)'; }
-        elseif ($comp >= 5) { $score -= 8; $reasons[] = 'Moderate competition (' . $comp . ')'; }
-        elseif ($comp <= 1) { $score += 5; $reasons[] = 'Low competition'; }
-
-        $score = max(1, min(100, $score));
+        // v2 — multi-dimensional sub-scores so the UI can render a radar
+        // chart instead of one big number. Each dimension is 1-100 with the
+        // overall = weighted average. Weights match Claude's typical
+        // reasoning so the local fallback isn't visually different.
+        $dims = self::computeDimensions($facts);
+        $reasons = self::reasonsFromDims($dims, $facts);
+        $score = self::weightedOverall($dims);
         return [
             'area_id' => $area['id'],
             'score' => $score,
+            'dimensions' => $dims,
             'verdict' => self::verdictFor($score),
+            'narrative' => self::narrativeFromDims($area, $dims, $facts),
             'reasons' => $reasons,
             'facts' => $facts,
-            'source' => 'local_heuristic',
+            'source' => 'local_heuristic_v2',
             'generated_at' => date('c'),
         ];
     }
 
+    /** Compute the 4 dimensions all on the same 1-100 scale. */
+    private static function computeDimensions(array $facts): array
+    {
+        $pop = (int) $facts['population'];
+        $inc = (int)($facts['median_income'] ?? 0);
+        $comp = (int) $facts['competitor_count'];
+
+        // Reach: log-scaled — 5k = 30, 30k = 60, 100k = 80, 300k+ = 100.
+        $reach = $pop > 0 ? max(1, min(100, (int) round(20 + 20 * log10(max(1, $pop / 1000))))) : 1;
+
+        // Affluence: linear from $30k=20 to $150k=95.
+        if ($inc <= 0) $affluence = 50;
+        else $affluence = max(1, min(100, (int) round(20 + (($inc - 30000) / 1500))));
+
+        // Competition: inverse — 0 competitors = 100, 5 = 70, 15 = 35, 25+ = 1.
+        $competition = max(1, min(100, 100 - ($comp * 4)));
+
+        // Segment fit: rough — we treat the largest segment's share of pop
+        // as a "tight match" signal. Multi-segment areas score lower because
+        // they're harder to position for a single brand.
+        $segPop = 0; foreach ($facts['segments'] ?? [] as $s) $segPop += (int) $s['population'];
+        $topSeg = isset($facts['segments'][0]) ? (int) $facts['segments'][0]['population'] : 0;
+        $share = $segPop > 0 ? $topSeg / $segPop : 0;
+        $fit = max(1, min(100, (int) round(40 + 60 * $share)));
+
+        return [
+            'reach' => $reach,
+            'affluence' => $affluence,
+            'competition' => $competition,
+            'segment_fit' => $fit,
+        ];
+    }
+
+    private static function weightedOverall(array $dims): int
+    {
+        // Weights — reach matters most, then affluence + competition, segment fit tiebreak.
+        $w = ['reach' => 0.35, 'affluence' => 0.25, 'competition' => 0.25, 'segment_fit' => 0.15];
+        $sum = 0; foreach ($w as $k => $wt) $sum += ($dims[$k] ?? 50) * $wt;
+        return max(1, min(100, (int) round($sum)));
+    }
+
+    private static function reasonsFromDims(array $dims, array $facts): array
+    {
+        $out = [];
+        if ($dims['reach'] >= 75)        $out[] = 'High reach — ' . number_format($facts['population']) . ' people in market';
+        elseif ($dims['reach'] <= 35)    $out[] = 'Low reach — under-served population';
+        if ($dims['affluence'] >= 70)    $out[] = 'Affluent — median income $' . number_format((int) $facts['median_income']);
+        elseif ($dims['affluence'] <= 35) $out[] = 'Price-sensitive — lower median income';
+        if ($dims['competition'] >= 80)   $out[] = 'Whitespace — minimal competition';
+        elseif ($dims['competition'] <= 35) $out[] = 'Saturated — ' . $facts['competitor_count'] . ' competitors in-area';
+        if ($dims['segment_fit'] >= 70)   $out[] = 'Coherent segment mix — easier to target';
+        return $out;
+    }
+
+    private static function narrativeFromDims(array $area, array $dims, array $facts): string
+    {
+        $name = $area['name'] ?? 'this area';
+        $strong = array_keys(array_filter($dims, fn($v) => $v >= 70));
+        $weak   = array_keys(array_filter($dims, fn($v) => $v <= 35));
+        $parts = [];
+        if ($strong) $parts[] = $name . " is strong on " . implode(' and ', array_map([self::class, 'dimLabel'], $strong)) . '.';
+        if ($weak)   $parts[] = "Watch out for " . implode(' and ', array_map([self::class, 'dimLabel'], $weak)) . '.';
+        if (!$parts)  $parts[] = $name . ' is a balanced market — no single dimension stands out.';
+        return implode(' ', $parts);
+    }
+
+    private static function dimLabel(string $key): string
+    {
+        return match ($key) {
+            'reach' => 'market reach',
+            'affluence' => 'income',
+            'competition' => 'open competitive space',
+            'segment_fit' => 'segment consistency',
+            default => $key,
+        };
+    }
+
     private static function scoreWithClaude(array $area, array $facts): array
     {
-        $prompt = "You are a retail site selection analyst. Score this trade area from 1-100 "
-                . "(higher = better site) and give a 2-sentence verdict in plain English.\n\n"
+        $prompt = "You are a retail site-selection analyst. Score this trade area on FOUR "
+                . "dimensions, each 1-100 (higher = better), then derive an overall score "
+                . "and write a 2-3 sentence narrative in plain English.\n\n"
+                . "DIMENSIONS:\n"
+                . "  reach        — population size relative to market potential\n"
+                . "  affluence    — purchasing power based on income\n"
+                . "  competition  — open competitive space (high = LESS competition)\n"
+                . "  segment_fit  — how coherent the segment mix is for a single brand\n\n"
                 . "AREA: " . ($area['name'] ?? 'unnamed') . "\n"
                 . "FACTS: " . json_encode($facts) . "\n\n"
-                . "Respond as JSON with keys: score (1-100), verdict (string), reasons (array of <=5 short strings).";
+                . "Respond as JSON with keys:\n"
+                . "  score (1-100)\n"
+                . "  dimensions: { reach, affluence, competition, segment_fit } each 1-100\n"
+                . "  narrative (2-3 sentence plain-English summary; address the operator)\n"
+                . "  verdict (one short sentence headline)\n"
+                . "  reasons (array of <=5 short bullet points)";
         $body = [
             'model' => 'claude-haiku-4-5-20251001',
-            'max_tokens' => 400,
+            'max_tokens' => 700,
             'messages' => [['role' => 'user', 'content' => $prompt]],
         ];
         $ch = curl_init('https://api.anthropic.com/v1/messages');
@@ -215,10 +293,21 @@ class AiScoringController
             return self::scoreLocal($area, $facts);
         }
         $score = max(1, min(100, (int)$parsed['score']));
+        $dims = (array)($parsed['dimensions'] ?? []);
+        // Backfill any missing dimension from the local heuristic — Claude
+        // occasionally drops one, and we don't want the UI to render a partial
+        // radar chart.
+        $localDims = self::computeDimensions($facts);
+        foreach ($localDims as $k => $v) {
+            if (!isset($dims[$k]) || !is_numeric($dims[$k])) $dims[$k] = $v;
+            else $dims[$k] = max(1, min(100, (int) $dims[$k]));
+        }
         return [
             'area_id' => $area['id'],
             'score' => $score,
+            'dimensions' => $dims,
             'verdict' => $parsed['verdict'] ?? self::verdictFor($score),
+            'narrative' => $parsed['narrative'] ?? self::narrativeFromDims($area, $dims, $facts),
             'reasons' => array_slice((array)($parsed['reasons'] ?? []), 0, 5),
             'facts' => $facts,
             'source' => 'claude_haiku',

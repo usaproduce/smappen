@@ -221,7 +221,19 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
   font-family: 'Nunito', sans-serif;
 }
 
-/* ── Dark mode (#37) ────────────────────────────────────────────────────── */
+/* Hide overflow-x scrollbars on chip rows. The scrollbar track was visible
+   under the All/Favorites/Travel/Radius/Drawn chips in the left panel and
+   the chip row read as vertically clipped. Chips wrap to the next line if
+   they truly don't fit; on the 360px sidebar they always fit. */
+.scroll-x { scrollbar-width: none; }
+.scroll-x::-webkit-scrollbar { display: none; height: 0; width: 0; }
+
+/* ── Dark mode — comprehensive override layer ──────────────────────────── */
+/* Strategy: lots of components were authored with hardcoded Tailwind classes
+   (bg-white, text-slate-700, border-slate-200, etc.) before dark mode was
+   a priority. Rewriting 80+ components is impractical, so this layer
+   intercepts those exact classes when [data-theme="dark"] is set on <html>.
+   Future code can also use Tailwind's `dark:` modifier — both paths coexist. */
 :root[data-theme="dark"] {
   --ink: #f3f4f6;
   --ink-2: #e5e7eb;
@@ -239,23 +251,118 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
   background: var(--bg);
   color: var(--body);
 }
-:root[data-theme="dark"] .card,
-:root[data-theme="dark"] .area-row,
+/* App-shell + most cards painted bg-white inline. Re-route to the dark panel
+   color and shift any black/near-black text up the lightness scale. */
+:root[data-theme="dark"] .bg-white,
+:root[data-theme="dark"] .bg-white\/95,
+:root[data-theme="dark"] .bg-white\/90,
+:root[data-theme="dark"] .bg-white\/80,
+:root[data-theme="dark"] [class*="bg-white"]:not([class*="hover\\:bg-"]):not([class*="dark\\:bg-"]) {
+  background-color: #1f2937 !important;
+  color: #e5e7eb;
+}
+:root[data-theme="dark"] .bg-slate-50,
+:root[data-theme="dark"] .bg-slate-100 { background-color: #1e293b !important; }
+:root[data-theme="dark"] .bg-violet-50,
+:root[data-theme="dark"] .bg-violet-50\/60,
+:root[data-theme="dark"] .bg-violet-50\/50 { background-color: #2d2147 !important; }
+:root[data-theme="dark"] .bg-violet-100 { background-color: #3a2a5e !important; }
+:root[data-theme="dark"] .bg-emerald-50 { background-color: #052e1f !important; }
+:root[data-theme="dark"] .bg-rose-50, :root[data-theme="dark"] .bg-red-50 { background-color: #3a1212 !important; }
+:root[data-theme="dark"] .bg-amber-50, :root[data-theme="dark"] .bg-yellow-50 { background-color: #3a2a07 !important; }
+:root[data-theme="dark"] .bg-blue-50 { background-color: #0d2547 !important; }
+
+/* Borders */
+:root[data-theme="dark"] .border-slate-100,
+:root[data-theme="dark"] .border-slate-200 { border-color: #2a3a55 !important; }
+:root[data-theme="dark"] .border-slate-300 { border-color: #334155 !important; }
+:root[data-theme="dark"] .border-violet-100,
+:root[data-theme="dark"] .border-violet-200 { border-color: #4a2f7a !important; }
+:root[data-theme="dark"] .border-emerald-200 { border-color: #1e5a3f !important; }
+
+/* Text — anything that's hardcoded dark on light needs to flip lighter. */
+:root[data-theme="dark"] .text-slate-900,
+:root[data-theme="dark"] .text-slate-800,
+:root[data-theme="dark"] .text-slate-700 { color: #f1f5f9 !important; }
+:root[data-theme="dark"] .text-slate-600 { color: #cbd5e1 !important; }
+:root[data-theme="dark"] .text-slate-500 { color: #94a3b8 !important; }
+:root[data-theme="dark"] .text-slate-400 { color: #94a3b8 !important; }
+:root[data-theme="dark"] .text-slate-300 { color: #64748b !important; }
+/* Brand inks — usually rendered via inline style={{color:'#1A1A2E'}}. Make
+   those legible too. We can't restyle inline styles via CSS attribute
+   selectors at scale, but we add a class hook so callers can opt-in:
+   .ink-fixed-light. */
+:root[data-theme="dark"] [style*="color: rgb(26, 26, 46)"],
+:root[data-theme="dark"] [style*="color: #1A1A2E"],
+:root[data-theme="dark"] [style*="color:#1A1A2E"] { color: #f3f4f6 !important; }
+
+/* Inputs and form controls */
 :root[data-theme="dark"] .input,
+:root[data-theme="dark"] .select,
+:root[data-theme="dark"] .textarea,
 :root[data-theme="dark"] select.input,
-:root[data-theme="dark"] textarea.input {
-  background: #1f2937;
-  color: #e5e7eb;
-  border-color: #334155;
+:root[data-theme="dark"] textarea.input,
+:root[data-theme="dark"] input:where(:not([type="checkbox"]):not([type="radio"]):not([type="range"])),
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] select {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+  border-color: #334155 !important;
 }
+:root[data-theme="dark"] .input::placeholder,
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder { color: #64748b !important; }
+
+/* Card / area-row / button-secondary variants */
+:root[data-theme="dark"] .card,
+:root[data-theme="dark"] .area-row { background: #1f2937; color: #e5e7eb; border-color: #334155; }
 :root[data-theme="dark"] .area-row:hover { background: #2d2147; }
-:root[data-theme="dark"] .btn-secondary {
-  background: #1f2937;
-  color: #e5e7eb;
-  border-color: #334155;
-}
 :root[data-theme="dark"] .area-row.selected { background: #2d2147; }
-:root[data-theme="dark"] kbd { background: #334155; color: #e5e7eb; }
+:root[data-theme="dark"] .btn-secondary {
+  background: #1f2937 !important;
+  color: #e5e7eb !important;
+  border-color: #334155 !important;
+}
+:root[data-theme="dark"] .btn-secondary:hover { background: #2a3142 !important; }
+:root[data-theme="dark"] kbd { background: #334155; color: #e5e7eb; border-color: #475569; }
+
+/* Hover states — light hover backgrounds need dark equivalents */
+:root[data-theme="dark"] .hover\:bg-slate-50:hover { background-color: #2a3142 !important; }
+:root[data-theme="dark"] .hover\:bg-slate-100:hover { background-color: #334155 !important; }
+:root[data-theme="dark"] .hover\:bg-violet-50:hover { background-color: #2d2147 !important; }
+:root[data-theme="dark"] .hover\:bg-red-50:hover { background-color: #3a1212 !important; }
+:root[data-theme="dark"] .hover\:bg-emerald-50:hover { background-color: #062a1c !important; }
+
+/* Shadow tokens — the float shadow is calibrated for light. Soften on dark. */
+:root[data-theme="dark"] .shadow-float,
+:root[data-theme="dark"] .shadow-xl,
+:root[data-theme="dark"] .shadow-lg,
+:root[data-theme="dark"] .shadow-2xl { box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55) !important; }
+:root[data-theme="dark"] .shadow-sm,
+:root[data-theme="dark"] .shadow-md { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45) !important; }
+
+/* Backdrop blur surfaces (e.g. mini overview, command palette) */
+:root[data-theme="dark"] .bg-white\/95.backdrop-blur,
+:root[data-theme="dark"] .backdrop-blur { background-color: rgba(15, 23, 42, 0.92) !important; }
+
+/* The dark scrollbar matches the rest of the dark UI */
+:root[data-theme="dark"] *::-webkit-scrollbar { background: #0f172a; }
+:root[data-theme="dark"] *::-webkit-scrollbar-thumb { background: #334155; border-radius: 6px; }
+:root[data-theme="dark"] *::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+/* React-hot-toast restyling (sm-toast) needs its own dark override */
+:root[data-theme="dark"] .sm-toast {
+  background: #1f2937 !important;
+  color: #f1f5f9 !important;
+  border-color: #334155 !important;
+}
+
+/* SVG illustrations use the soft-violet faint color — dark mode wants a
+   different background or those become invisible. We can't paint the
+   inline SVG fills, but we can tint the wrapper. Not strictly needed but
+   keeps illustrations visible. */
+:root[data-theme="dark"] svg[viewBox] path[fill="#EDE5F7"] { fill: #2d2147 !important; }
+:root[data-theme="dark"] svg[viewBox] path[fill="#F6F2FB"] { fill: #1e1b2e !important; }
 
 /* ── Skeleton loader ───────────────────────────────────────────────────── */
 .skeleton {
@@ -455,6 +562,212 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
   50%      { box-shadow: 0 0 0 6px rgba(120, 72, 187, 0.10); }
 }
 
+/* ── Brand logo gradient sweep (header) ────────────────────────────────── */
+/* The "S" tile in the header gets a shimmer slide on hover. Subtle, ~600ms,
+   triggered only when the user actually moves over the logo so it doesn't
+   draw attention away from real work. */
+.brand-logo-tile {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #F57C00 0%, #E53935 50%, #7848BB 100%);
+  background-size: 200% 200%;
+  transition: background-position 0.4s ease, transform 0.18s ease;
+}
+.brand-logo-tile:hover { background-position: 100% 100%; transform: rotate(-3deg) scale(1.05); }
+.brand-logo-tile::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -75%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(120deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%);
+  transform: skewX(-20deg);
+  pointer-events: none;
+  transition: left 0.6s ease;
+}
+.brand-logo-tile:hover::before { left: 130%; }
+
+/* ── Toolbar tooltip — vertical pill that slides in from the side ─────── */
+/* Uses data-tooltip attribute on .toolbar-btn so we don't ship per-button
+   markup. Hover delay is 250ms so it doesn't strobe as you sweep the
+   toolbar. Arrow points right (toolbar lives on the right edge of map). */
+.toolbar-btn[data-tooltip] {
+  position: relative;
+}
+.toolbar-btn[data-tooltip]::before {
+  content: attr(data-tooltip);
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%) translateX(6px);
+  background: #1A1A2E;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease 0s, transform 0.15s ease 0s;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+  z-index: 100;
+}
+.toolbar-btn[data-tooltip]::after {
+  content: '';
+  position: absolute;
+  right: calc(100% + 4px);
+  top: 50%;
+  transform: translateY(-50%) translateX(6px);
+  border: 4px solid transparent;
+  border-left-color: #1A1A2E;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease 0s, transform 0.15s ease 0s;
+  z-index: 100;
+}
+.toolbar-btn[data-tooltip]:hover::before,
+.toolbar-btn[data-tooltip]:hover::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+  transition-delay: 0.25s;
+}
+
+/* ── Active-state ring on toolbar buttons ─────────────────────────────── */
+/* When a toolbar toggle is ON, give it a violet outline ring + soft glow
+   so the active state reads from across the room. Replaces the old "just
+   change background color" subtlety. */
+.toolbar-btn.active {
+  background: var(--brand-light);
+  color: var(--brand);
+  box-shadow: 0 0 0 2px var(--brand), 0 0 12px rgba(120, 72, 187, 0.25);
+}
+
+/* ── Selected polygon glow + scale pulse ──────────────────────────────── */
+/* Visual class for the wrapping <g> around the selected map polygon.
+   Google Maps polygons can't take a CSS class directly but we apply this
+   to a sibling animated marker — see AreaPolygon.tsx. */
+@keyframes polygon-glow-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50%      { transform: scale(1.04); opacity: 1; }
+}
+
+/* ── Hover infowindow card ────────────────────────────────────────────── */
+/* Polygon hover popup styling — colored stripe on the left, the rest is
+   plain stat rows. Targets the InfoWindow inner via a wrapper className. */
+.hover-info-card {
+  position: relative;
+  min-width: 200px;
+  padding: 10px 12px 10px 16px;
+  border-radius: 8px;
+}
+.hover-info-card .stripe {
+  position: absolute;
+  left: 0; top: 8px; bottom: 8px;
+  width: 4px;
+  border-radius: 2px;
+}
+
+/* ── Travel-mode centroid badge ───────────────────────────────────────── */
+/* Small circular pill rendered at the polygon centroid showing the travel
+   mode + minutes. Style only; placement uses an OverlayView in React. */
+.centroid-badge {
+  background: white;
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 3px 8px 3px 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  border: 1px solid rgba(0,0,0,0.06);
+  user-select: none;
+  pointer-events: none;
+}
+.centroid-badge .ico {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: white;
+}
+
+/* ── Custom toast styling (overrides react-hot-toast defaults) ────────── */
+/* Replaces the generic dark pill with: white bg, slate border, colored
+   left stripe by type, bolded first line. Plugged in via toaster
+   <Toaster toastOptions={{ className: 'sm-toast', ... }}>. */
+.sm-toast {
+  background: #fff !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.12) !important;
+  padding: 10px 14px 10px 14px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  max-width: 380px !important;
+  position: relative !important;
+  overflow: hidden !important;
+  animation: panelInDown 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.sm-toast::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: var(--brand);
+}
+.sm-toast-success::before { background: #22c55e; }
+.sm-toast-error::before   { background: #ef4444; }
+.sm-toast-warn::before    { background: #f59e0b; }
+.sm-toast-info::before    { background: #3b82f6; }
+
+/* ── Skeleton variants for richer loading states ──────────────────────── */
+.skeleton-line { height: 12px; border-radius: 4px; margin-bottom: 8px; }
+.skeleton-line.w-1\\/2 { width: 50%; }
+.skeleton-line.w-2\\/3 { width: 66%; }
+.skeleton-line.w-3\\/4 { width: 75%; }
+.skeleton-circle { border-radius: 50%; }
+.skeleton-rect-sm { height: 32px; border-radius: 6px; }
+.skeleton-rect-md { height: 72px; border-radius: 8px; }
+.skeleton-rect-lg { height: 120px; border-radius: 10px; }
+
+/* ── Daypart heatstrip hover tick ─────────────────────────────────────── */
+.heatstrip-tick {
+  position: absolute;
+  top: -2px; bottom: -2px;
+  width: 2px;
+  background: #fff;
+  box-shadow: 0 0 4px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+
+/* ── Daypart mini clock face ──────────────────────────────────────────── */
+/* Pure-CSS 24-segment ring; the React side sets --hour to color past hours. */
+.daypart-clock {
+  --hour: 0;
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--brand) 0deg,
+    var(--brand) calc(var(--hour) * 15deg),
+    var(--line-soft) calc(var(--hour) * 15deg),
+    var(--line-soft) 360deg
+  );
+  flex-shrink: 0;
+}
+.daypart-clock::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  background: white;
+  border-radius: 50%;
+}
+
 /* Respect prefers-reduced-motion — disable all the showy stuff for users
    who've asked the OS not to animate. */
 @media (prefers-reduced-motion: reduce) {
@@ -465,6 +778,8 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
   .fade-in,
   .card-expand,
   .stagger-in,
-  .sparkle-pulse::after { animation: none !important; }
+  .sparkle-pulse::after,
+  .brand-logo-tile::before { animation: none !important; transition: none !important; }
   .toolbar-btn:hover { transform: none; }
+  .brand-logo-tile:hover { transform: none; }
 }

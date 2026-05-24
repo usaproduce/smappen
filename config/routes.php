@@ -32,6 +32,17 @@ use App\Controllers\AiScoringController;
 use App\Controllers\OpenApiController;
 use App\Controllers\UsageController;
 use App\Controllers\UploadController;
+use App\Controllers\AnalogController;
+use App\Controllers\OpsController;
+use App\Controllers\DriveTimeMatrixController;
+use App\Controllers\TerritoryRebalancerController;
+use App\Controllers\ForecastController;
+use App\Controllers\CrmController;
+use App\Controllers\PresenceController;
+use App\Controllers\OnboardingController;
+use App\Controllers\AlertsController;
+use App\Controllers\CustomLayerController;
+use App\Controllers\EmbedController;
 
 return function (Router $r) {
     $auth = [Middleware::auth()];
@@ -48,6 +59,9 @@ return function (Router $r) {
     $rlReach        = [Middleware::auth(), Middleware::rateLimit('reach',          120,  3600)];
     $rlReport       = [Middleware::auth(), Middleware::rateLimit('report',          50,  3600)];
     $rlExport       = [Middleware::auth(), Middleware::rateLimit('export',          60,  3600)];
+    $rlAnalog       = [Middleware::auth(), Middleware::rateLimit('analog_finder',   30,  3600)]; // 30/hr — heavy tract scan
+    $rlDtm          = [Middleware::auth(), Middleware::rateLimit('dtm',              20,  3600)]; // 20/hr — ORS heavy
+    $rlForecast     = [Middleware::auth(), Middleware::rateLimit('forecast',         60,  3600)];
 
     // Health (public)
     $r->get('/api/health', [HealthController::class, 'show']);
@@ -84,10 +98,14 @@ return function (Router $r) {
     // Areas
     $r->get('/api/projects/{projectId}/areas', [AreaController::class, 'index'], $auth);
     $r->post('/api/projects/{projectId}/areas', [AreaController::class, 'store'], $auth);
+    $r->post('/api/projects/{projectId}/areas/reorder', [AreaController::class, 'reorder'], $auth);
+    $r->post('/api/projects/{id}/archive', [ProjectController::class, 'archive'], $auth);
+    $r->get('/api/projects/{id}/export', [ProjectController::class, 'exportBundle'], $auth);
     $r->get('/api/areas/{id}', [AreaController::class, 'show'], $auth);
     $r->put('/api/areas/{id}', [AreaController::class, 'update'], $auth);
     $r->delete('/api/areas/{id}', [AreaController::class, 'destroy'], $auth);
     $r->get('/api/areas/{id}/demographics', [DemographicsController::class, 'show'], $auth);
+    $r->get('/api/areas/{id}/demographics/trends', [DemographicsController::class, 'trends'], $auth);
     $r->get('/api/areas/{id}/pois', [PlacesController::class, 'forArea'], $auth);
     $r->post('/api/demographics/compare', [DemographicsController::class, 'compare'], $auth);
 
@@ -122,8 +140,10 @@ return function (Router $r) {
 
     // Reports
     $r->post('/api/areas/{id}/report', [ReportController::class, 'generate'], $rlReport);
+    $r->post('/api/areas/{id}/report.pdf', [ReportController::class, 'generatePdf'], $rlReport);
     $r->get('/api/reports', [ReportController::class, 'list'], $auth);
     $r->get('/api/reports/{id}/download', [ReportController::class, 'download'], $auth);
+    $r->get('/api/report-templates', [ReportController::class, 'templates'], $auth);
 
     // Billing
     $r->post('/api/billing/checkout', [BillingController::class, 'createCheckout'], $auth);
@@ -141,6 +161,7 @@ return function (Router $r) {
     $r->get('/api/usage/today', [UsageController::class, 'today'], $auth);
     $r->get('/api/usage/days', [UsageController::class, 'days'], $auth);
     $r->get('/api/usage/pricing', [UsageController::class, 'pricing'], $auth);
+    $r->post('/api/usage/log-map-load', [UsageController::class, 'logMapLoad'], $auth);
 
     // Generic file upload (field-note photos, future area/profile media)
     $r->post('/api/uploads', [UploadController::class, 'upload'], $auth);
@@ -152,9 +173,51 @@ return function (Router $r) {
     $r->post('/api/projects/{projectId}/territories/generate', [TerritoryController::class, 'generate'], $rlTerritory);
     $r->get('/api/projects/{projectId}/territories/jobs', [TerritoryController::class, 'listJobs'], $auth);
     $r->post('/api/areas/{id}/rebuild-boundary', [TerritoryController::class, 'rebuildBoundary'], $auth);
+    $r->post('/api/projects/{projectId}/territories/rebuild-all', [TerritoryController::class, 'bulkRebuild'], $rlTerritory);
 
     // Multi-location optimization (MCLP)
     $r->post('/api/projects/{projectId}/optimize/locations', [MclpController::class, 'optimize'], $rlMclp);
+
+    // Analog finder — "find me places like my best store"
+    $r->post('/api/areas/{id}/analogs', [AnalogController::class, 'find'], $rlAnalog);
+
+    // NF1 — Drive-time matrix
+    $r->post('/api/drive-time-matrix', [DriveTimeMatrixController::class, 'compute'], $rlDtm);
+
+    // NF2 — Sales-territory rebalancer
+    $r->post('/api/projects/{projectId}/rebalance', [TerritoryRebalancerController::class, 'analyze'], $rlTerritory);
+
+    // NF3 — Demand forecasting from analogs
+    $r->post('/api/areas/{id}/forecast', [ForecastController::class, 'predict'], $rlForecast);
+
+    // #13 — presence cursors (SSE)
+    $r->post('/api/projects/{projectId}/presence/ping', [PresenceController::class, 'ping'], $auth);
+    $r->get('/api/projects/{projectId}/presence/stream', [PresenceController::class, 'stream'], $auth);
+
+    // #21 — CRM integration scaffolding
+    $r->post('/api/integrations/salesforce/connect', [CrmController::class, 'connectSalesforce'], $auth);
+    $r->get('/api/integrations/salesforce/callback', [CrmController::class, 'callbackSalesforce'], $auth);
+    $r->post('/api/integrations/salesforce/push',    [CrmController::class, 'pushSalesforce'], $auth);
+    $r->post('/api/integrations/hubspot/connect',    [CrmController::class, 'connectHubspot'], $auth);
+    $r->get('/api/integrations/hubspot/callback',    [CrmController::class, 'callbackHubspot'], $auth);
+    $r->post('/api/integrations/hubspot/push',       [CrmController::class, 'pushHubspot'], $auth);
+
+    // Operational features (OP4, OP5, OP9, OP11, OP13, OP21) — small CRUD endpoints.
+    $r->get('/api/saved-searches',     [OpsController::class, 'listSavedSearches'],   $auth);
+    $r->post('/api/saved-searches',    [OpsController::class, 'createSavedSearch'],   $auth);
+    $r->delete('/api/saved-searches/{id}', [OpsController::class, 'deleteSavedSearch'], $auth);
+    $r->get('/api/saved-comparisons',  [OpsController::class, 'listSavedComparisons'], $auth);
+    $r->post('/api/saved-comparisons', [OpsController::class, 'createSavedComparison'], $auth);
+    $r->delete('/api/saved-comparisons/{id}', [OpsController::class, 'deleteSavedComparison'], $auth);
+    $r->get('/api/activity',           [OpsController::class, 'activityFeed'],        $auth);
+    $r->get('/api/webhooks/deliveries',[OpsController::class, 'webhookDeliveries'],   $auth);
+    $r->get('/api/tags',               [OpsController::class, 'listTags'],            $auth);
+    $r->post('/api/tags',              [OpsController::class, 'createTag'],           $auth);
+    $r->post('/api/areas/{id}/tags',   [OpsController::class, 'attachTag'],           $auth);
+    $r->delete('/api/areas/{id}/tags/{tagId}', [OpsController::class, 'detachTag'],   $auth);
+    $r->get('/api/scheduled-reports',  [OpsController::class, 'listScheduledReports'], $auth);
+    $r->post('/api/scheduled-reports', [OpsController::class, 'createScheduledReport'], $auth);
+    $r->delete('/api/scheduled-reports/{id}', [OpsController::class, 'deleteScheduledReport'], $auth);
 
     // Segmentation
     $r->get('/api/segmentation/segments', [SegmentationController::class, 'catalog'], $auth);
@@ -231,4 +294,32 @@ return function (Router $r) {
     // OpenAPI docs (#47)
     $r->get('/api/openapi.json', [OpenApiController::class, 'spec']);
     $r->get('/api/docs', [OpenApiController::class, 'docs']);
+
+    // Onboarding — first-run wizard + sample clone + activation funnel stamps
+    $r->post('/api/onboarding/use-case',    [OnboardingController::class, 'setUseCase'], $auth);
+    $r->post('/api/onboarding/seen',        [OnboardingController::class, 'markSeen'],   $auth);
+    $r->get('/api/onboarding/state',        [OnboardingController::class, 'state'],      $auth);
+    $r->post('/api/onboarding/clone-sample',[OnboardingController::class, 'cloneSample'],$auth);
+    $r->post('/api/onboarding/activate',    [OnboardingController::class, 'activate'],   $auth);
+
+    // Alerts — generic threshold/event rules + delivery digest
+    $r->get('/api/alerts',                  [AlertsController::class, 'index'],   $auth);
+    $r->post('/api/alerts',                 [AlertsController::class, 'create'],  $auth);
+    $r->put('/api/alerts/{id}',             [AlertsController::class, 'update'],  $auth);
+    $r->delete('/api/alerts/{id}',          [AlertsController::class, 'destroy'], $auth);
+    $r->post('/api/alerts/{id}/test',       [AlertsController::class, 'test'],    $auth);
+    $r->get('/api/alerts/digest/recent',    [AlertsController::class, 'recentDigest'], $auth);
+
+    // Custom data layers — user-uploaded points overlaying the map
+    $r->get('/api/projects/{projectId}/custom-layers',  [CustomLayerController::class, 'index'],   $auth);
+    $r->post('/api/projects/{projectId}/custom-layers', [CustomLayerController::class, 'create'],  $auth);
+    $r->put('/api/custom-layers/{id}',                  [CustomLayerController::class, 'update'],  $auth);
+    $r->delete('/api/custom-layers/{id}',               [CustomLayerController::class, 'destroy'], $auth);
+    $r->get('/api/custom-layers/{id}/points',           [CustomLayerController::class, 'points'],  $auth);
+
+    // Embed builder — branded iframe configurations + view counters
+    $r->get('/api/projects/{projectId}/embeds',         [EmbedController::class, 'index'],   $auth);
+    $r->post('/api/projects/{projectId}/embeds',        [EmbedController::class, 'create'],  $auth);
+    $r->put('/api/embeds/{id}',                         [EmbedController::class, 'update'],  $auth);
+    $r->delete('/api/embeds/{id}',                      [EmbedController::class, 'destroy'], $auth);
 };

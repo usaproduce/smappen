@@ -65,6 +65,7 @@ class AreaController
             'created_by' => $request->user['id'],
             'geometry' => $geometry,
         ]);
+        OnboardingController::stampActivation($request->user['id'], $request->user['organization_id'], 'first_area_at');
         Response::success(Area::findById($id), 'Area created', 201);
     }
 
@@ -105,6 +106,39 @@ class AreaController
         $area = $this->verifyArea($request);
         Area::delete($area['id']);
         Response::success(['id' => $area['id']], 'Area deleted');
+    }
+
+    /**
+     * BF7 — persist drag-reorder. Body: { area_ids: [id1, id2, ...] } in the
+     * desired order. Server stamps sort_order = index. All ids must belong
+     * to the same project (and the caller's org) — silently skips any that
+     * don't, so a maliciously crafted list can't reorder another tenant's
+     * areas.
+     */
+    public function reorder(Request $request): void
+    {
+        $project = $this->verifyProject($request);
+        $body = json_decode((string) file_get_contents('php://input'), true) ?: [];
+        $ids = $body['area_ids'] ?? null;
+        if (!is_array($ids) || empty($ids)) Response::error('area_ids required', 422);
+
+        $db = \App\Core\Database::getInstance();
+        // Single multi-row update: CASE WHEN id = ? THEN N ELSE sort_order END
+        $cases = []; $params = [];
+        $valid = [];
+        foreach ($ids as $i => $id) {
+            if (!is_string($id) || $id === '') continue;
+            $cases[] = 'WHEN ? THEN ?';
+            $params[] = $id;
+            $params[] = $i;
+            $valid[] = $id;
+        }
+        if (empty($valid)) Response::error('No valid ids', 422);
+        $placeholders = implode(',', array_fill(0, count($valid), '?'));
+        $sql = "UPDATE areas SET sort_order = CASE id " . implode(' ', $cases)
+             . " END WHERE id IN ($placeholders) AND project_id = ?";
+        $db->query($sql, array_merge($params, $valid, [$project['id']]));
+        Response::success(['count' => count($valid)]);
     }
 
     private function verifyProject(Request $request): array

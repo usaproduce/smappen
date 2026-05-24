@@ -74,6 +74,12 @@ class Request
         if ($auth && preg_match('/Bearer\s+(.+)/i', $auth, $m)) {
             return trim($m[1]);
         }
+        // EventSource (Server-Sent Events) can't set custom headers, so allow
+        // passing the JWT via ?token= as a fallback. Only consulted when the
+        // header is absent so it never overrides a legitimate Authorization.
+        if (!empty($_GET['token']) && is_string($_GET['token'])) {
+            return trim($_GET['token']);
+        }
         return null;
     }
     public function getFile(string $name): ?array

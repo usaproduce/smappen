@@ -13,6 +13,7 @@ import { notificationApi, type Notification } from '../../api/advanced';
 import { usageApi, formatUsd } from '../../api/usage';
 import { useCostStore } from '../../stores/costStore';
 import { useUndoStore } from '../../stores/undoStore';
+import SaveStatus from '../common/SaveStatus';
 
 export default function Header() {
   const { user, logout } = useAuthStore();
@@ -50,7 +51,12 @@ export default function Header() {
       const r = await usageApi.today();
       useCostStore.getState().setTotals(r.total_usd, r.call_count);
       breakdownRef.current = r.breakdown;
-    } catch {}
+    } catch (e: any) {
+      // Don't toast — the cost widget is a passive HUD, not a primary flow.
+      // Logging keeps the failure visible in DevTools so we notice if the
+      // usage endpoint goes bad after a deploy.
+      if (import.meta.env.DEV) console.warn('[cost-widget] usage.today failed:', e?.message ?? e);
+    }
   }
 
   useEffect(() => { load(); loadNotifs(); loadUsage(); }, []);
@@ -75,21 +81,43 @@ export default function Header() {
     } catch {}
   }
 
-  // Cmd/Ctrl+K opens project switcher
+  // Project switcher shortcut. ⌘K was the original binding but Edge swallows
+  // Ctrl+K on Windows (opens its built-in command bar). Use a vim-style
+  // "leader" sequence — press `g` then `p` within 600ms — which doesn't
+  // collide with any browser chrome shortcut. Esc still closes the menu.
   useEffect(() => {
+    let leaderPressed = false;
+    let leaderTimer: number | null = null;
     function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setProjectDropdownOpen(true);
-        setSwitcherQuery('');
-      }
+      const t = document.activeElement as HTMLElement | null;
+      const isTyping = t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA' || t?.tagName === 'SELECT' || t?.isContentEditable;
       if (e.key === 'Escape') {
         setProjectDropdownOpen(false);
         setShowUserMenu(false);
+        leaderPressed = false;
+        return;
       }
+      if (isTyping) return;
+      if (leaderPressed && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        leaderPressed = false;
+        setProjectDropdownOpen(true);
+        setSwitcherQuery('');
+        return;
+      }
+      if (e.key.toLowerCase() === 'g' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        leaderPressed = true;
+        if (leaderTimer) window.clearTimeout(leaderTimer);
+        leaderTimer = window.setTimeout(() => { leaderPressed = false; }, 600);
+        return;
+      }
+      leaderPressed = false;
     }
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (leaderTimer) window.clearTimeout(leaderTimer);
+    };
   }, []);
   async function load() {
     try {
@@ -157,10 +185,11 @@ export default function Header() {
           className="flex items-center gap-2 font-extrabold text-[17px] tracking-tight pr-2"
           style={{ color: '#1A1A2E' }}
         >
-          {/* Colorful logo mark — gradient like Smappen */}
+          {/* Brand mark — gradient sweep + shimmer on hover. Tile rotates
+              -3deg and a diagonal highlight slides across (~600ms) for a
+              subtle "alive" cue without distracting from real work. */}
           <span
-            className="inline-flex items-center justify-center w-9 h-9 rounded-lg text-white font-extrabold text-lg shadow-sm"
-            style={{ background: 'linear-gradient(135deg, #F57C00 0%, #E53935 50%, #7848BB 100%)' }}
+            className="brand-logo-tile inline-flex items-center justify-center w-9 h-9 rounded-lg text-white font-extrabold text-lg shadow-sm"
           >
             S
           </span>
@@ -206,6 +235,7 @@ export default function Header() {
               >
                 <MoreHorizontal size={14} />
               </button>
+              <SaveStatus />
             </>
           )}
 
@@ -240,7 +270,7 @@ export default function Header() {
                 <Plus size={14} /> New project
               </button>
               <div className="px-3 py-1.5 border-t border-slate-100 text-[10px] text-slate-400 flex items-center justify-between">
-                <span>Switch with <kbd className="bg-slate-100 px-1 py-0.5 rounded">⌘K</kbd></span>
+                <span>Open with <kbd className="bg-slate-100 px-1 py-0.5 rounded">g</kbd> then <kbd className="bg-slate-100 px-1 py-0.5 rounded">p</kbd></span>
                 <span>Esc to close</span>
               </div>
             </div>
@@ -356,24 +386,23 @@ export default function Header() {
         </button>
 
         <div ref={userMenuRef} className="relative">
-          <button
-            className="ml-1 inline-flex items-center gap-1.5 text-slate-600 hover:bg-slate-50 px-2 py-1.5 rounded text-sm font-semibold"
-            onClick={() => setShowUserMenu(!showUserMenu)}
-          >
-            <span
-              className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold text-white"
-              style={{ background: '#7848BB' }}
-            >
-              {(user?.name ?? '?').slice(0, 1).toUpperCase()}
-            </span>
-            <span className="hidden sm:inline">{user?.name}</span>
-            <ChevronDown size={12} className="text-slate-400" />
-          </button>
+          <UserAvatarButton user={user} onClick={() => setShowUserMenu(!showUserMenu)} />
           {showUserMenu && (
-            <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[220px] z-40 py-1">
-              <div className="px-3 py-2 border-b border-slate-100">
-                <div className="text-sm font-semibold" style={{ color: '#1A1A2E' }}>{user?.name}</div>
-                <div className="text-xs text-slate-500">{user?.email}</div>
+            <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[260px] z-40 py-1 card-expand">
+              <div className="px-3 py-3 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
+                  <UserAvatarChip user={user} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-bold truncate" style={{ color: '#1A1A2E' }}>{user?.name}</div>
+                    <div className="text-[11px] text-slate-500 truncate">{user?.email}</div>
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="text-[11px] text-slate-500 truncate">
+                    {user?.organization_name ?? 'Personal'}
+                  </div>
+                  <PlanBadge plan={user?.plan} />
+                </div>
               </div>
               <Link to="/settings/profile" className="block px-3 py-2 hover:bg-slate-50 text-sm flex items-center gap-2" onClick={() => setShowUserMenu(false)}>
                 <Settings size={14} /> Profile
@@ -388,6 +417,22 @@ export default function Header() {
                 Billing
               </Link>
               <button
+                className="block w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-t border-slate-100 flex items-center gap-2 mt-1"
+                onClick={() => {
+                  const cur = document.documentElement.getAttribute('data-theme') === 'dark';
+                  const next = cur ? 'light' : 'dark';
+                  document.documentElement.setAttribute('data-theme', next);
+                  document.body.classList.toggle('dark-mode', next === 'dark');
+                  // Match the key useTheme() reads from. Old code wrote
+                  // 'gd_theme' which the hook ignored, so the toggle felt
+                  // like a no-op on reload.
+                  localStorage.setItem('smappen-theme', next);
+                }}
+              >
+                <span className="inline-block w-3.5 h-3.5 rounded-full border border-slate-300" style={{ background: 'linear-gradient(135deg, #fff 50%, #1A1A2E 50%)' }} />
+                Toggle dark mode
+              </button>
+              <button
                 className="block w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-t border-slate-100 flex items-center gap-2 text-red-600"
                 onClick={() => { logout(); location.href = '/login'; }}
               >
@@ -398,6 +443,71 @@ export default function Header() {
         </div>
       </div>
     </header>
+  );
+}
+
+// Initials from name → "Adam Smith" → "AS", single word → first letter.
+function initials(name?: string): string {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/).slice(0, 2);
+  return parts.map((p) => p[0]).join('').toUpperCase();
+}
+
+// Stable hash → hue → gradient. Same email always picks the same colors so
+// teammates recognize each other across sessions.
+function gradientFor(seed?: string): string {
+  if (!seed) return 'linear-gradient(135deg, #7848BB, #5C2D91)';
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  const hue = Math.abs(h) % 360;
+  return `linear-gradient(135deg, hsl(${hue}, 65%, 55%), hsl(${(hue + 40) % 360}, 60%, 45%))`;
+}
+
+function UserAvatarChip({ user, size = 28 }: { user: any; size?: number }) {
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-full text-xs font-bold text-white shrink-0"
+      style={{
+        width: size,
+        height: size,
+        background: gradientFor(user?.email ?? user?.name),
+        fontSize: size > 30 ? 14 : 11,
+      }}
+    >
+      {initials(user?.name)}
+    </span>
+  );
+}
+
+function UserAvatarButton({ user, onClick }: { user: any; onClick: () => void }) {
+  return (
+    <button
+      className="ml-1 inline-flex items-center gap-1.5 text-slate-600 hover:bg-slate-50 px-2 py-1.5 rounded text-sm font-semibold"
+      onClick={onClick}
+    >
+      <UserAvatarChip user={user} />
+      <span className="hidden sm:inline">{user?.name}</span>
+      <ChevronDown size={12} className="text-slate-400" />
+    </button>
+  );
+}
+
+function PlanBadge({ plan }: { plan?: string }) {
+  const map: Record<string, { label: string; bg: string; fg: string }> = {
+    free:       { label: 'Free',       bg: '#F1F5F9', fg: '#475569' },
+    starter:    { label: 'Starter',    bg: '#DBEAFE', fg: '#1D4ED8' },
+    pro:        { label: 'Pro',        bg: '#EDE5F7', fg: '#5C2D91' },
+    business:   { label: 'Business',   bg: '#FCE7F3', fg: '#9D174D' },
+    enterprise: { label: 'Enterprise', bg: '#FEF3C7', fg: '#92400E' },
+  };
+  const tier = map[(plan ?? 'free').toLowerCase()] ?? map.free;
+  return (
+    <span
+      className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase shrink-0"
+      style={{ background: tier.bg, color: tier.fg }}
+    >
+      {tier.label}
+    </span>
   );
 }
 
@@ -414,6 +524,17 @@ function UndoRedoButtons() {
   const redo = useUndoStore((s) => s.redo);
   const canU = past.length > 0 && !busy;
   const canR = future.length > 0 && !busy;
+  // OP8 — undo-history dropdown. Lists the last 10 actions; clicking
+  // "Undo to here" rolls back N steps at once.
+  const [histOpen, setHistOpen] = useState(false);
+  const histRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (histRef.current && !histRef.current.contains(e.target as Node)) setHistOpen(false);
+    }
+    if (histOpen) document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [histOpen]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -452,6 +573,43 @@ function UndoRedoButtons() {
       >
         <Redo2 size={16} />
       </button>
+
+      {/* OP8 — undo-history dropdown. Tiny chevron-only button. Lists the
+          last 10 actions; clicking one rolls back to that point. */}
+      <div ref={histRef} className="relative">
+        <button
+          onClick={() => setHistOpen((v) => !v)}
+          disabled={past.length === 0}
+          className={past.length === 0 ? 'text-slate-300 p-1 cursor-not-allowed' : 'text-slate-500 hover:bg-slate-50 p-1 rounded'}
+          title="Undo history"
+        >
+          <ChevronDown size={11} />
+        </button>
+        {histOpen && past.length > 0 && (
+          <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg w-[240px] py-1 z-40 card-expand">
+            <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold text-slate-500 border-b border-slate-100">
+              Recent actions
+            </div>
+            <ul className="max-h-72 overflow-y-auto">
+              {past.slice().reverse().slice(0, 10).map((a, i) => (
+                <li key={i}>
+                  <button
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-violet-50 flex items-center gap-2"
+                    onClick={async () => {
+                      // Undo (i+1) times to reach this entry's state.
+                      for (let k = 0; k <= i; k++) await undo();
+                      setHistOpen(false);
+                    }}
+                  >
+                    <span className="w-5 text-center text-slate-400 font-bold">{i + 1}</span>
+                    <span className="flex-1 truncate text-slate-700">{a.label}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </>
   );
 }

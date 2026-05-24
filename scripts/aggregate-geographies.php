@@ -46,6 +46,9 @@ function load_counties(string $path): void {
         if ($geom['type'] === 'Polygon') {
             $geom = ['type' => 'MultiPolygon', 'coordinates' => [$geom['coordinates']]];
         }
+        // See seed-census.php — pre-swap to dodge MySQL 8 strict SRID 4326
+        // axis order ("lat lng") choking on |lng| > 90.
+        $geom = GeoUtils::swapGeometry($geom);
         $wkt = GeoUtils::geoJsonToWkt($geom);
         try {
             $db->query(
@@ -81,6 +84,9 @@ function load_states(string $path): void {
         if ($geom['type'] === 'Polygon') {
             $geom = ['type' => 'MultiPolygon', 'coordinates' => [$geom['coordinates']]];
         }
+        // See seed-census.php — pre-swap to dodge MySQL 8 strict SRID 4326
+        // axis order ("lat lng") choking on |lng| > 90.
+        $geom = GeoUtils::swapGeometry($geom);
         $wkt = GeoUtils::geoJsonToWkt($geom);
         try {
             $db->query(

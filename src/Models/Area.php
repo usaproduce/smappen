@@ -23,7 +23,14 @@ class Area
         foreach ($data as $k => $v) {
             $stmt->bindValue(':' . $k, $v);
         }
-        $wkt = is_array($geometry) ? GeoUtils::geoJsonToWkt($geometry) : $geometry;
+        // Pre-swap GeoJSON [lng,lat] → [lat,lng] before writing WKT so the
+        // stored geometry uses the unified (X=lat, Y=lng) convention shared
+        // with census_tracts/counties/states. Without this, ST_Intersects
+        // between areas.geometry and census_tracts.geometry silently finds
+        // nothing — that's why the right-panel demographics tiles came back
+        // empty for newly-created radius/isochrone areas.
+        $swapped = is_array($geometry) ? GeoUtils::swapGeometry($geometry) : null;
+        $wkt = $swapped !== null ? GeoUtils::geoJsonToWkt($swapped) : $geometry;
         $stmt->bindValue(':wkt', $wkt);
         $stmt->execute();
         return $id;
@@ -37,10 +44,12 @@ class Area
         );
         if (!$row) return null;
         if (!empty($row['geometry_geojson'])) {
-            // MySQL 8 ST_AsGeoJSON returns [lat, lng] for SRID 4326 even though
-            // we stored WKT in [lng, lat] — swap back to GeoJSON spec / Google Maps.
-            $geom = json_decode($row['geometry_geojson'], true);
-            $row['geometry'] = GeoUtils::swapGeometry($geom);
+            // Post-normalize: areas now store with X=lat,Y=lng matching
+            // census_tracts. MySQL's ST_AsGeoJSON for SRID 4326 emits
+            // [Y, X] which is [lng, lat] under this storage = STANDARD
+            // GeoJSON already, no swap needed. The previous swap was only
+            // necessary for the legacy (X=lng, Y=lat) storage.
+            $row['geometry'] = json_decode($row['geometry_geojson'], true);
         }
         unset($row['geometry_geojson']);
         if (!empty($row['demographics_cache'])) {
@@ -70,8 +79,11 @@ class Area
             $params[':set_' . $k] = $v;
         }
         if ($geometry !== null) {
+            // Same pre-swap as create() — keep storage convention unified
+            // with census_tracts so ST_Intersects works in both directions.
+            $swapped = is_array($geometry) ? GeoUtils::swapGeometry($geometry) : null;
             $sets[] = 'geometry = ST_GeomFromText(:wkt, 4326)';
-            $params[':wkt'] = is_array($geometry) ? GeoUtils::geoJsonToWkt($geometry) : $geometry;
+            $params[':wkt'] = $swapped !== null ? GeoUtils::geoJsonToWkt($swapped) : $geometry;
         }
         $sql = 'UPDATE areas SET ' . implode(',', $sets) . ' WHERE id = :where_id';
         $stmt = Database::getInstance()->pdo()->prepare($sql);
@@ -97,12 +109,16 @@ class Area
                 $params[':fid'] = $folderId;
             }
         }
-        $sql = "SELECT *, ST_AsGeoJSON(geometry) AS geometry_geojson FROM areas WHERE $where ORDER BY created_at DESC";
+        // ORDER BY sort_order first so user-driven drag-reorder (BF7)
+        // survives across reloads; tie-broken by created_at DESC. Covered
+        // by idx_areas_proj_sort.
+        $sql = "SELECT *, ST_AsGeoJSON(geometry) AS geometry_geojson FROM areas WHERE $where ORDER BY sort_order ASC, created_at DESC";
         $rows = Database::getInstance()->fetchAll($sql, $params);
         foreach ($rows as &$r) {
             if (!empty($r['geometry_geojson'])) {
-                $geom = json_decode($r['geometry_geojson'], true);
-                $r['geometry'] = GeoUtils::swapGeometry($geom);
+                // ST_AsGeoJSON under the unified (X=lat, Y=lng) storage emits
+                // standard [lng, lat] GeoJSON — no swap needed (see findById).
+                $r['geometry'] = json_decode($r['geometry_geojson'], true);
             }
             if (!empty($r['demographics_cache'])) $r['demographics_cache'] = json_decode($r['demographics_cache'], true);
             unset($r['geometry_geojson']);

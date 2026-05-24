@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from 'react';
-import { X, Sparkles, Layers, Users, Compass, Target, Tag, MessageCircle, History, Bell, MapPinned } from 'lucide-react';
+import { X, Sparkles, Layers, Users, Compass, Target, Tag, MessageCircle, History, Bell, MapPinned, Crosshair } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { Spinner } from './shared';
 import ErrorBoundary from '../ErrorBoundary';
@@ -16,13 +16,17 @@ const CommentsTab       = lazy(() => import('./CommentsTab'));
 const VersionsTab       = lazy(() => import('./VersionsTab'));
 const CompetitorsTab    = lazy(() => import('./CompetitorsTab'));
 const FieldTab          = lazy(() => import('./FieldTab'));
+const AnalogTab         = lazy(() => import('./AnalogTab'));
+const AnalyticsTab      = lazy(() => import('./AnalyticsTab'));
 
 type TabKey =
-  | 'territories' | 'cannibalization' | 'traffic' | 'optimize'
+  | 'territories' | 'analogs' | 'analytics' | 'cannibalization' | 'traffic' | 'optimize'
   | 'segments' | 'comments' | 'versions' | 'competitors' | 'field';
 
 const TABS: { key: TabKey; label: string; icon: any }[] = [
   { key: 'territories',     label: 'Territories',     icon: Layers },
+  { key: 'analogs',         label: 'Analogs',         icon: Crosshair },
+  { key: 'analytics',       label: 'Analytics',       icon: Sparkles },
   { key: 'cannibalization', label: 'Cannibalize',     icon: Users },
   { key: 'traffic',         label: 'Traffic',         icon: Compass },
   { key: 'optimize',        label: 'Optimize',        icon: Target },
@@ -72,8 +76,21 @@ export default function AdvancedPanel({ onClose }: Props) {
         )}
         {currentProject && (
           <ErrorBoundary scope={`The ${tab} tab`} inline>
-            <Suspense fallback={<div className="flex items-center gap-2 text-sm text-slate-500"><Spinner /> Loading…</div>}>
+            {/* VT18 — layout-matched skeleton replaces the bare spinner so the
+                tab swap feels less janky. Generic to all tabs: a heading
+                strip + 3 rows of varying widths. */}
+            <Suspense fallback={
+              <div className="space-y-3">
+                <div className="skeleton h-4 w-40" />
+                <div className="skeleton h-9 w-full" />
+                <div className="skeleton h-9 w-3/4" />
+                <div className="skeleton h-20 w-full" />
+                <div className="skeleton h-9 w-1/2" />
+              </div>
+            }>
               {tab === 'territories'     && <TerritoriesTab projectId={currentProject.id} />}
+              {tab === 'analogs'         && <AnalogTab projectId={currentProject.id} />}
+              {tab === 'analytics'       && <AnalyticsTab projectId={currentProject.id} />}
               {tab === 'cannibalization' && <CannibalizeTab projectId={currentProject.id} />}
               {tab === 'traffic'         && <TrafficTab />}
               {tab === 'optimize'        && <OptimizeTab projectId={currentProject.id} />}

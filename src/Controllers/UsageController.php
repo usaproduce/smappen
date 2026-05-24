@@ -84,4 +84,23 @@ class UsageController
         Response::cacheable(3600, true);
         Response::success(['prices' => GooglePricing::COSTS]);
     }
+
+    /**
+     * Log a single Maps JS API "session" (page load). Frontend calls this
+     * once per top-level mount of <GoogleMap>. Pricing: $7/1000 sessions,
+     * which is the biggest line on most Smappen bills — without this the
+     * cost widget badly under-counts.
+     */
+    public function logMapLoad(Request $request): void
+    {
+        $cost = GooglePricing::costFor('dynamic_maps_load');
+        Database::getInstance()->query(
+            'INSERT INTO api_usage_log
+               (user_id, api_name, endpoint, request_count, estimated_cost_usd, created_at)
+             VALUES (?, ?, ?, 1, ?, ?)',
+            [$request->user['id'], 'dynamic_maps_load', '/api/usage/log-map-load',
+             $cost, date('Y-m-d H:i:s')]
+        );
+        Response::success(['cost_usd' => $cost]);
+    }
 }

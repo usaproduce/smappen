@@ -1,4 +1,5 @@
 import { api } from './client';
+import { trackSave } from '../stores/saveStatusStore';
 import type { Project } from '../types';
 
 export const projectsApi = {
@@ -11,15 +12,15 @@ export const projectsApi = {
     return data.data as Project;
   },
   async create(p: Partial<Project>) {
-    const { data } = await api.post('/api/projects', p);
+    const { data } = await trackSave(api.post('/api/projects', p));
     return data.data as Project;
   },
   async update(id: string, p: Partial<Project>) {
-    const { data } = await api.put(`/api/projects/${id}`, p);
+    const { data } = await trackSave(api.put(`/api/projects/${id}`, p));
     return data.data as Project;
   },
   async delete(id: string) {
-    const { data } = await api.delete(`/api/projects/${id}`);
+    const { data } = await trackSave(api.delete(`/api/projects/${id}`));
     return data;
   },
   async shared(token: string) {

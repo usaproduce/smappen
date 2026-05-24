@@ -51,6 +51,7 @@ class ExportController
             ];
         }
         $path = $format === 'xlsx' ? $this->generateXlsx($headers, $rows, 'Areas') : $this->generateCsv($headers, $rows);
+        OnboardingController::stampActivation($request->user['id'], $request->user['organization_id'], 'first_export_at');
         Response::success(['download_url' => $this->downloadUrl($path)]);
     }
 

@@ -33,7 +33,9 @@ class PublicShareController
             [$project['id']]
         );
         foreach ($areas as &$a) {
-            $a['geometry'] = $a['geom_json'] ? GeoUtils::swapGeometry(json_decode($a['geom_json'], true)) : null;
+            // Post-normalize: ST_AsGeoJSON for SRID 4326 already emits standard
+            // [lng, lat] under the unified (X=lat, Y=lng) storage. No swap.
+            $a['geometry'] = $a['geom_json'] ? json_decode($a['geom_json'], true) : null;
             unset($a['geom_json']);
             if (!empty($a['demographics_cache'])) {
                 $a['demographics'] = json_decode($a['demographics_cache'], true);
@@ -67,7 +69,9 @@ class PublicShareController
             [$project['id']]
         );
         foreach ($areas as &$a) {
-            $a['geometry'] = $a['geom_json'] ? GeoUtils::swapGeometry(json_decode($a['geom_json'], true)) : null;
+            // Post-normalize: ST_AsGeoJSON for SRID 4326 already emits standard
+            // [lng, lat] under the unified (X=lat, Y=lng) storage. No swap.
+            $a['geometry'] = $a['geom_json'] ? json_decode($a['geom_json'], true) : null;
             unset($a['geom_json']);
         }
         self::bumpViewCount($project['id']);

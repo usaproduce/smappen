@@ -79,6 +79,55 @@ class ProjectController
         Response::success(['id' => $project['id']], 'Project deleted');
     }
 
+    /**
+     * OP15 — soft archive: stamp `archived_at` so the project drops out of
+     * the main list but data is preserved (90-day retention before cron
+     * cleanup actually deletes). Body: { archived: true|false } toggles.
+     */
+    public function archive(Request $request): void
+    {
+        $project = $this->verifyOwnership($request);
+        $body = $request->getBody() ?? [];
+        $archived = !empty($body['archived']);
+        \App\Core\Database::getInstance()->query(
+            'UPDATE projects SET archived_at = ? WHERE id = ?',
+            [$archived ? date('Y-m-d H:i:s') : null, $project['id']]
+        );
+        Response::success(['id' => $project['id'], 'archived' => $archived]);
+    }
+
+    /**
+     * OP2 — export a project as a JSON bundle (areas + folders + project
+     * meta + demographics snapshot). v1 is JSON, not ZIP, because PHP's
+     * ZipArchive isn't installed everywhere and the bundle is small (<5MB
+     * even for big projects). Client can save it as `.smappen` and re-import.
+     */
+    public function exportBundle(Request $request): void
+    {
+        $project = $this->verifyOwnership($request);
+        $db = \App\Core\Database::getInstance();
+        $areas = $db->fetchAll(
+            'SELECT id, name, area_type, ST_AsGeoJSON(geometry) AS geometry, fill_color, stroke_color,
+                    fill_opacity, stroke_weight, center_lat, center_lng, center_address, travel_mode,
+                    travel_time_minutes, travel_distance_km, notes, demographics_cache, created_at
+               FROM areas WHERE project_id = ?',
+            [$project['id']]
+        );
+        $folders = $db->fetchAll('SELECT * FROM folders WHERE project_id = ?', [$project['id']]);
+        $bundle = [
+            'smappen_export_version' => 1,
+            'exported_at' => date('c'),
+            'project'  => $project,
+            'folders'  => $folders,
+            'areas'    => $areas,
+        ];
+        $fname = preg_replace('/[^a-z0-9-]+/i', '-', $project['name'] ?? 'project') . '-' . date('Ymd') . '.smappen.json';
+        header('Content-Type: application/json');
+        header('Content-Disposition: attachment; filename="' . $fname . '"');
+        echo json_encode($bundle, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
     public function shared(Request $request): void
     {
         $token = $request->getParam('shareToken');

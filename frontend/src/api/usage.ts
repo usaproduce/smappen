@@ -16,6 +16,10 @@ export const usageApi = {
     const { data } = await api.get('/api/usage/pricing');
     return data.data.prices;
   },
+  // Fire once per Maps JS session (top-level <GoogleMap> mount).
+  async logMapLoad(): Promise<void> {
+    try { await api.post('/api/usage/log-map-load', {}); } catch { /* non-critical */ }
+  },
 };
 
 /**

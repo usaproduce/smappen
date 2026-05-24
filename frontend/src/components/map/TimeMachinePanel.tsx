@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Pause, X, Clock, TrendingDown, ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { Play, Pause, X, TrendingDown, ChevronDown, ChevronUp, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useMapStore } from '../../stores/mapStore';
 import { api } from '../../api/client';
@@ -101,6 +101,7 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
       else if (e.key === 'ArrowRight') { e.preventDefault(); setPlaying(false); setHour((h) => (h + 1) % 24); }
       else if (e.key === '[') { e.preventDefault(); setSpeed((s) => SPEEDS[Math.min(SPEEDS.length - 1, SPEEDS.indexOf(s) + 1)] ?? s); }
       else if (e.key === ']') { e.preventDefault(); setSpeed((s) => SPEEDS[Math.max(0, SPEEDS.indexOf(s) - 1)] ?? s); }
+      else if (e.key === 'Escape') { e.preventDefault(); onClose(); } // BF8 — match the global Esc-closes-panel convention
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -158,7 +159,13 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
     >
       {/* ── Row 1: identity + controls (always visible) ──────────────────── */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-slate-50">
-        <Clock size={14} style={{ color: '#7848BB' }} />
+        {/* Tweak #22 — 24-segment conic-gradient clock showing current hour
+            as filled, future hours as muted. Replaces the static Clock icon. */}
+        <span
+          className="daypart-clock"
+          style={{ ['--hour' as any]: hour + 1 }}
+          title={`Hour ${hour}`}
+        />
         <span className="font-bold text-[13px]" style={{ color: '#1A1A2E' }}>Daypart</span>
         <span className="text-[9px] uppercase font-bold tracking-wider text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded-full">
           24-hour reach
@@ -279,34 +286,74 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
       {/* ── Row 3: heatstrip (the scrubber). Stretched full-width since the
             strip itself is now docked to the bottom of the map. ─────────── */}
       {data && (
-        <div className="px-3 pt-2 pb-2">
-          <div className="flex items-end gap-1 h-9">
-            {relAreas.map((rel, i) => (
-              <button
-                key={i}
-                onClick={() => { setPlaying(false); setHour(i); }}
-                title={`${data.hours[i].label} · ${Math.round(data.hours[i].area_sq_km ?? 0).toLocaleString()} km²`}
-                className="flex-1 transition-all rounded-sm hover:opacity-100 cursor-pointer"
-                style={{
-                  height: `${Math.round(rel * 100)}%`,
-                  background: PALETTE[i],
-                  opacity: i === hour ? 1 : 0.45,
-                  outline: i === hour ? '2px solid #1A1A2E' : 'none',
-                  outlineOffset: i === hour ? '1px' : '0',
-                }}
-              />
-            ))}
-          </div>
-          <div className="flex justify-between text-[9px] text-slate-400 mt-1 px-0.5 tabular-nums">
-            <span>00:00</span>
-            <span>06:00</span>
-            <span>12:00</span>
-            <span>18:00</span>
-            <span>23:00</span>
-          </div>
-        </div>
+        <HeatStrip
+          data={data}
+          hour={hour}
+          relAreas={relAreas}
+          onScrub={(i) => { setPlaying(false); setHour(i); }}
+        />
       )}
     </aside>
+  );
+}
+
+/**
+ * Tweak #23 — heatstrip with a hover scrub tooltip. As the user mouses
+ * across the bars, a floating pill shows the hour label + area in km².
+ * Clicking a bar still seeks playback to that hour.
+ */
+function HeatStrip({
+  data, hour, relAreas, onScrub,
+}: {
+  data: DayResponse;
+  hour: number;
+  relAreas: number[];
+  onScrub: (i: number) => void;
+}) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  return (
+    <div className="px-3 pt-2 pb-2">
+      <div
+        className="relative flex items-end gap-1 h-9"
+        onMouseLeave={() => setHoverIdx(null)}
+      >
+        {relAreas.map((rel, i) => (
+          <button
+            key={i}
+            onClick={() => onScrub(i)}
+            onMouseEnter={() => setHoverIdx(i)}
+            className="flex-1 transition-all rounded-sm cursor-pointer"
+            style={{
+              height: `${Math.round(rel * 100)}%`,
+              background: PALETTE[i],
+              opacity: i === hour ? 1 : (hoverIdx === i ? 0.85 : 0.45),
+              outline: i === hour ? '2px solid #1A1A2E' : 'none',
+              outlineOffset: i === hour ? '1px' : '0',
+            }}
+          />
+        ))}
+        {hoverIdx != null && (
+          <div
+            className="absolute -top-9 left-0 pointer-events-none"
+            style={{ transform: `translateX(${(hoverIdx + 0.5) * (100 / 24)}%) translateX(-50%)`, left: 0, right: 0 }}
+          >
+            <div
+              className="inline-block bg-[#1A1A2E] text-white text-[10px] font-bold px-2 py-1 rounded shadow tabular-nums whitespace-nowrap"
+              style={{ transform: 'translateX(-50%)' }}
+            >
+              {data.hours[hoverIdx].label} · {Math.round(data.hours[hoverIdx].area_sq_km ?? 0).toLocaleString()} km²
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="flex justify-between text-[9px] text-slate-400 mt-1 px-0.5 tabular-nums">
+        <span>00:00</span>
+        <span>06:00</span>
+        <span>12:00</span>
+        <span>18:00</span>
+        <span>23:00</span>
+      </div>
+    </div>
   );
 }
 

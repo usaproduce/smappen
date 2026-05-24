@@ -1,12 +1,28 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { Building, Search as SearchIcon } from 'lucide-react';
+import {
+  Building, Search as SearchIcon, Utensils, Coffee, ShoppingBag, Pill,
+  Dumbbell, GraduationCap, Stethoscope, Landmark, Fuel, Sparkles,
+} from 'lucide-react';
 import { placesApi } from '../../api/places';
 import { useMapStore } from '../../stores/mapStore';
 import EmptyState from '../common/EmptyState';
 import type { Area, Place } from '../../types';
 
-const CATEGORIES = ['', 'restaurant', 'cafe', 'store', 'pharmacy', 'gym', 'school', 'hospital', 'bank', 'gas_station'];
+// Tweak #13 — replace the plain category <select> with a horizontal chip
+// row of recognizable icons. Tapping a chip both selects and runs search.
+const CATEGORIES: { key: string; label: string; icon: any }[] = [
+  { key: '',             label: 'Any',         icon: Sparkles },
+  { key: 'restaurant',   label: 'Food',        icon: Utensils },
+  { key: 'cafe',         label: 'Cafes',       icon: Coffee },
+  { key: 'store',        label: 'Retail',      icon: ShoppingBag },
+  { key: 'pharmacy',     label: 'Pharmacy',    icon: Pill },
+  { key: 'gym',          label: 'Gyms',        icon: Dumbbell },
+  { key: 'school',       label: 'Schools',     icon: GraduationCap },
+  { key: 'hospital',     label: 'Health',      icon: Stethoscope },
+  { key: 'bank',         label: 'Banks',       icon: Landmark },
+  { key: 'gas_station',  label: 'Gas',         icon: Fuel },
+];
 
 export default function POISearchPanel({ area }: { area: Area }) {
   const [type, setType] = useState('');
@@ -59,10 +75,34 @@ export default function POISearchPanel({ area }: { area: Area }) {
   return (
     <div className="p-4 space-y-3">
       <div className="space-y-2">
-        <select className="select" value={type} onChange={(e) => setType(e.target.value)}>
-          {CATEGORIES.map((c) => <option key={c} value={c}>{c || 'Any category'}</option>)}
-        </select>
-        <input className="input" placeholder="Keyword (optional)" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+        {/* Horizontal scrollable chip strip. Each chip combines an icon
+            recognizable at a glance with a 1-word label. Tapping toggles
+            selection without immediately firing the API — user can tweak
+            keyword first, then Search. */}
+        <div className="flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-1 scroll-x">
+          {CATEGORIES.map((c) => {
+            const Active = type === c.key;
+            const Icon = c.icon;
+            return (
+              <button
+                key={c.key || 'any'}
+                onClick={() => setType(c.key)}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap shrink-0 transition-colors ${
+                  Active
+                    ? 'bg-violet-100 text-violet-700 ring-1 ring-violet-300'
+                    : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Icon size={12} />
+                {c.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="relative">
+          <SearchIcon size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          <input className="input pl-8" placeholder="Keyword (optional)" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+        </div>
         <button className="btn btn-primary w-full justify-center" disabled={loading} onClick={search}>
           {loading ? 'Searching…' : 'Search'}
         </button>

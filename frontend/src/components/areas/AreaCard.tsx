@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Trash2, MoreHorizontal, Car, Bike, Footprints, Circle, Edit3,
-  Copy, FolderInput, Crosshair, Eye, Palette, Star, Sparkles,
+  Copy, FolderInput, Crosshair, Eye, EyeOff, Palette, Star, Sparkles,
 } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 import { useProjectStore } from '../../stores/projectStore';
@@ -10,8 +10,90 @@ import { useUndoStore } from '../../stores/undoStore';
 import { useUiPrefsStore } from '../../stores/uiPrefsStore';
 import { areasApi } from '../../api/areas';
 import { AREA_PALETTE } from '../../utils/colors';
+import { allOuterRings, polygonBounds } from '../../utils/geo';
 import type { Area } from '../../types';
 import toast from 'react-hot-toast';
+
+/**
+ * Tweak #7 — tiny inline SVG thumbnail of the area's polygon shape, fitted
+ * to a small box. No Google static-map call required → no API cost, instant
+ * render. When there's no geometry (radius areas with only center+km), we
+ * draw a circle instead.
+ */
+function AreaThumbnail({ area, size = 28 }: { area: Area; size?: number }) {
+  const fill = area.fill_color || '#7848BB';
+  const path = useMemo(() => {
+    const g: any = area.geometry;
+    if (!g) return null;
+    const rings = allOuterRings(g);
+    if (rings.length === 0) return null;
+
+    // BF3 — antimeridian + Alaska/Hawaii fix. polygonBounds() returns the raw
+    // [-180,180] bounds, which span the entire world for any polygon that
+    // crosses the dateline (Aleutian Islands, Far East Russia). Detect: if
+    // bbox width > 180°, shift negative longitudes by +360 so the polygon
+    // becomes contiguous in the projected space.
+    let coords = rings.map((r) => r.map((p) => [...p] as [number, number]));
+    const raw = polygonBounds(g);
+    if (raw.maxLng - raw.minLng > 180) {
+      coords = coords.map((r) => r.map(([lng, lat]) => [lng < 0 ? lng + 360 : lng, lat] as [number, number]));
+    }
+    // Recompute bbox from the (possibly shifted) coords.
+    let minLat = Infinity, minLng = Infinity, maxLat = -Infinity, maxLng = -Infinity;
+    for (const ring of coords) for (const [lng, lat] of ring) {
+      if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
+    }
+
+    const W = maxLng - minLng || 1;
+    const H = maxLat - minLat || 1;
+    const pad = 1.5;
+    const inner = size - pad * 2;
+    // Compensate for longitude pinch at high latitudes — Alaska polygons at
+    // 65°N stretch east-west visually if we don't multiply the lng axis by
+    // cos(centerLat). Fine to skip for low-latitude (most US) shapes.
+    const centerLat = (minLat + maxLat) / 2;
+    const lngScale = Math.cos((centerLat * Math.PI) / 180);
+    const Weff = W * lngScale || W;
+    const sx = inner / Weff;
+    const sy = inner / H;
+    const s = Math.min(sx, sy);
+    const offsetX = (size - Weff * s) / 2;
+    const offsetY = (size - H * s) / 2;
+    const project = (lng: number, lat: number) => {
+      const x = (lng - minLng) * lngScale * s + offsetX;
+      const y = size - ((lat - minLat) * s + offsetY);
+      return [x.toFixed(2), y.toFixed(2)] as const;
+    };
+    return coords
+      .map((ring) => {
+        if (!ring.length) return '';
+        let d = '';
+        for (let i = 0; i < ring.length; i++) {
+          const [lng, lat] = ring[i];
+          const [x, y] = project(lng, lat);
+          d += (i === 0 ? 'M' : 'L') + x + ',' + y + ' ';
+        }
+        return d + 'Z';
+      })
+      .join(' ');
+  }, [area.geometry, size]);
+
+  if (!path) {
+    // No geometry — show a filled dot as fallback (radius areas).
+    return (
+      <span
+        className="shrink-0 inline-block rounded-full border border-black/10"
+        style={{ width: size * 0.45, height: size * 0.45, background: fill }}
+      />
+    );
+  }
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0 rounded border border-slate-200 bg-slate-50">
+      <path d={path} fill={fill} fillOpacity={0.35} stroke={fill} strokeWidth={1.2} strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 const modeIcon: Record<string, any> = {
   'driving-car': Car,
@@ -20,7 +102,8 @@ const modeIcon: Record<string, any> = {
 };
 
 export default function AreaCard({ area }: { area: Area }) {
-  const { selectedAreaId, selectArea, fitBoundsToArea } = useMapStore();
+  const { selectedAreaId, selectArea, fitBoundsToArea, hiddenAreaIds, toggleAreaVisibility } = useMapStore();
+  const isHidden = hiddenAreaIds.has(area.id);
   const { removeArea, addArea, updateArea } = useProjectStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -40,20 +123,15 @@ export default function AreaCard({ area }: { area: Area }) {
     : typeof dc.population === 'number' ? dc.population
     : undefined;
 
-  // Click outside closes the menu
-  useEffect(() => {
-    if (!menuOpen && !colorPickerOpen) return;
-    function onClick(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-        setColorPickerOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [menuOpen, colorPickerOpen]);
+  // Outside-click handling lives inside PortalMenu (since the menu is rendered
+  // into document.body, this component's local menuRef can't see the portal
+  // content — every menu item click would look "outside" and prematurely
+  // close the menu BEFORE the item's own onClick could fire. That's why
+  // Delete + every other menu action quietly stopped working).
 
   async function onDelete() {
+    setMenuOpen(false); // close the menu before the blocking confirm() so the
+                        // portal doesn't sit visually orphaned during the dialog
     if (!confirm(`Delete "${area.name}"?`)) return;
     // Capture enough state to recreate the area on undo. Cheaper than a real
     // soft-delete since this only lives in the user's session and the server
@@ -218,21 +296,26 @@ export default function AreaCard({ area }: { area: Area }) {
 
   return (
     <div
-      className={`area-row group relative ${isSelected ? 'selected' : ''}`}
+      className={`area-row group relative ${isSelected ? 'selected' : ''} ${isHidden ? 'opacity-60' : ''}`}
       onClick={() => {
         if (renaming) return;
         selectArea(area.id);
         if (area.geometry) fitBoundsToArea(area.geometry);
       }}
+      // VT21 — bump the polygon on the map when the row is hovered, so
+      // the user can scan the list and visually trace each row to its
+      // shape on the map.
+      onMouseEnter={() => useMapStore.getState().setHoveredAreaId(area.id)}
+      onMouseLeave={() => useMapStore.getState().setHoveredAreaId(null)}
     >
-      <span className="area-color-dot" style={{ background: area.fill_color || '#7848BB' }} />
-      {isIsochrone ? (
+      {/* Tweak #7 — thumbnail of the area's actual polygon shape, much more
+          recognizable than a flat color dot once you have 30+ areas. */}
+      <AreaThumbnail area={area} size={28} />
+      {isIsochrone && (
         <span className="area-meta">
           <ModeIcon size={14} />
           {area.travel_time_minutes ? `${area.travel_time_minutes} min` : ''}
         </span>
-      ) : (
-        <Circle size={14} style={{ color: area.fill_color }} />
       )}
 
       {renaming ? (
@@ -249,7 +332,16 @@ export default function AreaCard({ area }: { area: Area }) {
           onBlur={onRename}
         />
       ) : (
-        <span className="area-name">{area.name}</span>
+        // VT10 — double-click name to rename without opening the menu.
+        // stopPropagation so the outer row's single-click select doesn't
+        // also fire and steal focus.
+        <span
+          className="area-name"
+          onDoubleClick={(e) => { e.stopPropagation(); setRenameVal(area.name); setRenaming(true); }}
+          title="Double-click to rename"
+        >
+          {area.name}
+        </span>
       )}
 
       {pop != null && !renaming && (
@@ -259,24 +351,31 @@ export default function AreaCard({ area }: { area: Area }) {
       )}
 
       <button
+        onClick={(e) => { e.stopPropagation(); toggleAreaVisibility(area.id); }}
+        className={`p-1 rounded hover:bg-slate-100 transition ${
+          isHidden ? 'text-slate-400' : 'text-slate-500 hover:text-violet-700'
+        }`}
+        title={isHidden ? 'Show on map' : 'Hide on map'}
+      >
+        {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+      </button>
+      <button
         onClick={onToggleFavorite}
         className={`p-1 rounded hover:bg-slate-100 transition ${
-          (area as any).is_favorite
-            ? 'text-amber-500'
-            : 'text-slate-300 opacity-0 group-hover:opacity-100'
+          (area as any).is_favorite ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500'
         }`}
         title={(area as any).is_favorite ? 'Unfavorite' : 'Mark as favorite'}
       >
-        <Star size={13} fill={(area as any).is_favorite ? 'currentColor' : 'none'} />
+        <Star size={14} fill={(area as any).is_favorite ? 'currentColor' : 'none'} />
       </button>
       <div ref={menuRef} className="relative" onClick={(e) => e.stopPropagation()}>
         <button
           ref={menuButtonRef}
-          className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-100 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="text-slate-500 hover:text-slate-800 p-1 rounded hover:bg-slate-100 transition-colors"
           onClick={() => { setMenuOpen(!menuOpen); setColorPickerOpen(false); }}
           title="Actions"
         >
-          <MoreHorizontal size={14} />
+          <MoreHorizontal size={16} />
         </button>
         {menuOpen && (
           <PortalMenu
@@ -396,26 +495,37 @@ function PortalMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number; flipUp: boolean }>({ top: 0, left: 0, flipUp: false });
 
-  // Position before paint so the menu never visibly jumps.
+  // Position before paint so the menu never visibly jumps. Re-positions
+  // on scroll/resize (BF6 — old code closed on scroll, which felt brittle
+  // when the left panel scrolled even a pixel; following the anchor instead
+  // keeps the menu usable). Closes only when the anchor is fully off-screen.
   useLayoutEffect(() => {
     if (!anchor) return;
     const place = () => {
       const r = anchor.getBoundingClientRect();
+      // Anchor scrolled out of view entirely — close.
+      if (r.bottom < 0 || r.top > window.innerHeight) {
+        onClose();
+        return;
+      }
       const menuH = menuRef.current?.offsetHeight ?? 280;
       const menuW = 200;
       const margin = 6;
       const wouldOverflowBottom = r.bottom + menuH + margin > window.innerHeight;
-      // Anchor right edge to the button's right; clamp left so we never go off-screen.
       const right = Math.min(window.innerWidth - 8, r.right);
       const left = Math.max(8, right - menuW);
       const top = wouldOverflowBottom ? Math.max(8, r.top - menuH - margin) : r.bottom + margin;
       setPos({ top, left, flipUp: wouldOverflowBottom });
     };
     place();
-    window.addEventListener('scroll', onClose, true);
+    // Capture-phase listener so scrolls inside nested overflow containers
+    // (left panel, right panel) all reach us. Without `true`, only the
+    // window scroll fires and the menu detaches visually when an inner
+    // scrollable parent moves.
+    window.addEventListener('scroll', place, true);
     window.addEventListener('resize', place);
     return () => {
-      window.removeEventListener('scroll', onClose, true);
+      window.removeEventListener('scroll', place, true);
       window.removeEventListener('resize', place);
     };
   }, [anchor, onClose]);

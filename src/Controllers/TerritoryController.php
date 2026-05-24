@@ -212,6 +212,50 @@ class TerritoryController
      *
      * POST /api/areas/{id}/rebuild-boundary
      */
+    /**
+     * OP23 — bulk-rebuild every auto-generated territory in a project.
+     * Iterates each area that has a generation_job_id (= came out of
+     * territory generation) and applies the same ST_Union-over-source-
+     * tracts pass that rebuildBoundary does individually. Returns a
+     * per-area success/failure roll-up.
+     */
+    public function bulkRebuild(Request $request): void
+    {
+        $projectId = $request->getParam('projectId');
+        if (!$projectId) Response::error('projectId required');
+        $project = self::loadProject($request, $projectId);
+
+        @ini_set('memory_limit', '512M');
+        @set_time_limit(300);
+
+        $areas = Database::getInstance()->fetchAll(
+            'SELECT id, name FROM areas WHERE project_id = ? AND generation_job_id IS NOT NULL',
+            [$project['id']]
+        );
+
+        $ok = 0; $failed = 0; $details = [];
+        foreach ($areas as $a) {
+            try {
+                // Reuse the existing rebuild logic via a synthetic request hop.
+                // Cheaper than duplicating it; the controller method runs the
+                // ST_Union pass and updates the row.
+                $r = new \App\Core\Request();
+                $r->setParam('id', $a['id']);
+                $r->user = $request->user;
+                ob_start();
+                $this->rebuildBoundary($r);
+                ob_end_clean();
+                $ok++;
+                $details[] = ['id' => $a['id'], 'name' => $a['name'], 'status' => 'ok'];
+            } catch (\Throwable $e) {
+                $failed++;
+                $details[] = ['id' => $a['id'], 'name' => $a['name'], 'status' => 'error', 'error' => $e->getMessage()];
+                error_log('bulkRebuild ' . $a['id'] . ' failed: ' . $e->getMessage());
+            }
+        }
+        Response::success(['ok' => $ok, 'failed' => $failed, 'total' => count($areas), 'details' => $details]);
+    }
+
     public function rebuildBoundary(Request $request): void
     {
         $areaId = $request->getParam('id');

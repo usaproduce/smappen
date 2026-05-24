@@ -100,6 +100,13 @@ switch ($cmd) {
             if ($geom['type'] === 'Polygon') {
                 $geom = ['type' => 'MultiPolygon', 'coordinates' => [$geom['coordinates']]];
             }
+            // MySQL 8 with SRID 4326 enforces strict EPSG axis order (lat, lng).
+            // GeoJSON is (lng, lat). Without this swap, |lng| > 90 (everything
+            // west of about Western IN) triggers "Latitude out of range" because
+            // MySQL reads our "lng lat" WKT as "lat lng". Pre-swap so WKT is
+            // "lat lng" — same convention as the DMV tracts that were luckily
+            // inserted under |lat,lng|<90 where the bug was undetectable.
+            $geom = GeoUtils::swapGeometry($geom);
             $wkt = GeoUtils::geoJsonToWkt($geom);
             try {
                 $aland = isset($props['ALAND']) ? (float)$props['ALAND'] : null;

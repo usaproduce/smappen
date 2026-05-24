@@ -20,6 +20,21 @@ if (Config::isDevelopment()) {
 ini_set('log_errors', '1');
 ini_set('error_log', $basePath . '/storage/logs/php-error.log');
 
+// Security headers — applied to every response. Embed pages disable the
+// frame-ancestors restriction (they're meant to be iframed); everything
+// else stays clickjacking-protected.
+$isEmbed = str_starts_with((string)($_SERVER['REQUEST_URI'] ?? ''), '/api/public/');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+header('Permissions-Policy: geolocation=(self), microphone=(), camera=()');
+header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+if ($isEmbed) {
+    header("Content-Security-Policy: frame-ancestors *");
+} else {
+    header('X-Frame-Options: SAMEORIGIN');
+    header("Content-Security-Policy: frame-ancestors 'self'");
+}
+
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
     Response::corsHeaders();
     http_response_code(204);

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import type { HeatmapMetric, HeatmapLevel } from '../api/heatmap';
+import type { AnalogCandidate } from '../api/analogs';
 export type HeatmapLevelOverride = 'auto' | HeatmapLevel;
 
 interface MapState {
@@ -32,6 +33,26 @@ interface MapState {
   /** Right-panel active tab. Promoted out of RightPanel local state so the
    *  toolbar Demographics/Businesses/Reports buttons can deep-link into a tab. */
   rightPanelTab: 'overview' | 'demographics' | 'businesses' | 'data';
+  /** Analog Finder results (Advanced panel → Analogs tab). MapCanvas reads
+   *  this to render numbered candidate pins; AnalogTab writes it. */
+  analogResults: AnalogCandidate[] | null;
+  /** Source area used for the analog query (helps MapCanvas draw a halo on
+   *  the source so the user can tell results from origin). */
+  analogSourceAreaId: string | null;
+  /** VT21 — when the user hovers an area row in the left panel, the matching
+   *  polygon on the map should bump (heavier stroke + slightly raised fill
+   *  opacity) so the cross-surface relationship is obvious. */
+  hoveredAreaId: string | null;
+  /** Per-area visibility — when an id is in this set, the area's polygon
+   *  + center pin are hidden on the map but the row stays in the list (so
+   *  the user can toggle it back on). Persisted to localStorage so tab
+   *  reloads don't unhide everything. */
+  hiddenAreaIds: Set<string>;
+  /** Snapshot of the currently-rendered heatmap features. Updated by
+   *  ChoroplethLayer on each successful fetch. Used by the screenshot
+   *  composite to draw the heatmap polygons on top of the static-map base
+   *  so the captured PNG actually includes the heatmap the user sees. */
+  heatmapFeatures: { geometry: any; value: number | null; color: string }[] | null;
   setCenter: (c: { lat: number; lng: number }) => void;
   setZoom: (z: number) => void;
   selectArea: (id: string | null) => void;
@@ -52,6 +73,12 @@ interface MapState {
   closeTimeMachine: () => void;
   toggleFavoritesOnly: () => void;
   setRightPanelTab: (t: MapState['rightPanelTab']) => void;
+  setAnalogResults: (results: AnalogCandidate[] | null, sourceAreaId?: string | null) => void;
+  clearAnalogResults: () => void;
+  setHoveredAreaId: (id: string | null) => void;
+  toggleAreaVisibility: (id: string) => void;
+  isAreaHidden: (id: string) => boolean;
+  setHeatmapFeatures: (features: { geometry: any; value: number | null; color: string }[] | null) => void;
 }
 
 export const useMapStore = create<MapState>((set, get) => ({
@@ -76,6 +103,13 @@ export const useMapStore = create<MapState>((set, get) => ({
   timeMachineRequest: null,
   favoritesOnly: false,
   rightPanelTab: 'overview',
+  analogResults: null,
+  analogSourceAreaId: null,
+  hoveredAreaId: null,
+  hiddenAreaIds: typeof localStorage !== 'undefined' && localStorage.getItem('smappen_hidden_areas')
+    ? new Set(JSON.parse(localStorage.getItem('smappen_hidden_areas') || '[]'))
+    : new Set<string>(),
+  heatmapFeatures: null,
   setCenter: (center) => set({ center }),
   setZoom: (zoom) => set({ zoom }),
   selectArea: (id) => set({ selectedAreaId: id }),
@@ -107,6 +141,18 @@ export const useMapStore = create<MapState>((set, get) => ({
   closeTimeMachine: () => set({ timeMachineRequest: null, timeMachine: null }),
   toggleFavoritesOnly: () => set((s) => ({ favoritesOnly: !s.favoritesOnly })),
   setRightPanelTab: (rightPanelTab) => set({ rightPanelTab }),
+  setAnalogResults: (results, sourceAreaId = null) =>
+    set({ analogResults: results, analogSourceAreaId: sourceAreaId ?? null }),
+  clearAnalogResults: () => set({ analogResults: null, analogSourceAreaId: null }),
+  setHoveredAreaId: (hoveredAreaId) => set({ hoveredAreaId }),
+  toggleAreaVisibility: (id) => set((s) => {
+    const next = new Set(s.hiddenAreaIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    try { localStorage.setItem('smappen_hidden_areas', JSON.stringify(Array.from(next))); } catch {}
+    return { hiddenAreaIds: next };
+  }),
+  isAreaHidden: (id) => get().hiddenAreaIds.has(id),
+  setHeatmapFeatures: (heatmapFeatures) => set({ heatmapFeatures }),
   fitBoundsToArea: (geometry) => {
     const map = get().mapInstance;
     if (!map || !geometry?.coordinates?.[0]) return;

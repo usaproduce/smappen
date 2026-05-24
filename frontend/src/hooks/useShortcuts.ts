@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useMapStore } from '../stores/mapStore';
+import { useUiPrefsStore } from '../stores/uiPrefsStore';
 
 interface Opts {
   onCreateArea?: () => void;
@@ -44,6 +45,36 @@ export function useShortcuts({ onCreateArea, onSaveSnapshot }: Opts = {}) {
       }
       if (!cmd && (e.key === 'd' || e.key === 'D')) {
         if (onCreateArea) { e.preventDefault(); onCreateArea(); }
+        return;
+      }
+      // OP7 — additional shortcuts. Each leaves Escape, ⌘S, D, Delete intact.
+      if (!cmd && (e.key === 'n' || e.key === 'N')) {
+        // n = new area (alias of d)
+        if (onCreateArea) { e.preventDefault(); onCreateArea(); }
+        return;
+      }
+      if (!cmd && (e.key === 'b' || e.key === 'B')) {
+        // b = toggle population heatmap
+        e.preventDefault();
+        useMapStore.getState().toggleHeatmap();
+        return;
+      }
+      if (!cmd && (e.key === 'f' || e.key === 'F')) {
+        // f = favorites-only filter
+        e.preventDefault();
+        useMapStore.getState().toggleFavoritesOnly();
+        return;
+      }
+      if (!cmd && (e.key === 'l' || e.key === 'L')) {
+        // l = toggle polygon labels
+        e.preventDefault();
+        useUiPrefsStore.getState().togglePolygonLabels();
+        return;
+      }
+      if (!cmd && e.key === '?') {
+        // ? = open shortcuts modal
+        e.preventDefault();
+        useUiPrefsStore.getState().toggleShortcutsModal();
         return;
       }
       if (!cmd && (e.key === 'Delete' || e.key === 'Backspace')) {

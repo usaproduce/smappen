@@ -22,12 +22,50 @@ class PlacesController
         $keyword = $body['keyword'] ?? null;
         $areaId = $body['area_id'] ?? null;
 
+        // Places API (New) searchNearby ONLY accepts the Table A type
+        // strings (https://developers.google.com/maps/documentation/places/web-service/place-types)
+        // and REQUIRES includedTypes to be non-empty. The frontend chip
+        // strip had "store" (not in Table A) and "Any" (empty) — both
+        // produced silent 0-result responses. Map the chip values to
+        // valid types here so existing UI doesn't need to change, then
+        // route to searchText when there's no valid type.
+        static $TABLE_A_MAP = [
+            // chip value     => valid Table A type
+            'restaurant'     => 'restaurant',
+            'cafe'           => 'cafe',
+            'pharmacy'       => 'pharmacy',
+            'gym'            => 'gym',
+            'school'         => 'school',
+            'hospital'       => 'hospital',
+            'bank'           => 'bank',
+            'gas_station'    => 'gas_station',
+            // "store" isn't in Table A — fall back to grocery_store which
+            // is the closest single-category match for the user's intent.
+            'store'          => 'grocery_store',
+        ];
+        $validType = $type ? ($TABLE_A_MAP[$type] ?? null) : null;
+
         try {
             $svc = new GoogleMapsService();
-            $places = $svc->searchPlacesNearby($lat, $lng, $radius, $type, $keyword);
-            // No explicit logApiUsage — rateLimit middleware logged 'places'
-            // (cost=0) for rate limiting; we log a separate 'places_nearby'
-            // row here for the actual cost so they don't conflict.
+            if ($validType) {
+                // Use searchNearby with a valid Table A type. Keyword (if
+                // provided) is applied as a server-side name-substring
+                // filter inside the service — fine when we have a type.
+                $places = $svc->searchPlacesNearby($lat, $lng, $radius, $validType, $keyword);
+            } else {
+                // No usable type — route through searchText, which accepts
+                // free-text queries and doesn't require includedTypes.
+                // Build a query that approximates what the user wanted:
+                //   keyword "coffee" + no type  → "coffee"
+                //   no keyword + chip "Any"     → "businesses"
+                $query = $keyword
+                    ? trim($keyword)
+                    : ($type ? trim($type) : 'businesses');
+                $places = $svc->searchPlacesText($query, $lat, $lng, $radius);
+                // searchText already keyword-matches in the query, no need
+                // to re-filter client-side.
+                $keyword = null;
+            }
             $svc->logApiUsage('places_nearby', $request->user['id'], 'places_nearby');
         } catch (\Throwable $e) {
             self::handleGoogleError($e, 'places');

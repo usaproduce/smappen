@@ -15,6 +15,61 @@ use TCPDF;
 
 class ReportController
 {
+    /**
+     * #20 — Branded PDF report. Cover + demographics + age table +
+     * methodology footer. Auth + plan-gated identically to JSON `generate`.
+     * Returns the PDF inline so the browser downloads it directly.
+     */
+    public function generatePdf(Request $request): void
+    {
+        $plan = $request->user['plan'] ?? 'free';
+        if (!PlanLimits::getLimit($plan, 'reports')) {
+            Response::error('PDF reports require a paid plan. Upgrade to enable.', 403);
+        }
+        $area = Area::findById($request->getParam('id'));
+        if (!$area) Response::error('Area not found', 404);
+        $project = Project::findById($area['project_id']);
+        if (!$project || $project['organization_id'] !== $request->user['organization_id']) {
+            Response::error('Access denied', 403);
+        }
+
+        // Templates — config/report_templates.php lists the section preset
+        // for each ID. Defaults to 'site_selection' when unset, matching the
+        // historic behavior. Body param wins over query, so the frontend can
+        // either send it as JSON or stick it in the URL.
+        $b = $request->getBody() ?? [];
+        $templateId = $b['template'] ?? $request->getQuery('template', 'site_selection');
+        $templates = require dirname(__DIR__, 2) . '/config/report_templates.php';
+        $template  = $templates[$templateId] ?? $templates['site_selection'];
+
+        try {
+            $svc = new \App\Services\PdfReportService();
+            $path = $svc->generate($area['id'], $template);
+            $fname = preg_replace('/[^a-z0-9-]+/i', '-', $area['name']) . '.pdf';
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: attachment; filename="' . $fname . '"');
+            readfile($path);
+            exit;
+        } catch (\Throwable $e) {
+            error_log('PDF generation failed: ' . $e->getMessage());
+            Response::error('PDF generation failed', 500);
+        }
+    }
+
+    /**
+     * Returns the list of available report templates so the UI can render
+     * a picker. Simple wrapper over config/report_templates.php.
+     */
+    public function templates(Request $request): void
+    {
+        $templates = require dirname(__DIR__, 2) . '/config/report_templates.php';
+        $out = [];
+        foreach ($templates as $id => $t) {
+            $out[] = array_merge(['id' => $id], $t);
+        }
+        Response::success(['templates' => $out]);
+    }
+
     public function generate(Request $request): void
     {
         // Plan check: PDF reports are paid only.
@@ -75,6 +130,7 @@ class ReportController
             'file_path' => $pdfPath,
             'generated_by' => $request->user['id'],
         ]);
+        OnboardingController::stampActivation($request->user['id'], $request->user['organization_id'], 'first_report_at');
 
         Response::success([
             'report_id' => $reportId,

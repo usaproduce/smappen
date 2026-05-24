@@ -1,7 +1,37 @@
 import { Marker } from '@react-google-maps/api';
 import { useMemo } from 'react';
 import { useMapStore } from '../../stores/mapStore';
+import { allOuterRings } from '../../utils/geo';
 import type { Area } from '../../types';
+
+/**
+ * For MultiPolygon territories, area.center_lat/lng comes from the address
+ * the user dropped, which can land OFF the polygon (or in one piece of a
+ * union, ignoring the others). Recompute as the centroid of the largest
+ * ring by vertex count — gives a visually-centered pin on the biggest piece.
+ */
+function bestPinPosition(area: Area): { lat: number; lng: number } | null {
+  const g: any = area.geometry;
+  // Single Polygon or any non-territory area: trust the stored center.
+  if (!g || g.type !== 'MultiPolygon') {
+    return area.center_lat != null && area.center_lng != null
+      ? { lat: area.center_lat, lng: area.center_lng }
+      : null;
+  }
+  // Multi-piece: pick the ring with the most vertices (≈ biggest area for
+  // census-derived shapes) and return its centroid.
+  const rings = allOuterRings(g);
+  if (rings.length === 0) {
+    return area.center_lat != null && area.center_lng != null
+      ? { lat: area.center_lat, lng: area.center_lng }
+      : null;
+  }
+  let best = rings[0];
+  for (const r of rings) if (r.length > best.length) best = r;
+  let sumLat = 0, sumLng = 0;
+  for (const [lng, lat] of best) { sumLat += lat; sumLng += lng; }
+  return { lat: sumLat / best.length, lng: sumLng / best.length };
+}
 
 function pinSvg(color: string): string {
   const svg = `
@@ -26,10 +56,11 @@ function PinMarker({ area, onClick }: { area: Area; onClick: () => void }) {
     };
   }, [area.fill_color]);
 
-  if (area.center_lat == null || area.center_lng == null) return null;
+  const position = useMemo(() => bestPinPosition(area), [area.geometry, area.center_lat, area.center_lng]);
+  if (!position) return null;
   return (
     <Marker
-      position={{ lat: area.center_lat, lng: area.center_lng }}
+      position={position}
       icon={icon as any}
       onClick={onClick}
       title={area.name}

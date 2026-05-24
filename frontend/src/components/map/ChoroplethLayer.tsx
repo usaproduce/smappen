@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
-  const { mapInstance, heatmapLevel, heatmapPaletteId, setHoveredHeatmap, setHeatmapLoading } = useMapStore();
+  const { mapInstance, heatmapLevel, heatmapPaletteId, setHoveredHeatmap, setHeatmapLoading, setHeatmapFeatures } = useMapStore();
   const dataLayerRef = useRef<google.maps.Data | null>(null);
   const rangeRef = useRef<{ min: number; max: number; breaks?: number[] }>({ min: 0, max: 1 });
   const fetchTokenRef = useRef(0);
@@ -73,6 +73,16 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
           rangeRef.current = { min: res.meta.min, max: res.meta.max, breaks: res.meta.breaks };
           layer.addGeoJson({ type: 'FeatureCollection', features: res.features });
           applyStyle();
+          // Publish a flat snapshot (geometry + value + computed color) to
+          // mapStore so the screenshot composite can re-draw the heatmap
+          // on top of the static-map base. Cheap — these features already
+          // live in our memory.
+          const palette = paletteById(heatmapPaletteId);
+          setHeatmapFeatures(res.features.map((f: any) => ({
+            geometry: f.geometry,
+            value: f.properties?.value ?? null,
+            color: colorForValueWith(palette, f.properties?.value ?? null, res.meta.min, res.meta.max, res.meta.breaks),
+          })));
         }
         onMetaChange?.(res.meta);
 

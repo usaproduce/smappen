@@ -10,11 +10,20 @@ import ImportWizard from '../data/ImportWizard';
 import AdvancedPanel from '../advanced/AdvancedPanel';
 import TimeMachinePanel from '../map/TimeMachinePanel';
 import ShortcutsModal from '../common/ShortcutsModal';
+import CommandPalette from '../common/CommandPalette';
+import OnboardingChecklist from '../common/OnboardingChecklist';
+import WhatsNewModal from '../common/WhatsNewModal';
+import FirstRunWizard from '../onboarding/FirstRunWizard';
+import { api } from '../../api/client';
 import ErrorBoundary from '../ErrorBoundary';
 import { useMapStore } from '../../stores/mapStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { useUiPrefsStore } from '../../stores/uiPrefsStore';
 import { useShortcuts } from '../../hooks/useShortcuts';
+import { useDynamicFavicon } from '../../hooks/useDynamicFavicon';
+import { useViewUrl } from '../../hooks/useViewUrl';
 import { saveProjectSnapshot, downloadMapSnapshot } from '../../utils/mapExport';
+import { SMAPPEN_MAP_STYLE_DARK, MAP_STYLE_PRESETS } from '../../utils/mapStyle';
 
 const LIBRARIES: ('drawing' | 'visualization' | 'geometry' | 'places')[] = [
   'drawing', 'visualization', 'geometry', 'places',
@@ -27,17 +36,54 @@ export default function AppLayout() {
   const [importOpen, setImportOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [stuckLoading, setStuckLoading] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+
+  // Check onboarding state once on mount — open the wizard only if the user
+  // hasn't completed/skipped it AND has no areas in their current project.
+  // Stamped on dismiss inside the wizard, so this only fires once per user.
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/api/onboarding/state').then((r) => {
+      if (cancelled) return;
+      const flags = r.data?.data?.flags ?? {};
+      if (!flags.wizard_complete) setWizardOpen(true);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useShortcuts({
     onCreateArea: () => setCreatorOpen(true),
     onSaveSnapshot: () => currentProject && saveProjectSnapshot(currentProject.id),
   });
+  useDynamicFavicon();
+  useViewUrl();
 
+  // Pull the project's areas at snapshot-time so the static map captures
+  // every polygon + center pin currently visible. Hidden areas are filtered
+  // out so the export both auto-fits to and renders only what's on screen.
+  const { areas: projectAreas } = useProjectStore();
   const screenshot = () => {
+    const mapState = useMapStore.getState();
+    const visibleAreas = projectAreas.filter((a) => !mapState.hiddenAreaIds.has(a.id));
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const mapStylePref = useUiPrefsStore.getState().mapStyle;
+    const preset = MAP_STYLE_PRESETS.find((p) => p.id === mapStylePref) ?? MAP_STYLE_PRESETS[0];
+    const mapStyle = (preset.id !== 'satellite' && isDark)
+      ? SMAPPEN_MAP_STYLE_DARK
+      : (preset.styles ?? MAP_STYLE_PRESETS[0].styles!);
+
+    // Live viewport is the fallback when there's nothing to auto-fit to.
     const c = mapInstance?.getCenter();
     const z = mapInstance?.getZoom();
-    if (!c || z == null) return;
-    downloadMapSnapshot({ lat: c.lat(), lng: c.lng(), zoom: z });
+    downloadMapSnapshot({
+      areas: visibleAreas,
+      heatmapFeatures: mapState.heatmapFeatures,
+      showHeatmap: mapState.showHeatmap,
+      mapStyle,
+      lat: c?.lat(),
+      lng: c?.lng(),
+      zoom: z ?? undefined,
+    });
   };
   const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY ?? '';
 
@@ -142,6 +188,14 @@ export default function AppLayout() {
         </ErrorBoundary>
       )}
       <ShortcutsModal />
+      <CommandPalette />
+      <OnboardingChecklist />
+      <WhatsNewModal />
+      {wizardOpen && isLoaded && (
+        <ErrorBoundary scope="First-run wizard" inline onReset={() => setWizardOpen(false)}>
+          <FirstRunWizard onClose={() => setWizardOpen(false)} />
+        </ErrorBoundary>
+      )}
     </div>
   );
 }

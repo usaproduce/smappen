@@ -95,7 +95,13 @@ class Middleware
                     unset($user['password_hash']);
                     $request->user = $user;
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+                // Optional-auth: a bad/expired token should still let the
+                // request through as anonymous, but log it so we notice
+                // when JWT decoding starts failing en masse (e.g. wrong
+                // JWT_SECRET after a deploy).
+                error_log('Middleware::optionalAuth JWT decode failed: ' . $e->getMessage());
+            }
             return true;
         };
     }
@@ -136,7 +142,12 @@ class Middleware
                      VALUES (?, ?, ?, 1, ?, ?)',
                     [$request->user['id'], $apiName, $request->getPath(), $cost, date('Y-m-d H:i:s')]
                 );
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+                // Log so DB outages affecting usage tracking surface in
+                // php-errors.log rather than silently rolling our usage
+                // counters back to zero.
+                error_log('Middleware::rateLimit usage-log insert failed for ' . $apiName . ': ' . $e->getMessage());
+            }
             return true;
         };
     }

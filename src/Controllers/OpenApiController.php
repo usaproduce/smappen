@@ -150,6 +150,22 @@ HTML;
                 'parameters' => [$projParam],
                 'get' => $r('Pairwise overlap demographics'),
             ],
+            '/api/areas/{id}/analogs' => [
+                'parameters' => [$idParam],
+                'post' => $r('Find tracts matching this area\'s profile', [
+                    'description' => 'Returns up to N census tracts ranked by cosine similarity on an 18-dim feature vector (demographics + segments + competition + accessibility). Rate-limited 30/hr.',
+                    'requestBody' => [
+                        'content' => ['application/json' => ['schema' => [
+                            'type' => 'object',
+                            'properties' => [
+                                'max_results' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 50, 'default' => 25],
+                                'search_radius_km' => ['type' => 'number', 'nullable' => true, 'maximum' => 5000],
+                                'weights' => ['type' => 'array', 'items' => ['type' => 'number'], 'minItems' => 18, 'maxItems' => 18, 'nullable' => true],
+                            ],
+                        ]]],
+                    ],
+                ]),
+            ],
             '/api/projects/{projectId}/territories/generate' => [
                 'parameters' => [$projParam],
                 'post' => $r('Auto-generate balanced territories'),

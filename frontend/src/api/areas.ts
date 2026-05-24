@@ -1,4 +1,5 @@
 import { api } from './client';
+import { trackSave } from '../stores/saveStatusStore';
 import type { Area, Demographics, Place } from '../types';
 
 export const areasApi = {
@@ -13,15 +14,15 @@ export const areasApi = {
     return data.data as Area;
   },
   async create(projectId: string, payload: Partial<Area>) {
-    const { data } = await api.post(`/api/projects/${projectId}/areas`, payload);
+    const { data } = await trackSave(api.post(`/api/projects/${projectId}/areas`, payload));
     return data.data as Area;
   },
   async update(id: string, payload: Partial<Area>) {
-    const { data } = await api.put(`/api/areas/${id}`, payload);
+    const { data } = await trackSave(api.put(`/api/areas/${id}`, payload));
     return data.data as Area;
   },
   async delete(id: string) {
-    const { data } = await api.delete(`/api/areas/${id}`);
+    const { data } = await trackSave(api.delete(`/api/areas/${id}`));
     return data;
   },
   async demographics(id: string) {
@@ -49,5 +50,11 @@ export const areasApi = {
   async rebuildBoundary(id: string) {
     const { data } = await api.post(`/api/areas/${id}/rebuild-boundary`);
     return data.data;
+  },
+  // BF7 — persist drag-reorder. Send the desired area_ids in order; server
+  // stamps sort_order = index. Idempotent; safe to retry on flaky networks.
+  async reorder(projectId: string, areaIds: string[]) {
+    const { data } = await trackSave(api.post(`/api/projects/${projectId}/areas/reorder`, { area_ids: areaIds }));
+    return data.data as { count: number };
   },
 };
