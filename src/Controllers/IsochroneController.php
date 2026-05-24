@@ -30,17 +30,66 @@ class IsochroneController
             Response::success($result);
             return;
         }
-        if ($time < 1 || $time > 720) Response::error('Time must be 1-720 minutes');
+        // ORS hard-caps drive-time isochrones at 60 minutes (3600s) on the
+        // free + most paid plans. Earlier the controller accepted up to 720
+        // and let ORS reject the request, dumping the raw 400-JSON into the
+        // toast — see the user-facing error "Parameter 'range=5400.0' is out
+        // of range. Maximum possible value is 3600". Validate up-front so we
+        // never make that call.
+        if ($time < 1) Response::error('Time must be at least 1 minute', 422);
+        if ($time > 60) {
+            Response::error(
+                "Drive-time isochrones top out at 60 minutes on the routing service we use. "
+                . "For longer reach use the Radius option instead, or split it into multiple 60-min areas.",
+                422
+            );
+        }
 
         self::checkLimit($request);
 
         try {
             $result = (new IsochroneService())->calculate($lat, $lng, $time, $mode);
         } catch (\Throwable $e) {
-            Response::error('Isochrone calculation failed: ' . $e->getMessage(), 502);
+            self::handleOrsError($e);
         }
         self::logUsage($request, 'isochrone');
         Response::success($result);
+    }
+
+    /**
+     * ORS errors come back as "HTTP 400 from https://api.openrouteservice.org/...: {...JSON...}".
+     * Show the user a friendly translation instead of the raw payload.
+     */
+    private static function handleOrsError(\Throwable $e): void
+    {
+        $msg = $e->getMessage();
+        // Pull the JSON tail if present.
+        $jsonStart = strpos($msg, '{');
+        $parsed = null;
+        if ($jsonStart !== false) {
+            $parsed = json_decode(substr($msg, $jsonStart), true);
+        }
+        $orsCode    = $parsed['error']['code']    ?? null;
+        $orsMessage = $parsed['error']['message'] ?? null;
+
+        switch ((int) $orsCode) {
+            case 3004: // range out of range
+                Response::error('That drive-time exceeds the routing service ceiling. Try 60 minutes or less.', 422);
+                break;
+            case 2010: // location too far from road
+            case 2009:
+                Response::error('No road network near that point. Pick a location closer to a public road.', 422);
+                break;
+            case 6001:
+                Response::error('Routing service rate-limit hit. Please wait a moment and try again.', 429);
+                break;
+            default:
+                if ($orsMessage) {
+                    Response::error('Routing service error: ' . $orsMessage, 502);
+                }
+                error_log('[isochrone] upstream: ' . substr($msg, 0, 1000));
+                Response::error('Routing service unavailable. Try again in a few seconds.', 502);
+        }
     }
 
     private static function checkLimit(Request $request): void

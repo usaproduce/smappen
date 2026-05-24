@@ -44,7 +44,12 @@ const TRAVEL_MODES = [
   { value: 'cycling-regular', label: 'Bike', icon: '🚴' },
   { value: 'foot-walking',    label: 'Walk', icon: '🚶' },
 ] as const;
-const TIME_PRESETS = [5, 10, 15, 20, 30, 45, 60, 90];
+// 60 is the ceiling — ORS (our routing provider) rejects range > 3600s
+// (60 minutes) with HTTP 400 "range out of range". The slider + preset
+// chips top out at 60 too; users who need longer reach get a clear "use
+// Radius instead" error from the backend now (IsochroneController), but
+// we never set them up to fail in the first place.
+const TIME_PRESETS = [5, 10, 15, 20, 30, 45, 60];
 const POP_PRESETS = [5000, 10000, 25000, 50000, 100000, 250000, 500000];
 const RADIUS_KM_PRESETS = [1, 2, 5, 10, 25, 50, 100];
 
@@ -322,7 +327,7 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
                 <span>Travel time</span>
                 <span className="text-violet-700 font-extrabold text-base tabular-nums">{time} min</span>
               </label>
-              <input type="range" min={1} max={120} value={time} onChange={(e) => { setTime(+e.target.value); setPending(null); }} className="w-full accent-violet-600" />
+              <input type="range" min={1} max={60} value={time} onChange={(e) => { setTime(+e.target.value); setPending(null); }} className="w-full accent-violet-600" />
               <div className="flex gap-1 mt-1 flex-wrap">
                 {TIME_PRESETS.map((p) => (
                   <button
