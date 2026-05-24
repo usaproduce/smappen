@@ -7,7 +7,6 @@ import RightToolbar from './RightToolbar';
 import MapCanvas from '../map/MapCanvas';
 import AreaCreator from '../areas/AreaCreator';
 import ImportWizard from '../data/ImportWizard';
-import MiniMapToggle from '../map/MiniMapToggle';
 import AdvancedPanel from '../advanced/AdvancedPanel';
 import TimeMachinePanel from '../map/TimeMachinePanel';
 import ShortcutsModal from '../common/ShortcutsModal';
@@ -68,13 +67,15 @@ export default function AppLayout() {
           </div>
         )}
         {!loadError && !isLoaded && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-500 text-sm">
-            <div className="flex items-center gap-2">
-              <span className="inline-block w-4 h-4 border-2 border-slate-300 border-t-violet-600 rounded-full animate-spin" />
-              Loading map…
-            </div>
+          // Branded loading state w/ animated logo + indeterminate progress
+          // bar. Cuts the dead "Loading map…" gap that lasts 1-3s on first
+          // visit while Google Maps JS downloads.
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-slate-50">
+            <div className="page-loading-logo">S</div>
+            <div className="text-sm text-slate-500 font-semibold">Loading map…</div>
+            <div style={{ width: 180 }}><div className="progress-bar"><span /></div></div>
             {stuckLoading && (
-              <button className="btn btn-secondary" onClick={() => location.reload()}>
+              <button className="btn btn-secondary mt-2" onClick={() => location.reload()}>
                 Map is taking too long. Reload?
               </button>
             )}
@@ -106,7 +107,10 @@ export default function AppLayout() {
               advancedOpen={advancedOpen}
               onScreenshot={screenshot}
             />
-            <MiniMapToggle />
+            {/* MiniMapToggle bottom-left preview was visually distracting +
+                duplicative with the toolbar's heatmap button. Removed —
+                heatmap toggle now lives only in the toolbar (with a gradient
+                background when active, see RightToolbar). */}
             {advancedOpen && (
               <ErrorBoundary scope="Advanced tools" inline onReset={() => setAdvancedOpen(false)}>
                 <AdvancedPanel onClose={() => setAdvancedOpen(false)} />

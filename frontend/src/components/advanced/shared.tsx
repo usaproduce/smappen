@@ -4,8 +4,11 @@
 
 import React from 'react';
 
-export function Spinner() {
-  return <span className="inline-block w-3.5 h-3.5 border-2 border-slate-300 border-t-violet-600 rounded-full animate-spin" />;
+export function Spinner({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
+  // Use the global .spinner class so theming + sizing are consistent across
+  // every place we show inline progress. Earlier inline tailwind border-spinners
+  // had drifted to slightly different colors/sizes.
+  return <span className={size === 'lg' ? 'spinner spinner-lg' : 'spinner'} style={{ width: size === 'sm' ? 14 : undefined, height: size === 'sm' ? 14 : undefined }} />;
 }
 
 export function Empty({ msg }: { msg: string }) {

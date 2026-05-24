@@ -36,4 +36,18 @@ export const areasApi = {
     const { data } = await api.post('/api/demographics/compare', { area_ids });
     return data.data as Array<{ area_id: string; area_name: string; demographics: Demographics }>;
   },
+  // Alias for AreaCard's optimistic refetch after rebuild — same shape as get()
+  // but uses a name that reads more naturally at call sites.
+  async findById(id: string) {
+    const { data } = await api.get(`/api/areas/${id}`);
+    return data.data as Area;
+  },
+  // Replace the area's convex-hull geometry with ST_Union over its source
+  // tracts. Server-side this is iterative pairwise union — slow (~8s for
+  // 50 tracts) but produces a real geographic boundary instead of a
+  // stretched diagonal hull.
+  async rebuildBoundary(id: string) {
+    const { data } = await api.post(`/api/areas/${id}/rebuild-boundary`);
+    return data.data;
+  },
 };

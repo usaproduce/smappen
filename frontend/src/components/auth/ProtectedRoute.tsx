@@ -11,9 +11,14 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
 
   if (!token) return <Navigate to="/login" replace />;
   if (!user) {
+    // Show the branded loading screen instead of a flat text label —
+    // first-paint after sign-in waits on `loadUser`, which can be 200-800ms
+    // depending on the user's organization data.
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-slate-500">Loading…</div>
+      <div className="page-loading">
+        <div className="page-loading-logo">S</div>
+        <div className="text-sm text-slate-500 font-semibold">Loading your projects…</div>
+        <div style={{ width: 180 }}><div className="progress-bar"><span /></div></div>
       </div>
     );
   }

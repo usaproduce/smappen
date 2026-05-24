@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 import { useUiPrefsStore } from '../../stores/uiPrefsStore';
+import { HEATMAP_GRADIENT_CSS } from '../../utils/heatmapColors';
 import toast from 'react-hot-toast';
 
 interface Props {
@@ -44,11 +45,19 @@ export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, a
         <MapPin size={20} />
       </button>
       <button
-        className={`toolbar-btn ${showHeatmap ? 'active' : ''}`}
-        title="Population density heatmap"
+        className={`toolbar-btn relative ${showHeatmap ? 'active' : ''}`}
+        title={showHeatmap ? 'Hide heatmap' : 'Show population density heatmap'}
         onClick={toggleHeatmap}
       >
         <MapIcon size={20} />
+        {/* Subtle rainbow gradient ring when active so users see the heatmap
+            is on at a glance — replaces the old bottom-left HEATMAP preview tile. */}
+        {showHeatmap && (
+          <span
+            className="absolute inset-0 rounded-md pointer-events-none"
+            style={{ background: HEATMAP_GRADIENT_CSS, opacity: 0.2, mixBlendMode: 'multiply' }}
+          />
+        )}
       </button>
       <button
         className={`toolbar-btn ${selectedAreaId && rightPanelTab === 'demographics' ? 'active' : ''}`}

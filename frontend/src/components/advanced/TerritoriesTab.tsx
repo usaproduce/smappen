@@ -1,16 +1,40 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Wand2 } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
+import { useProjectStore } from '../../stores/projectStore';
 import { territoryApi } from '../../api/advanced';
+import { areasApi } from '../../api/areas';
 import { Spinner, Field } from './shared';
 
 export default function TerritoriesTab({ projectId }: { projectId: string }) {
   const { mapInstance } = useMapStore();
+  const { updateArea } = useProjectStore();
   const [target, setTarget] = useState(8);
   const [metric, setMetric] = useState<'population' | 'income_weighted_pop' | 'housing_units'>('population');
   const [busy, setBusy] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
   const [last, setLast] = useState<any>(null);
+
+  async function rebuildAll() {
+    if (!last?.area_ids?.length) return;
+    setRebuilding(true);
+    const t = toast.loading(`Rebuilding ${last.area_ids.length} boundaries…`);
+    let done = 0, failed = 0;
+    for (const id of last.area_ids) {
+      try {
+        await areasApi.rebuildBoundary(id);
+        // Refetch + push into projectStore so map polygons re-render with the
+        // new clean geometry as each one finishes.
+        const refreshed = await areasApi.findById(id);
+        updateArea(refreshed);
+        done++;
+        toast.loading(`Rebuilt ${done} of ${last.area_ids.length}…`, { id: t });
+      } catch { failed++; }
+    }
+    setRebuilding(false);
+    toast.success(`Rebuilt ${done} boundaries${failed ? ` (${failed} failed)` : ''}`, { id: t });
+  }
 
   async function run() {
     if (!mapInstance) { toast.error('Map not ready yet'); return; }
@@ -65,6 +89,21 @@ export default function TerritoriesTab({ projectId }: { projectId: string }) {
               </li>
             ))}
           </ul>
+          {/* The initial shapes are convex hulls — fast but visually thin when
+              the cluster's source tracts aren't contiguous. Offer a one-click
+              ST_Union rebuild for all generated areas. Slow (~8s per area)
+              but produces geographic, tract-following boundaries. */}
+          <button
+            onClick={rebuildAll}
+            disabled={rebuilding}
+            className="w-full mt-2 rounded-lg p-2 border-2 border-dashed border-violet-300 hover:border-violet-500 hover:bg-violet-50 transition flex items-center gap-2 text-left text-xs"
+          >
+            {rebuilding ? <Spinner /> : <Wand2 size={14} style={{ color: '#7848BB' }} />}
+            <span>
+              <b style={{ color: '#1A1A2E' }}>{rebuilding ? 'Rebuilding…' : 'Rebuild clean boundaries'}</b>
+              {' '}<span className="text-slate-500">— dissolves source tracts into real geographic shapes (~8s each)</span>
+            </span>
+          </button>
         </div>
       )}
     </div>

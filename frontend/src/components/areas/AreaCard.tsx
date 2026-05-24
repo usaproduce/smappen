@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Trash2, MoreHorizontal, Car, Bike, Footprints, Circle, Edit3,
-  Copy, FolderInput, Crosshair, Eye, Palette, Star,
+  Copy, FolderInput, Crosshair, Eye, Palette, Star, Sparkles,
 } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 import { useProjectStore } from '../../stores/projectStore';
@@ -194,6 +194,28 @@ export default function AreaCard({ area }: { area: Area }) {
     } catch { toast.error('Failed'); }
   }
 
+  async function onRebuildBoundary() {
+    setMenuOpen(false);
+    const t = toast.loading('Dissolving tracts into a clean boundary…');
+    try {
+      await areasApi.rebuildBoundary(area.id);
+      // Refetch the area to pick up the new geometry.
+      const refreshed = await areasApi.findById(area.id);
+      updateArea({ ...area, ...refreshed });
+      if (refreshed.geometry) fitBoundsToArea(refreshed.geometry);
+      toast.success('Boundary rebuilt', { id: t });
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error ?? 'Rebuild failed', { id: t });
+    }
+  }
+
+  // Identify auto-generated territories so we can offer them the rebuild
+  // action — the convex-hull shape from generation often looks knife-like
+  // when source tracts aren't contiguous; rebuildBoundary computes a real
+  // ST_Union over the source tracts for a clean perimeter.
+  const isTerritory = !!(area as any).generation_job_id
+    || !!(area as any).demographics_cache?.tract_geoids?.length;
+
   return (
     <div
       className={`area-row group relative ${isSelected ? 'selected' : ''}`}
@@ -273,6 +295,16 @@ export default function AreaCard({ area }: { area: Area }) {
             <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 flex items-center gap-2" onClick={onZoomTo}>
               <Crosshair size={13} /> Zoom to area
             </button>
+            {isTerritory && (
+              <button
+                className="w-full text-left px-3 py-1.5 text-sm hover:bg-violet-50 flex items-center gap-2 font-semibold"
+                style={{ color: '#7848BB' }}
+                onClick={onRebuildBoundary}
+                title="Replace the rough convex-hull boundary with a precise ST_Union over the territory's source tracts (slower but produces a real geographic shape)"
+              >
+                <Sparkles size={13} /> Rebuild clean boundary
+              </button>
+            )}
             <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); onDuplicate(); }}>
               <Copy size={13} /> Duplicate
             </button>
