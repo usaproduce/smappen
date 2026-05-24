@@ -17,13 +17,16 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Track verified emails on the user row itself.
--- MySQL 8.0.29+ supports IF NOT EXISTS on ADD COLUMN/INDEX so re-running this
--- migration is a no-op instead of erroring on duplicate-column 1060.
+-- For portability (some MySQL 8 builds lack `ADD COLUMN IF NOT EXISTS`,
+-- which is 8.0.29+), this migration is intended to run exactly once on
+-- fresh installs. If re-running on an existing install raises 1060
+-- (duplicate column) errors, run mysql with --force; the rest of the file
+-- is composed of CREATE TABLE IF NOT EXISTS, which is portable.
 ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS email_verified_at DATETIME NULL AFTER is_active,
-    ADD COLUMN IF NOT EXISTS api_key_hash CHAR(64) NULL AFTER email_verified_at,
-    ADD COLUMN IF NOT EXISTS api_key_last4 CHAR(4) NULL AFTER api_key_hash,
-    ADD INDEX IF NOT EXISTS idx_users_api_key (api_key_hash);
+    ADD COLUMN email_verified_at DATETIME NULL AFTER is_active,
+    ADD COLUMN api_key_hash CHAR(64) NULL AFTER email_verified_at,
+    ADD COLUMN api_key_last4 CHAR(4) NULL AFTER api_key_hash,
+    ADD INDEX idx_users_api_key (api_key_hash);
 
 -- JWT revocation list. `jti` is a UUID we embed in the token payload at issue.
 -- On logout we insert here; the auth middleware checks every request.
@@ -100,15 +103,15 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 
 -- Project sharing — share_token already exists; we add expiry and view counter.
 ALTER TABLE projects
-    ADD COLUMN IF NOT EXISTS share_expires_at DATETIME NULL AFTER share_token,
-    ADD COLUMN IF NOT EXISTS share_view_count INT NOT NULL DEFAULT 0 AFTER share_expires_at;
+    ADD COLUMN share_expires_at DATETIME NULL AFTER share_token,
+    ADD COLUMN share_view_count INT NOT NULL DEFAULT 0 AFTER share_expires_at;
 
 -- User notification preferences (in-app default, opt-in for email/slack).
 ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS notify_email TINYINT(1) NOT NULL DEFAULT 1 AFTER api_key_last4,
-    ADD COLUMN IF NOT EXISTS notify_competitor_alerts TINYINT(1) NOT NULL DEFAULT 1 AFTER notify_email,
-    ADD COLUMN IF NOT EXISTS notify_team_activity TINYINT(1) NOT NULL DEFAULT 1 AFTER notify_competitor_alerts,
-    ADD COLUMN IF NOT EXISTS slack_webhook_url VARCHAR(500) NULL AFTER notify_team_activity,
-    ADD COLUMN IF NOT EXISTS theme ENUM('light','dark','auto') NOT NULL DEFAULT 'light' AFTER slack_webhook_url;
+    ADD COLUMN notify_email TINYINT(1) NOT NULL DEFAULT 1 AFTER api_key_last4,
+    ADD COLUMN notify_competitor_alerts TINYINT(1) NOT NULL DEFAULT 1 AFTER notify_email,
+    ADD COLUMN notify_team_activity TINYINT(1) NOT NULL DEFAULT 1 AFTER notify_competitor_alerts,
+    ADD COLUMN slack_webhook_url VARCHAR(500) NULL AFTER notify_team_activity,
+    ADD COLUMN theme ENUM('light','dark','auto') NOT NULL DEFAULT 'light' AFTER slack_webhook_url;
 
 SET FOREIGN_KEY_CHECKS = 1;
