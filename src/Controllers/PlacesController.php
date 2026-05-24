@@ -66,7 +66,13 @@ class PlacesController
                 // to re-filter client-side.
                 $keyword = null;
             }
-            $svc->logApiUsage('places_nearby', $request->user['id'], 'places_nearby');
+            // Log the actual number of upstream calls (tiling for nearby:
+            // 1-5; text pagination: 1-3). Zero on cache hit — don't bill
+            // the user for a free response.
+            $apiName = $validType ? 'places_nearby' : 'places_text';
+            if ($svc->lastCallCount > 0) {
+                $svc->logApiUsage($apiName, $request->user['id'], $apiName, $svc->lastCallCount);
+            }
         } catch (\Throwable $e) {
             self::handleGoogleError($e, 'places');
         }
@@ -99,8 +105,12 @@ class PlacesController
             'places' => $places,
             'count' => count($places),
             '_meta' => [
-                'api_name' => 'places_nearby',
-                'estimated_cost_usd' => \App\Services\GooglePricing::costFor('places_nearby'),
+                'api_name' => $validType ? 'places_nearby' : 'places_text',
+                'upstream_calls' => $svc->lastCallCount,
+                'estimated_cost_usd' => \App\Services\GooglePricing::costFor(
+                    $validType ? 'places_nearby' : 'places_text',
+                    max(1, $svc->lastCallCount)
+                ),
             ],
         ]);
     }
@@ -117,13 +127,16 @@ class PlacesController
         try {
             $svc = new GoogleMapsService();
             $places = $svc->searchPlacesText($query, $lat, $lng, $radius);
-            $svc->logApiUsage('places_search', $request->user['id'], 'places_text');
+            if ($svc->lastCallCount > 0) {
+                $svc->logApiUsage('places_search', $request->user['id'], 'places_text', $svc->lastCallCount);
+            }
             Response::success([
                 'places' => $places,
                 'count' => count($places),
                 '_meta' => [
                     'api_name' => 'places_text',
-                    'estimated_cost_usd' => \App\Services\GooglePricing::costFor('places_text'),
+                    'upstream_calls' => $svc->lastCallCount,
+                    'estimated_cost_usd' => \App\Services\GooglePricing::costFor('places_text', max(1, $svc->lastCallCount)),
                 ],
             ]);
         } catch (\Throwable $e) {
