@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Pause, X, Clock, TrendingDown } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Play, Pause, X, Clock, TrendingDown, ChevronDown, ChevronUp, Move } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useMapStore } from '../../stores/mapStore';
 import { api } from '../../api/client';
@@ -32,26 +32,24 @@ interface DayResponse {
 }
 
 interface Props {
-  /** Origin point — comes from the selected area's center. */
   lat: number;
   lng: number;
-  /** Default drive-time minutes (e.g. 15). */
   defaultMinutes?: number;
-  /** Color used for the animated polygon. */
   color?: string;
   onClose: () => void;
 }
 
+// 24-color palette — overnight blues → morning cool → midday warm → evening
+// purples. Anchors the polygon color + the heatstrip bars to a vibe per hour.
 const PALETTE = [
-  // Index 0 = midnight → 6am (overnight, light traffic, big area)
   '#1e3a8a', '#1e3a8a', '#1d4ed8', '#1d4ed8', '#2563eb', '#3b82f6',
-  // 6am → 11am (morning rush)
   '#06b6d4', '#0ea5e9', '#7c3aed', '#9333ea', '#ec4899', '#f59e0b',
-  // noon → 5pm (midday + PM build)
   '#10b981', '#22c55e', '#84cc16', '#eab308', '#f97316', '#dc2626',
-  // 6pm → 11pm (evening wind-down)
   '#ef4444', '#a855f7', '#8b5cf6', '#7848BB', '#6366f1', '#1e40af',
 ];
+
+const PANEL_W = 440;        // target width — narrow enough to leave the map readable
+const STORAGE_KEY = 'sm-time-machine-pos';
 
 export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color = '#7848BB', onClose }: Props) {
   const { setTimeMachine, fitBoundsToArea } = useMapStore();
@@ -61,14 +59,32 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
   const [data, setData] = useState<DayResponse | null>(null);
   const [hour, setHour] = useState(8);
   const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(600); // ms per hour at playback
+  const [speed, setSpeed] = useState(600);
+  const [collapsed, setCollapsed] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const playRef = useRef<number | null>(null);
+
+  // Restore last position from localStorage so the user's preferred spot sticks
+  // across sessions. Validates against viewport so a smaller window doesn't
+  // strand the panel off-screen.
+  useLayoutEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const p = JSON.parse(saved);
+        if (typeof p.x === 'number' && typeof p.y === 'number') {
+          const clamped = clampToViewport(p.x, p.y);
+          setPos(clamped);
+        }
+      }
+    } catch {}
+  }, []);
 
   // Initial load when the panel first opens.
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
-  // Push the current hour's polygon into the map store every time `hour` or
-  // `data` changes. MapCanvas reads timeMachine and renders the overlay.
+  // Push the current hour's polygon into mapStore every time `hour` changes.
   useEffect(() => {
     if (!data) return;
     const frame = data.hours[hour];
@@ -85,11 +101,9 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
     });
   }, [data, hour, color, setTimeMachine]);
 
-  // Clean up the polygon when the panel unmounts.
   useEffect(() => () => { setTimeMachine(null); }, [setTimeMachine]);
 
-  // Auto-advance the hour when "playing". Wraps to 0 at the end so the user
-  // can watch a full day cycle without re-clicking.
+  // Auto-advance on play.
   useEffect(() => {
     if (!playing || !data) return;
     playRef.current = window.setInterval(() => {
@@ -107,22 +121,18 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
       });
       const payload = res.data as DayResponse;
       setData(payload);
-      // Center the map on the union bbox of the hours so the whole animation
-      // is visible without panning.
-      if (payload.hours[0]?.bbox) {
-        const all = payload.hours.filter((h) => h.bbox);
-        if (all.length) {
-          const minLng = Math.min(...all.map((h) => h.bbox![0]));
-          const minLat = Math.min(...all.map((h) => h.bbox![1]));
-          const maxLng = Math.max(...all.map((h) => h.bbox![2]));
-          const maxLat = Math.max(...all.map((h) => h.bbox![3]));
-          fitBoundsToArea({
-            type: 'Polygon',
-            coordinates: [[
-              [minLng, minLat], [maxLng, minLat], [maxLng, maxLat], [minLng, maxLat], [minLng, minLat],
-            ]],
-          });
-        }
+      const all = payload.hours.filter((h) => h.bbox);
+      if (all.length) {
+        const minLng = Math.min(...all.map((h) => h.bbox![0]));
+        const minLat = Math.min(...all.map((h) => h.bbox![1]));
+        const maxLng = Math.max(...all.map((h) => h.bbox![2]));
+        const maxLat = Math.max(...all.map((h) => h.bbox![3]));
+        fitBoundsToArea({
+          type: 'Polygon',
+          coordinates: [[
+            [minLng, minLat], [maxLng, minLat], [maxLng, maxLat], [minLng, maxLat], [minLng, minLat],
+          ]],
+        });
       }
       toast.success(`24 hours loaded · ${payload.unique_ors_calls} unique routes`);
     } catch (e: any) {
@@ -132,35 +142,86 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
     }
   }
 
+  // Drag-by-header. Stores the offset from the cursor to the panel's top-left
+  // at mousedown, then writes absolute viewport coordinates on each mousemove.
+  // Persists to localStorage on release so the spot sticks.
+  function onDragStart(e: React.PointerEvent) {
+    // Ignore drags that originate on buttons/inputs inside the header.
+    if ((e.target as HTMLElement).closest('button, select, input')) return;
+    e.preventDefault();
+    const rect = panelRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const offsetX = e.clientX - rect.left;
+    const offsetY = e.clientY - rect.top;
+    const move = (ev: PointerEvent) => {
+      setPos(clampToViewport(ev.clientX - offsetX, ev.clientY - offsetY));
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      try {
+        const final = clampToViewport(ev.clientX - offsetX, ev.clientY - offsetY);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(final));
+      } catch {}
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
   const current = data?.hours[hour];
   const best = data?.summary.best_hour_area_sq_km ?? null;
   const worst = data?.summary.worst_hour_area_sq_km ?? null;
   const shrink = data?.summary.shrink_pct_at_peak ?? null;
 
-  // For the timeline strip — relative shrinkage per hour, 0..1.
   const relAreas = useMemo(() => {
     if (!data || !best) return [];
     return data.hours.map((h) => h.area_sq_km && best ? Math.max(0.1, h.area_sq_km / best) : 0.1);
   }, [data, best]);
 
+  // Default position: bottom-LEFT of the viewport, clear of the left panel
+  // (which is ~360px wide) and the right area panel. Picked so on first open
+  // the polygon stays visible in the middle of the map.
+  const style: React.CSSProperties = pos
+    ? { left: pos.x, top: pos.y }
+    : { left: 16, bottom: 16 };
+
   return (
-    <aside className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[min(720px,calc(100%-2rem))] bg-white rounded-2xl shadow-2xl border border-slate-200 z-30 overflow-hidden">
-      <header className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-        <div className="flex items-center gap-2">
-          <Clock size={16} style={{ color: '#7848BB' }} />
-          <span className="font-bold text-sm" style={{ color: '#1A1A2E' }}>Drive-time over a full day</span>
-          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 ml-2">Time machine</span>
-        </div>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-50">
-          <X size={14} />
+    <aside
+      ref={panelRef}
+      className="absolute bg-white rounded-xl shadow-2xl border border-slate-200 z-30 overflow-hidden select-none"
+      style={{ ...style, width: PANEL_W }}
+    >
+      {/* Header — also the drag handle */}
+      <header
+        onPointerDown={onDragStart}
+        className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-200 bg-slate-50 cursor-grab active:cursor-grabbing"
+      >
+        <Move size={11} className="text-slate-400 shrink-0" />
+        <Clock size={13} style={{ color: '#7848BB' }} />
+        <span className="font-bold text-[12px]" style={{ color: '#1A1A2E' }}>Drive-time over a full day</span>
+        <span className="text-[9px] uppercase font-bold tracking-wider text-slate-400 ml-0.5">Time machine</span>
+        <div className="flex-1" />
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-white"
+          title={collapsed ? 'Expand' : 'Collapse'}
+        >
+          {collapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </button>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-white" title="Close">
+          <X size={12} />
         </button>
       </header>
 
-      {/* Controls */}
-      <div className="flex flex-wrap items-end gap-2 px-4 py-3 bg-slate-50 border-b border-slate-100">
-        <div className="flex flex-col">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Day</label>
-          <select className="input h-9 text-sm w-32" value={day} onChange={(e) => setDay(e.target.value as Day)}>
+      {/* Day + drive-time selectors — single row, no separate labels (the
+          values are self-evident). Hidden when collapsed to save space. */}
+      {!collapsed && (
+        <div className="flex items-center gap-1.5 px-3 py-2 bg-white border-b border-slate-100">
+          <select
+            className="input h-8 text-xs flex-1 min-w-0"
+            value={day}
+            onChange={(e) => setDay(e.target.value as Day)}
+          >
             <option value="sunday">Sunday</option>
             <option value="monday">Monday</option>
             <option value="tuesday">Tuesday</option>
@@ -169,43 +230,44 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
             <option value="friday">Friday</option>
             <option value="saturday">Saturday</option>
           </select>
-        </div>
-        <div className="flex flex-col">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Drive time</label>
-          <select className="input h-9 text-sm w-24" value={minutes} onChange={(e) => setMinutes(parseInt(e.target.value, 10))}>
+          <select
+            className="input h-8 text-xs w-[78px]"
+            value={minutes}
+            onChange={(e) => setMinutes(parseInt(e.target.value, 10))}
+          >
             {[5, 10, 15, 20, 30, 45, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
           </select>
+          <button
+            className="btn btn-primary h-8 text-xs px-3"
+            disabled={loading}
+            onClick={load}
+          >
+            {loading ? '…' : 'Run'}
+          </button>
         </div>
-        <button className="btn btn-primary h-9" disabled={loading} onClick={load}>
-          {loading ? 'Loading 24h…' : 'Run timeline'}
-        </button>
-        <div className="ml-auto text-xs text-slate-500 leading-snug">
-          {data ? `${data.unique_ors_calls} ORS calls (rest cached)` : 'Click run to fetch 24 hours.'}
-        </div>
-      </div>
+      )}
 
       {/* Player */}
       {data && (
-        <div className="px-4 py-3">
-          <div className="flex items-center gap-3">
+        <div className="px-3 py-2.5">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => setPlaying((p) => !p)}
-              className="w-10 h-10 rounded-full bg-violet-600 hover:bg-violet-700 text-white flex items-center justify-center shadow-md transition"
+              className="w-9 h-9 rounded-full bg-violet-600 hover:bg-violet-700 text-white flex items-center justify-center shadow-sm transition shrink-0"
               title={playing ? 'Pause' : 'Play'}
             >
-              {playing ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
+              {playing ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
             </button>
-            <div className="flex-1">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-extrabold text-[20px] tabular-nums" style={{ color: '#1A1A2E' }}>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-baseline justify-between gap-2 leading-none">
+                <span className="font-extrabold text-[18px] tabular-nums" style={{ color: '#1A1A2E' }}>
                   {current?.label ?? '—'}
                 </span>
-                <span className="text-xs text-slate-500">
+                <span className="text-[10px] text-slate-500 truncate">
                   {current ? (
                     <>
                       <b className="text-slate-700">{Math.round(current.area_sq_km ?? 0).toLocaleString()} km²</b>
-                      {' · '}
-                      {(current.multiplier ?? 1).toFixed(2)}× traffic
+                      {' · '}{(current.multiplier ?? 1).toFixed(2)}× traffic
                     </>
                   ) : '—'}
                 </span>
@@ -217,14 +279,14 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
                 step={1}
                 value={hour}
                 onChange={(e) => { setPlaying(false); setHour(parseInt(e.target.value, 10)); }}
-                className="w-full accent-violet-600"
+                className="w-full accent-violet-600 mt-1"
               />
             </div>
             <select
               value={speed}
               onChange={(e) => setSpeed(parseInt(e.target.value, 10))}
-              className="input h-8 text-xs w-20"
-              title="Playback speed (ms per hour)"
+              className="input h-7 text-[10px] w-[58px] shrink-0"
+              title="Playback speed"
             >
               <option value={1200}>0.5×</option>
               <option value={600}>1×</option>
@@ -233,8 +295,8 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
             </select>
           </div>
 
-          {/* 24-bar strip — height = relative reach at that hour vs the day's best */}
-          <div className="mt-3 flex items-end gap-0.5 h-10">
+          {/* 24-bar strip */}
+          <div className="mt-2.5 flex items-end gap-0.5 h-7">
             {relAreas.map((rel, i) => (
               <button
                 key={i}
@@ -250,20 +312,20 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
               />
             ))}
           </div>
-          <div className="flex justify-between text-[10px] text-slate-400 mt-1 px-0.5">
+          <div className="flex justify-between text-[9px] text-slate-400 mt-0.5 px-0.5">
             <span>00</span><span>06</span><span>12</span><span>18</span><span>23</span>
           </div>
 
-          {/* Summary */}
-          {shrink !== null && (
-            <div className="mt-3 flex items-center gap-3 text-xs">
-              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-rose-50 text-rose-700 font-semibold">
-                <TrendingDown size={11} />
+          {/* Summary chip — only when not collapsed */}
+          {!collapsed && shrink !== null && (
+            <div className="mt-2 flex items-center gap-2 text-[11px]">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-700 font-semibold">
+                <TrendingDown size={10} />
                 {shrink}% smaller at peak
               </span>
-              <span className="text-slate-500">
-                Best: <b className="text-slate-700">{Math.round(best ?? 0).toLocaleString()} km²</b>
-                {' '}· Worst: <b className="text-slate-700">{Math.round(worst ?? 0).toLocaleString()} km²</b>
+              <span className="text-slate-500 truncate">
+                Best <b className="text-slate-700">{Math.round(best ?? 0).toLocaleString()}</b>
+                {' '}· Worst <b className="text-slate-700">{Math.round(worst ?? 0).toLocaleString()} km²</b>
               </span>
             </div>
           )}
@@ -271,4 +333,17 @@ export default function TimeMachinePanel({ lat, lng, defaultMinutes = 15, color 
       )}
     </aside>
   );
+}
+
+/** Keep the panel mostly on-screen. Allows a 60px peek off the right/bottom
+ *  so the user can park it at a true corner. */
+function clampToViewport(x: number, y: number) {
+  const w = PANEL_W;
+  const h = 220; // upper bound — actual height varies w/ collapsed state
+  const maxX = window.innerWidth - 60;
+  const maxY = window.innerHeight - 60;
+  return {
+    x: Math.max(0 - (w - 60), Math.min(maxX, x)),
+    y: Math.max(0, Math.min(maxY, y)),
+  };
 }
