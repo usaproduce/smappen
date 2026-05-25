@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from 'react';
-import { X, Sparkles, Layers, Users, Compass, Target, Tag, MessageCircle, History, Bell, MapPinned, Crosshair } from 'lucide-react';
+import { X, Sparkles, Layers, Users, Compass, Target, Tag, MessageCircle, History, Bell, MapPinned, Crosshair, Database } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { Spinner } from './shared';
 import ErrorBoundary from '../ErrorBoundary';
@@ -18,10 +18,11 @@ const CompetitorsTab    = lazy(() => import('./CompetitorsTab'));
 const FieldTab          = lazy(() => import('./FieldTab'));
 const AnalogTab         = lazy(() => import('./AnalogTab'));
 const AnalyticsTab      = lazy(() => import('./AnalyticsTab'));
+const LayersTab         = lazy(() => import('./LayersTab'));
 
 type TabKey =
   | 'territories' | 'analogs' | 'analytics' | 'cannibalization' | 'traffic' | 'optimize'
-  | 'segments' | 'comments' | 'versions' | 'competitors' | 'field';
+  | 'segments' | 'comments' | 'versions' | 'competitors' | 'field' | 'layers';
 
 const TABS: { key: TabKey; label: string; icon: any }[] = [
   { key: 'territories',     label: 'Territories',     icon: Layers },
@@ -35,6 +36,7 @@ const TABS: { key: TabKey; label: string; icon: any }[] = [
   { key: 'versions',        label: 'Versions',        icon: History },
   { key: 'competitors',     label: 'Competitors',     icon: Bell },
   { key: 'field',           label: 'Field notes',     icon: MapPinned },
+  { key: 'layers',          label: 'Layers',          icon: Database },
 ];
 
 interface Props { onClose: () => void; }
@@ -99,6 +101,7 @@ export default function AdvancedPanel({ onClose }: Props) {
               {tab === 'versions'        && <VersionsTab projectId={currentProject.id} />}
               {tab === 'competitors'     && <CompetitorsTab projectId={currentProject.id} />}
               {tab === 'field'           && <FieldTab projectId={currentProject.id} />}
+              {tab === 'layers'          && <LayersTab projectId={currentProject.id} />}
             </Suspense>
           </ErrorBoundary>
         )}

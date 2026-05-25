@@ -17,7 +17,18 @@ use App\Core\Database;
  */
 class WebhookDispatcher
 {
-    /** Send one delivery + record the attempt. */
+    /**
+     * Send one delivery + record the attempt(s).
+     *
+     * Retries up to 3 times with backoff (0s, 2s, 10s) on 5xx + connection
+     * errors. 4xx is treated as a permanent client error — no retry, since
+     * the subscriber's endpoint isn't going to fix itself in 12 seconds.
+     *
+     * Total worst-case wall time on full failure: ~25s (12s sleeps + 3×
+     * read timeouts). Acceptable for the job worker; the test endpoint is
+     * synchronous but the operator clicking "Test" can wait briefly to see
+     * the real failure.
+     */
     public function dispatch(array $subscription, string $event, array $data): array
     {
         $payload = [
@@ -35,42 +46,64 @@ class WebhookDispatcher
         Database::getInstance()->query(
             'INSERT INTO webhook_deliveries
                (id, subscription_id, event_type, payload_json, attempt_count, created_at)
-             VALUES (?, ?, ?, ?, 1, NOW())',
+             VALUES (?, ?, ?, ?, 0, NOW())',
             [$deliveryId, $subscription['id'], $event, $body]
         );
 
-        $ch = curl_init($subscription['target_url']);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $body,
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'User-Agent: Smappen-Webhook/1.0',
-                'X-Smappen-Event: ' . $event,
-                'X-Smappen-Signature: t=' . $t . ',v1=' . $sig,
-                'X-Smappen-Delivery: ' . $deliveryId,
-            ],
-            CURLOPT_TIMEOUT => 10,
-            CURLOPT_CONNECTTIMEOUT => 5,
-            // Don't follow redirects — subscribers should give a final URL.
-            CURLOPT_FOLLOWLOCATION => false,
-        ]);
-        $response = curl_exec($ch);
-        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $err = curl_error($ch);
-        curl_close($ch);
+        $delays = [0, 2, 10]; // seconds before attempts 1, 2, 3
+        $maxAttempts = count($delays);
+        $code = 0;
+        $response = false;
+        $err = '';
+        $attempt = 0;
+
+        for ($i = 0; $i < $maxAttempts; $i++) {
+            if ($delays[$i] > 0) sleep($delays[$i]);
+            $attempt = $i + 1;
+
+            $ch = curl_init($subscription['target_url']);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $body,
+                CURLOPT_HTTPHEADER => [
+                    'Content-Type: application/json',
+                    'User-Agent: Smappen-Webhook/1.0',
+                    'X-Smappen-Event: ' . $event,
+                    'X-Smappen-Signature: t=' . $t . ',v1=' . $sig,
+                    'X-Smappen-Delivery: ' . $deliveryId,
+                    'X-Smappen-Attempt: ' . $attempt,
+                ],
+                CURLOPT_TIMEOUT => 10,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                // Don't follow redirects — subscribers should give a final URL.
+                CURLOPT_FOLLOWLOCATION => false,
+            ]);
+            $response = curl_exec($ch);
+            $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $err = curl_error($ch);
+            curl_close($ch);
+
+            $ok = $code >= 200 && $code < 300;
+            if ($ok) break;
+            // 4xx → no retry. The subscriber rejected the payload; backing off
+            // and trying again won't change that.
+            if ($code >= 400 && $code < 500) break;
+            // Else: 5xx, 0 (network/timeout), or weird code → retry.
+        }
 
         $ok = $code >= 200 && $code < 300;
         Database::getInstance()->query(
             'UPDATE webhook_deliveries
-             SET status_code = ?, response_excerpt = ?, delivered_at = ?, next_retry_at = ?
+             SET status_code = ?, response_excerpt = ?, attempt_count = ?,
+                 delivered_at = ?, next_retry_at = ?
              WHERE id = ?',
             [
                 $code ?: null,
                 $response !== false ? mb_substr((string)$response, 0, 1000) : ($err ?: null),
+                $attempt,
                 $ok ? date('Y-m-d H:i:s') : null,
-                $ok ? null : date('Y-m-d H:i:s', time() + 300), // retry in 5 minutes
+                $ok ? null : date('Y-m-d H:i:s', time() + 300), // tail-retry hint for a future cron sweep
                 $deliveryId,
             ]
         );
@@ -85,6 +118,7 @@ class WebhookDispatcher
             'delivery_id' => $deliveryId,
             'status_code' => $code,
             'success' => $ok,
+            'attempts' => $attempt,
             'error' => $err ?: null,
         ];
     }

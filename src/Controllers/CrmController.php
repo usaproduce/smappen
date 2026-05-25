@@ -38,22 +38,20 @@ class CrmController
     {
         $clientId = Config::get('SALESFORCE_CLIENT_ID');
         if (!$clientId) Response::error('Salesforce integration not configured on this server', 503);
-        $state = bin2hex(random_bytes(16));
-        $_SESSION['sf_oauth_state'] = $state;
-        $_SESSION['sf_oauth_org'] = $request->user['organization_id'];
+        $state = self::signOAuthState($request->user['organization_id']);
         $loginUrl = rtrim((string) Config::get('SALESFORCE_LOGIN_URL', 'https://login.salesforce.com'), '/');
         $authUrl = $loginUrl . '/services/oauth2/authorize'
             . '?response_type=code'
             . '&client_id=' . urlencode($clientId)
             . '&redirect_uri=' . urlencode(self::baseUrl() . '/api/integrations/salesforce/callback')
             . '&scope=' . urlencode(self::SF_SCOPES)
-            . '&state=' . $state;
+            . '&state=' . urlencode($state);
         Response::success(['auth_url' => $authUrl]);
     }
 
     public function callbackSalesforce(Request $request): void
     {
-        [$code, $orgId] = self::validateCallback('sf_oauth_state', 'sf_oauth_org');
+        [$code, $orgId] = self::validateCallback();
         $clientId     = Config::get('SALESFORCE_CLIENT_ID');
         $clientSecret = Config::get('SALESFORCE_CLIENT_SECRET');
         $loginUrl = rtrim((string) Config::get('SALESFORCE_LOGIN_URL', 'https://login.salesforce.com'), '/');
@@ -79,6 +77,11 @@ class CrmController
     {
         $row = self::loadIntegration($request->user['organization_id'], 'salesforce');
         if (!$row) Response::error('Connect Salesforce first', 400);
+        try {
+            $row = self::refreshSalesforceTokenIfExpired($row);
+        } catch (\RuntimeException $e) {
+            Response::error('Salesforce session expired. Please reconnect in Settings → Integrations.', 401);
+        }
         $meta = json_decode($row['meta_json'] ?? '{}', true) ?: [];
         $instanceUrl = $meta['instance_url'] ?? null;
         if (!$instanceUrl) Response::error('Missing Salesforce instance URL', 500);
@@ -111,20 +114,18 @@ class CrmController
     {
         $clientId = Config::get('HUBSPOT_CLIENT_ID');
         if (!$clientId) Response::error('HubSpot integration not configured on this server', 503);
-        $state = bin2hex(random_bytes(16));
-        $_SESSION['hs_oauth_state'] = $state;
-        $_SESSION['hs_oauth_org'] = $request->user['organization_id'];
+        $state = self::signOAuthState($request->user['organization_id']);
         $authUrl = 'https://app.hubspot.com/oauth/authorize'
             . '?client_id=' . urlencode($clientId)
             . '&redirect_uri=' . urlencode(self::baseUrl() . '/api/integrations/hubspot/callback')
             . '&scope=' . urlencode(self::HS_SCOPES)
-            . '&state=' . $state;
+            . '&state=' . urlencode($state);
         Response::success(['auth_url' => $authUrl]);
     }
 
     public function callbackHubspot(Request $request): void
     {
-        [$code, $orgId] = self::validateCallback('hs_oauth_state', 'hs_oauth_org');
+        [$code, $orgId] = self::validateCallback();
         $clientId     = Config::get('HUBSPOT_CLIENT_ID');
         $clientSecret = Config::get('HUBSPOT_CLIENT_SECRET');
         if (!$clientId || !$clientSecret) Response::error('HubSpot integration misconfigured', 503);
@@ -154,6 +155,11 @@ class CrmController
     {
         $row = self::loadIntegration($request->user['organization_id'], 'hubspot');
         if (!$row) Response::error('Connect HubSpot first', 400);
+        try {
+            $row = self::refreshHubspotTokenIfExpired($row);
+        } catch (\RuntimeException $e) {
+            Response::error('HubSpot session expired. Please reconnect in Settings → Integrations.', 401);
+        }
         $b = $request->getBody() ?? [];
         $items = $b['areas'] ?? [];
         $accessToken = self::decryptToken($row['access_token_enc'], $row['token_iv']);
@@ -180,18 +186,47 @@ class CrmController
 
     // ---------- helpers ----------
 
+    /**
+     * Sign an OAuth state token carrying the originating org_id + expiry.
+     *
+     * Stateless verification — no PHP session storage, so a load-balanced
+     * deployment where the callback hits a different FPM host still works.
+     * Format: base64url(nonce|orgId|expires|hex_hmac).
+     */
+    private static function signOAuthState(string $orgId): string
+    {
+        $nonce = bin2hex(random_bytes(16));
+        $expires = time() + 600; // 10 minutes
+        $payload = $nonce . '|' . $orgId . '|' . $expires;
+        $sig = hash_hmac('sha256', $payload, self::appKey());
+        return rtrim(strtr(base64_encode($payload . '|' . $sig), '+/', '-_'), '=');
+    }
+
     /** @return array{0:string,1:string} [code, orgId] */
-    private static function validateCallback(string $stateKey, string $orgKey): array
+    private static function validateCallback(): array
     {
         $code = $_GET['code'] ?? null;
         $state = $_GET['state'] ?? null;
-        $expected = $_SESSION[$stateKey] ?? null;
-        $orgId = $_SESSION[$orgKey] ?? null;
-        unset($_SESSION[$stateKey], $_SESSION[$orgKey]);
-        if (!$code || !$state || !$expected || !hash_equals((string) $expected, (string) $state) || !$orgId) {
+        if (!$code || !$state) {
             Response::error('Invalid OAuth state — please retry from /settings/integrations', 400);
         }
-        return [(string) $code, (string) $orgId];
+        $decoded = base64_decode(strtr((string) $state, '-_', '+/'), true);
+        if ($decoded === false) {
+            Response::error('Invalid OAuth state — please retry from /settings/integrations', 400);
+        }
+        $parts = explode('|', $decoded);
+        if (count($parts) !== 4) {
+            Response::error('Invalid OAuth state — please retry from /settings/integrations', 400);
+        }
+        [$nonce, $orgId, $expires, $sig] = $parts;
+        $expected = hash_hmac('sha256', $nonce . '|' . $orgId . '|' . $expires, self::appKey());
+        if (!hash_equals($expected, $sig)) {
+            Response::error('Invalid OAuth state — please retry from /settings/integrations', 400);
+        }
+        if (time() > (int) $expires) {
+            Response::error('OAuth flow took too long — please retry from /settings/integrations', 400);
+        }
+        return [(string) $code, $orgId];
     }
 
     /**
@@ -258,6 +293,108 @@ class CrmController
         $cipher = openssl_encrypt($plain, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
         if ($cipher === false) throw new \RuntimeException('Token encryption failed');
         return base64_encode($cipher);
+    }
+
+    /**
+     * Refresh the Salesforce access token if it's within 5 minutes of expiry.
+     * Returns the (possibly mutated) integration row with fresh ciphertext +
+     * IV in place. Salesforce returns a new access_token but keeps the same
+     * refresh_token; instance_url can shift between sandboxes/orgs so we
+     * persist it back into meta_json when present.
+     */
+    private static function refreshSalesforceTokenIfExpired(array $row): array
+    {
+        if (empty($row['expires_at']) || strtotime((string) $row['expires_at']) > time() + 300) {
+            return $row;
+        }
+        if (empty($row['refresh_token_enc'])) {
+            throw new \RuntimeException('No refresh token on file');
+        }
+        $refreshToken = self::decryptToken($row['refresh_token_enc'], $row['token_iv']);
+        $clientId     = Config::get('SALESFORCE_CLIENT_ID');
+        $clientSecret = Config::get('SALESFORCE_CLIENT_SECRET');
+        $loginUrl = rtrim((string) Config::get('SALESFORCE_LOGIN_URL', 'https://login.salesforce.com'), '/');
+        if (!$clientId || !$clientSecret) throw new \RuntimeException('Salesforce credentials missing');
+
+        $token = self::httpForm($loginUrl . '/services/oauth2/token', [
+            'grant_type'    => 'refresh_token',
+            'client_id'     => $clientId,
+            'client_secret' => $clientSecret,
+            'refresh_token' => $refreshToken,
+        ]);
+        if (empty($token['access_token'])) throw new \RuntimeException('Salesforce refresh returned no access_token');
+
+        // Salesforce omits expires_in on refresh; access tokens default to ~2h
+        // (session policy can shorten). 3600s is the documented minimum we
+        // can safely assume across editions.
+        $expiresAt = date('Y-m-d H:i:s', time() + 3600);
+        $key = self::appKey();
+        $iv  = random_bytes(16);
+        $access = self::encrypt($token['access_token'], $key, $iv);
+
+        $meta = json_decode($row['meta_json'] ?? '{}', true) ?: [];
+        if (!empty($token['instance_url'])) $meta['instance_url'] = $token['instance_url'];
+
+        Database::getInstance()->query(
+            'UPDATE integrations SET access_token_enc = ?, token_iv = ?, expires_at = ?, meta_json = ?, last_used_at = NOW()
+              WHERE id = ?',
+            [$access, bin2hex($iv), $expiresAt, json_encode($meta), $row['id']]
+        );
+
+        $row['access_token_enc'] = $access;
+        $row['token_iv']         = bin2hex($iv);
+        $row['expires_at']       = $expiresAt;
+        $row['meta_json']        = json_encode($meta);
+        return $row;
+    }
+
+    /**
+     * Refresh the HubSpot access token if it's within 5 minutes of expiry.
+     * HubSpot rotates BOTH access_token and refresh_token on each refresh —
+     * if we don't persist the new refresh_token we'll be unable to refresh
+     * again next time.
+     */
+    private static function refreshHubspotTokenIfExpired(array $row): array
+    {
+        if (empty($row['expires_at']) || strtotime((string) $row['expires_at']) > time() + 300) {
+            return $row;
+        }
+        if (empty($row['refresh_token_enc'])) {
+            throw new \RuntimeException('No refresh token on file');
+        }
+        $refreshToken = self::decryptToken($row['refresh_token_enc'], $row['token_iv']);
+        $clientId     = Config::get('HUBSPOT_CLIENT_ID');
+        $clientSecret = Config::get('HUBSPOT_CLIENT_SECRET');
+        if (!$clientId || !$clientSecret) throw new \RuntimeException('HubSpot credentials missing');
+
+        $token = self::httpForm('https://api.hubapi.com/oauth/v1/token', [
+            'grant_type'    => 'refresh_token',
+            'client_id'     => $clientId,
+            'client_secret' => $clientSecret,
+            'refresh_token' => $refreshToken,
+        ]);
+        if (empty($token['access_token']) || empty($token['refresh_token'])) {
+            throw new \RuntimeException('HubSpot refresh returned an incomplete token bundle');
+        }
+
+        $expiresAt = date('Y-m-d H:i:s', time() + (int) ($token['expires_in'] ?? 21600));
+        $key = self::appKey();
+        $iv  = random_bytes(16);
+        $access  = self::encrypt($token['access_token'], $key, $iv);
+        $refresh = self::encrypt($token['refresh_token'], $key, $iv);
+
+        Database::getInstance()->query(
+            'UPDATE integrations SET access_token_enc = ?, refresh_token_enc = ?, token_iv = ?,
+                                      expires_at = ?, last_used_at = NOW()
+              WHERE id = ?',
+            [$access, $refresh, bin2hex($iv), $expiresAt, $row['id']]
+        );
+
+        $row['access_token_enc']  = $access;
+        $row['refresh_token_enc'] = $refresh;
+        $row['token_iv']          = bin2hex($iv);
+        $row['expires_at']        = $expiresAt;
+        return $row;
     }
 
     /** Returns the 32-byte symmetric key derived from APP_KEY. */

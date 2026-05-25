@@ -7,6 +7,7 @@ import AreaPolygon from './AreaPolygon';
 import AreaCenterPins from './AreaCenterPins';
 import POIMarkers from './POIMarkers';
 import ImportedMarkers from './ImportedMarkers';
+import CustomLayerMarkers from './CustomLayerMarkers';
 import DrawingTools from './DrawingTools';
 import ChoroplethLayer from './ChoroplethLayer';
 import HeatmapPanel from './HeatmapPanel';
@@ -113,6 +114,7 @@ export default function MapCanvas() {
         {areas.map((a) => a.geometry ? <AreaPolygon key={a.id} area={a} heatmapOn={showHeatmap} /> : null)}
         <AreaCenterPins areas={areas} />
         <ImportedMarkers points={importedPoints} />
+        <CustomLayerMarkers />
         <POIMarkers />
         <DrawingTools />
         <PresenceCursors />

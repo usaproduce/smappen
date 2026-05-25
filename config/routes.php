@@ -131,6 +131,7 @@ return function (Router $r) {
     // Import / Export
     $r->post('/api/projects/{projectId}/import/upload', [ImportController::class, 'upload'], $rlImport);
     $r->post('/api/projects/{projectId}/import/configure', [ImportController::class, 'configure'], $rlImport);
+    $r->get('/api/projects/{projectId}/import/batches', [ImportController::class, 'batches'], $auth);
     $r->get('/api/imports/{batchId}/status', [ImportController::class, 'status'], $auth);
     $r->delete('/api/imports/{batchId}', [ImportController::class, 'deleteImport'], $auth);
     $r->get('/api/projects/{projectId}/export/areas', [ExportController::class, 'exportAreas'], $rlExport);
@@ -286,6 +287,8 @@ return function (Router $r) {
     // Public share (#45) — no auth, validates share_token
     $r->get('/api/public/projects/{token}', [PublicShareController::class, 'show']);
     $r->get('/api/public/projects/{token}/embed', [PublicShareController::class, 'embed']);
+    // Public embed render — no auth, validates embed_token (embeds table)
+    $r->get('/api/public/embeds/{token}', [PublicShareController::class, 'embedByToken']);
 
     // AI site scoring (#41) — uses ANTHROPIC_API_KEY if set
     $r->post('/api/areas/{id}/ai-score', [AiScoringController::class, 'score'], $auth);

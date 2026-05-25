@@ -179,6 +179,28 @@ class ImportController
         ]);
     }
 
+    /**
+     * List distinct import batches for a project. Used by the Custom Layers
+     * UI so the user can pick which CSV upload backs a new layer.
+     */
+    public function batches(Request $request): void
+    {
+        $project = $this->verifyProject($request);
+        $rows = Database::getInstance()->fetchAll(
+            'SELECT import_batch_id AS batch_id,
+                    COUNT(*) AS point_count,
+                    MIN(created_at) AS first_imported_at,
+                    MAX(created_at) AS last_imported_at,
+                    MAX(label) AS sample_label
+               FROM imported_points
+              WHERE project_id = ? AND import_batch_id IS NOT NULL
+              GROUP BY import_batch_id
+              ORDER BY last_imported_at DESC',
+            [$project['id']]
+        );
+        Response::success(['batches' => $rows]);
+    }
+
     public function status(Request $request): void
     {
         $batchId = $request->getParam('batchId');

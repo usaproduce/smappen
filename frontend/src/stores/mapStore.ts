@@ -79,6 +79,10 @@ interface MapState {
   toggleAreaVisibility: (id: string) => void;
   isAreaHidden: (id: string) => boolean;
   setHeatmapFeatures: (features: { geometry: any; value: number | null; color: string }[] | null) => void;
+  /** Bumped by the Layers tab whenever a custom layer is created, updated, or
+   *  deleted — CustomLayerMarkers watches this to know when to refetch. */
+  customLayersVersion: number;
+  bumpCustomLayers: () => void;
 }
 
 export const useMapStore = create<MapState>((set, get) => ({
@@ -153,6 +157,8 @@ export const useMapStore = create<MapState>((set, get) => ({
   }),
   isAreaHidden: (id) => get().hiddenAreaIds.has(id),
   setHeatmapFeatures: (heatmapFeatures) => set({ heatmapFeatures }),
+  customLayersVersion: 0,
+  bumpCustomLayers: () => set((s) => ({ customLayersVersion: s.customLayersVersion + 1 })),
   fitBoundsToArea: (geometry) => {
     const map = get().mapInstance;
     if (!map || !geometry?.coordinates?.[0]) return;
