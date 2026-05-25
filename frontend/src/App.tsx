@@ -24,6 +24,7 @@ import DashboardPage from './components/dashboard/DashboardPage';
 import ProjectGalleryPage from './components/projects/ProjectGalleryPage';
 import RestaurantsPage from './components/restaurants/RestaurantsPage';
 import MenuPage from './components/restaurants/MenuPage';
+import VendorsPage from './components/vendors/VendorsPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useAuthStore } from './stores/authStore';
 import { useTheme } from './hooks/useTheme';
@@ -63,6 +64,7 @@ export default function App() {
         {/* Carafe surfaces — standalone (no map chrome) */}
         <Route path="/app/restaurants" element={<ProtectedRoute><RestaurantsPage /></ProtectedRoute>} />
         <Route path="/app/restaurants/:id/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
+        <Route path="/app/vendors" element={<ProtectedRoute><VendorsPage /></ProtectedRoute>} />
         <Route path="/app/*" element={<ProtectedRoute><AppLayout /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

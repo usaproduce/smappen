@@ -51,6 +51,7 @@ export default function RestaurantsPage() {
           <nav className="flex items-center gap-4 text-sm font-semibold text-slate-700">
             <Link to="/projects" className="hover:text-violet-700">Projects</Link>
             <Link to="/app/restaurants" className="text-violet-700">Restaurants</Link>
+            <Link to="/app/vendors" className="hover:text-violet-700">Vendors</Link>
             <Link to="/settings/profile" className="hover:text-violet-700">Settings</Link>
           </nav>
         </div>

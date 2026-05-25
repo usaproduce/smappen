@@ -25,7 +25,16 @@ use PHPUnit\Framework\TestCase;
  */
 class DataWallTest extends TestCase
 {
-    /** Private-reservoir table names. Updated as new tables are added. */
+    /**
+     * Private-reservoir table names. Spec §7. Updated as new tables are
+     * added.
+     *
+     * `restaurants` is deliberately NOT in this list — it's the org-scoped
+     * entity, not transactional private data, and market-side code may
+     * legitimately need to look up region/location from it. The wall is
+     * around SALES, MENU, COSTS, LABOR, RECOMMENDATIONS, GOALS — never
+     * around the entity itself.
+     */
     private const PRIVATE_TABLES = [
         'pos_integrations',
         'pos_sales',
@@ -36,6 +45,7 @@ class DataWallTest extends TestCase
         'labor_shifts',
         'recommendations',
         'goals',
+        'goal_snapshots',
         'plans_sandbox',
     ];
 

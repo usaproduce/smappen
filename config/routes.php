@@ -52,6 +52,11 @@ use App\Controllers\PlanningController;
 use App\Controllers\GoalController;
 use App\Controllers\FoodCostController;
 use App\Controllers\LaborController;
+use App\Controllers\VendorController;
+use App\Controllers\VendorClaimController;
+use App\Controllers\ComparisonController;
+use App\Controllers\ConsolidationController;
+use App\Controllers\LeadController;
 
 return function (Router $r) {
     $auth = [Middleware::auth()];
@@ -392,4 +397,27 @@ return function (Router $r) {
     $r->get('/api/restaurants/{id}/labor/analysis',             [LaborController::class, 'analysis'],     $auth);
     $r->get('/api/restaurants/{id}/labor/shifts',               [LaborController::class, 'listShifts'],   $auth);
     $r->post('/api/restaurants/{id}/labor/shifts',              [LaborController::class, 'createShift'],  $auth);
+
+    // ─────────────────────────── Carafe Phase 2 (marketplace) ───────────────────────────
+
+    // Vendor directory — browse + show. Cross-tenant by design.
+    $r->get('/api/vendors',                                     [VendorController::class, 'index'], $auth);
+    $r->get('/api/vendors/{id}',                                [VendorController::class, 'show'],  $auth);
+
+    // Vendor claim workflow.
+    $r->post('/api/vendors/{id}/claims',                        [VendorClaimController::class, 'create'],        $auth);
+    $r->get('/api/vendors/{id}/claims',                         [VendorClaimController::class, 'listForVendor'], $auth);
+    $r->post('/api/vendor-claims/{id}/approve',                 [VendorClaimController::class, 'approve'],       $auth);
+    $r->post('/api/vendor-claims/{id}/reject',                  [VendorClaimController::class, 'reject'],        $auth);
+    $r->post('/api/vendors/{id}/listings',                      [VendorClaimController::class, 'addListing'],    $auth);
+
+    // Honest comparison + order consolidation.
+    $r->post('/api/vendors/compare',                            [ComparisonController::class,    'compare'], $auth);
+    $r->post('/api/vendors/consolidate',                        [ConsolidationController::class, 'compare'], $auth);
+
+    // Lead funnel — opt-in audit trail + outbox to GreenDock via webhook.
+    $r->post('/api/vendors/compare/log',                        [LeadController::class, 'logComparison'], $auth);
+    $r->post('/api/leads',                                      [LeadController::class, 'create'],        $auth);
+    $r->get('/api/leads',                                       [LeadController::class, 'index'],         $auth);
+    $r->post('/api/leads/{id}/emit',                            [LeadController::class, 'emit'],          $auth);
 };
