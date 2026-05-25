@@ -71,6 +71,12 @@ $vendors = [
         'listings' => [['category' => 'broadline', 'region' => null]],
     ],
     [
+        'name'             => 'Gordon Food Service',
+        'primary_category' => 'broadline',
+        'source'           => 'public_directory',
+        'listings' => [['category' => 'broadline', 'region' => null]],
+    ],
+    [
         'name'             => 'Baldor Specialty Foods',
         'hq_address'       => 'Bronx, NY',
         'primary_category' => 'produce',
