@@ -49,6 +49,9 @@ use App\Controllers\MenuController;
 use App\Controllers\MenuEngineeringController;
 use App\Controllers\RoiController;
 use App\Controllers\PlanningController;
+use App\Controllers\GoalController;
+use App\Controllers\FoodCostController;
+use App\Controllers\LaborController;
 
 return function (Router $r) {
     $auth = [Middleware::auth()];
@@ -375,4 +378,18 @@ return function (Router $r) {
     $r->get('/api/sandbox/{id}',                                [PlanningController::class, 'show'],    $auth);
     $r->post('/api/sandbox/{id}/compute',                       [PlanningController::class, 'compute'], $auth);
     $r->delete('/api/sandbox/{id}',                             [PlanningController::class, 'destroy'], $auth);
+
+    // Goals — operator scorecard.
+    $r->get('/api/restaurants/{id}/goals',                      [GoalController::class, 'index'],    $auth);
+    $r->post('/api/restaurants/{id}/goals',                     [GoalController::class, 'create'],   $auth);
+    $r->post('/api/goals/{id}/snapshot',                        [GoalController::class, 'snapshot'], $auth);
+    $r->delete('/api/goals/{id}',                               [GoalController::class, 'destroy'],  $auth);
+
+    // Food cost — theoretical vs (eventually) actual.
+    $r->get('/api/restaurants/{id}/food-cost/theoretical',      [FoodCostController::class, 'theoretical'], $auth);
+
+    // Labor + daypart demand-filling.
+    $r->get('/api/restaurants/{id}/labor/analysis',             [LaborController::class, 'analysis'],     $auth);
+    $r->get('/api/restaurants/{id}/labor/shifts',               [LaborController::class, 'listShifts'],   $auth);
+    $r->post('/api/restaurants/{id}/labor/shifts',              [LaborController::class, 'createShift'],  $auth);
 };

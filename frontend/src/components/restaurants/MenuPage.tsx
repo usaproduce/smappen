@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
-  ArrowLeft, RefreshCw, Sparkles, Check, X, ExternalLink, AlertCircle,
+  ArrowLeft, RefreshCw, Sparkles, Check, X, ExternalLink, AlertCircle, MapPin,
 } from 'lucide-react';
 import {
   restaurantsApi, posApi, menuApi, recommendationsApi, roiApi, type RoiMonthly,
@@ -226,6 +226,22 @@ export default function MenuPage() {
             </ul>
           </section>
         )}
+
+        {/* Market intel entry point — repurposes the existing /app map stack */}
+        <section className="mb-6">
+          <Link to="/app" className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 hover:border-violet-300 hover:shadow-sm transition">
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-violet-50" style={{ color: '#7848BB' }}>
+                <MapPin size={18} />
+              </span>
+              <div>
+                <div className="font-bold text-sm" style={{ color: '#1A1A2E' }}>Study your trade area</div>
+                <div className="text-xs text-slate-500">Who lives in your delivery radius, how busy this block is, where competitors are.</div>
+              </div>
+            </div>
+            <ExternalLink size={14} className="text-slate-400" />
+          </Link>
+        </section>
 
         {/* Menu items */}
         <section>
