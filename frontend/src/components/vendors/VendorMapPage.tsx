@@ -79,16 +79,35 @@ export default function VendorMapPage() {
         const b = map.getBounds();
         if (!b) return;
         const ne = b.getNorthEast(); const sw = b.getSouthWest();
+        // Normalize bounds. At low zoom on a wide viewport, Google's
+        // getBounds() can cross the antimeridian (sw.lng() > ne.lng())
+        // because the visible map spans >180° of longitude. The backend
+        // would 422 that as "Invalid bbox". Clamp to the world.
+        let minLat = sw.lat(), maxLat = ne.lat();
+        let minLng = sw.lng(), maxLng = ne.lng();
+        if (minLng >= maxLng) { minLng = -180; maxLng = 180; }
+        if (minLat >= maxLat) { minLat = -85;  maxLat = 85;  }
+        // Hard clamp out-of-range values (Google's lat/lng can exceed ±85/±180 at extreme zoom).
+        minLat = Math.max(-85, Math.min(85, minLat));
+        maxLat = Math.max(-85, Math.min(85, maxLat));
+        minLng = Math.max(-180, Math.min(180, minLng));
+        maxLng = Math.max(-180, Math.min(180, maxLng));
+
         try {
           const rows = await vendorMapApi.bbox({
-            minLat: sw.lat(), minLng: sw.lng(),
-            maxLat: ne.lat(), maxLng: ne.lng(),
+            minLat, minLng, maxLat, maxLng,
             type: type || undefined,
             category: category || undefined,
           });
           setPins(rows);
         } catch (e: any) {
-          toast.error(e?.response?.data?.error ?? 'Failed to load vendors');
+          // Don't toast bbox errors — they're a low-zoom edge case and
+          // alarm the user for no reason. Log silently.
+          if (!String(e?.response?.data?.error ?? '').includes('bbox')) {
+            toast.error(e?.response?.data?.error ?? 'Failed to load vendors');
+          } else if (import.meta.env.DEV) {
+            console.warn('bbox query skipped:', e?.response?.data?.error);
+          }
         }
       }, 350);
     };
@@ -141,34 +160,39 @@ export default function VendorMapPage() {
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <AppNav />
 
-      {/* Filter strip */}
+      {/* Filter strip.
+          Note: we DON'T use the global `.input` class on these controls —
+          it has `width:100%` which fights flex and stacks every control to
+          its own row (causing the "Vendors page looks horrible" report).
+          Direct Tailwind utilities give us a real horizontal toolbar. */}
       <div className="bg-white border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-6 py-2 flex items-center gap-2 flex-wrap">
-          <div className="relative flex-1 min-w-[200px] max-w-md">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <div className="relative flex-shrink-0" style={{ minWidth: 220, maxWidth: 320 }}>
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
-              className="input h-9 text-sm w-full pl-9"
+              type="text"
+              className="h-9 text-sm w-full pl-9 pr-3 rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
               placeholder="Search vendor by name…"
               value={q}
               onChange={(e) => setFilter('q', e.target.value)}
             />
           </div>
           <select
-            className="input h-9 text-sm"
+            className="h-9 text-sm rounded-md border border-slate-300 bg-white px-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
             value={type}
             onChange={(e) => setFilter('type', e.target.value as VendorTypeFilter)}
           >
             {TYPES.map((t) => <option key={t.k} value={t.k}>{t.label}</option>)}
           </select>
           <select
-            className="input h-9 text-sm"
+            className="h-9 text-sm rounded-md border border-slate-300 bg-white px-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
             value={category}
             onChange={(e) => setFilter('category', e.target.value as VendorCategoryFilter)}
           >
             {CATEGORIES.map((c) => <option key={c.k} value={c.k}>{c.label}</option>)}
           </select>
           <select
-            className="input h-9 text-sm"
+            className="h-9 text-sm rounded-md border border-slate-300 bg-white px-2 focus:outline-none focus:ring-2 focus:ring-violet-400"
             value={String(minRating)}
             onChange={(e) => setFilter('minRating', Number(e.target.value))}
             title="Minimum rating"
@@ -178,8 +202,13 @@ export default function VendorMapPage() {
             <option value="4">4★+</option>
             <option value="4.5">4.5★+</option>
           </select>
-          <label className="flex items-center gap-1 text-xs font-semibold text-slate-700 cursor-pointer">
-            <input type="checkbox" checked={affiliatedOnly} onChange={(e) => setFilter('affiliatedOnly', e.target.checked)} />
+          <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer whitespace-nowrap px-2">
+            <input
+              type="checkbox"
+              className="rounded text-violet-600 focus:ring-violet-400"
+              checked={affiliatedOnly}
+              onChange={(e) => setFilter('affiliatedOnly', e.target.checked)}
+            />
             Affiliated only
           </label>
 
