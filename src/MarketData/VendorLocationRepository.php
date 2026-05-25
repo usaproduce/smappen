@@ -97,6 +97,52 @@ class VendorLocationRepository
     }
 
     /**
+     * For each vendor, return the location closest to (lat, lng). Used
+     * by VendorMapController::serves so the "Restaurant Depot serves you
+     * from 197 mi away" UX bug (showing the primary instead of the
+     * actually-closest branch) doesn't happen.
+     *
+     * Returns [vendor_id => location_row_with_distance_miles].
+     */
+    public function closestForMany(array $vendorIds, float $lat, float $lng): array
+    {
+        if (empty($vendorIds)) return [];
+        $ids = array_values(array_unique(array_map('strval', $vendorIds)));
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $rows = Database::getInstance()->fetchAll(
+            "SELECT vl.id, vl.vendor_id, vl.lat, vl.lng, vl.address, vl.label
+               FROM vendor_locations vl
+              WHERE vl.vendor_id IN ($placeholders)",
+            $ids
+        );
+        $closest = [];   // vendor_id => [row, distance_miles]
+        foreach ($rows as $r) {
+            $vid = (string) $r['vendor_id'];
+            $d = self::haversineMiles($lat, $lng, (float) $r['lat'], (float) $r['lng']);
+            if (!isset($closest[$vid]) || $d < $closest[$vid][1]) {
+                $closest[$vid] = [[
+                    'id'             => $r['id'],
+                    'lat'            => (float) $r['lat'],
+                    'lng'            => (float) $r['lng'],
+                    'address'        => $r['address'],
+                    'label'          => $r['label'],
+                    'distance_miles' => $d,
+                ], $d];
+            }
+        }
+        return array_map(fn($pair) => $pair[0], $closest);
+    }
+
+    private static function haversineMiles(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $r = 3958.8;
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+        return round(2 * $r * asin(min(1.0, sqrt($a))), 2);
+    }
+
+    /**
      * Spatial bounding-box query — used by the map cluster endpoint. Lat/lng
      * here are the min/max corners of the visible viewport.
      */

@@ -105,18 +105,40 @@ $vendors = [
     ],
 ];
 
+$db = \App\Core\Database::getInstance();
 $inserted = 0;
 $skipped  = 0;
+$patched  = 0;
 foreach ($vendors as $v) {
-    if ($repo->findByName($v['name'])) {
+    $existing = $repo->findByName($v['name']);
+    if ($existing) {
         $skipped++;
-        echo "  - {$v['name']} already present, skipped\n";
+        // Patch hq_lat/hq_lng if missing — the original seed for some rows
+        // (USA Produce) didn't have coordinates, leaving the vendor invisible
+        // on the map. Idempotent: only writes when the column is null.
+        $needsPatch = (
+            !empty($v['hq_lat']) && empty($existing['hq_lat'])
+        ) || (
+            !empty($v['hq_lng']) && empty($existing['hq_lng'])
+        );
+        if ($needsPatch) {
+            $db->query(
+                'UPDATE vendors SET hq_lat = COALESCE(hq_lat, ?), hq_lng = COALESCE(hq_lng, ?), updated_at = NOW() WHERE id = ?',
+                [$v['hq_lat'] ?? null, $v['hq_lng'] ?? null, $existing['id']]
+            );
+            $patched++;
+            echo "  ~ {$v['name']} patched (hq_lat/lng)\n";
+        } else {
+            echo "  - {$v['name']} already present, skipped\n";
+        }
         continue;
     }
     $id = $repo->create([
         'name'             => $v['name'],
         'legal_name'       => $v['legal_name'] ?? null,
         'hq_address'       => $v['hq_address'] ?? null,
+        'hq_lat'           => $v['hq_lat'] ?? null,
+        'hq_lng'           => $v['hq_lng'] ?? null,
         'primary_category' => $v['primary_category'] ?? null,
         'is_affiliated'    => !empty($v['is_affiliated']),
         'source'           => $v['source'] ?? 'manual',

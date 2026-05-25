@@ -211,7 +211,12 @@ export default function VendorMapPage() {
           <div className="absolute inset-0 grid place-items-center text-slate-500 text-sm">Loading map…</div>
         ) : (
           <>
-            {view === 'map' && (
+            {/* Map is ALWAYS mounted so the bbox fetch keeps running even
+                while the user is in list view (otherwise list shows empty
+                because `map` would be null and the useEffect wouldn't fire).
+                Visibility toggles via CSS so the GoogleMap instance stays
+                stable across view switches. */}
+            <div style={{ position: 'absolute', inset: 0, visibility: view === 'map' ? 'visible' : 'hidden' }}>
               <GoogleMap
                 mapContainerStyle={{ width: '100%', height: '100%' }}
                 center={US_CENTER}
@@ -272,7 +277,7 @@ export default function VendorMapPage() {
                   />
                 )}
               </GoogleMap>
-            )}
+            </div>
 
             {view === 'list' && <ListView pins={visiblePins} onSelect={selectVendor} />}
 

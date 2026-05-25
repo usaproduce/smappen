@@ -81,13 +81,19 @@ class VendorMapController
         $lng = self::numQ($request, 'lng');
         if ($lat === null || $lng === null) Response::error('lat + lng required', 422);
         $rows = $this->geometry->whoServesPoint($lat, $lng);
-        // Batch-load primary locations so we don't run N queries inside the
-        // loop (a wide pin drop in a dense metro could return 30+ vendors).
-        $primaries = $this->locations->primaryForMany(array_map(fn($r) => (string) $r['vendor_id'], $rows));
+        // For each vendor, return the CLOSEST location to the pin (not the
+        // alphabetical primary). Otherwise the UX shows "Restaurant Depot
+        // serves you from 197 mi" when it actually serves you from a branch
+        // 10 mi away. Single batched query, no N+1.
+        $closest = $this->locations->closestForMany(
+            array_map(fn($r) => (string) $r['vendor_id'], $rows),
+            $lat,
+            $lng,
+        );
         foreach ($rows as &$r) {
-            $primary = $primaries[(string) $r['vendor_id']] ?? null;
-            $r['primary_location'] = $primary;
-            $r['distance_miles']   = $primary ? self::haversineMiles($lat, $lng, (float)$primary['lat'], (float)$primary['lng']) : null;
+            $loc = $closest[(string) $r['vendor_id']] ?? null;
+            $r['primary_location'] = $loc;
+            $r['distance_miles']   = $loc['distance_miles'] ?? null;
         }
         // Honest ranking: affiliated → rating → distance.
         usort($rows, function ($a, $b) {
@@ -157,13 +163,4 @@ class VendorMapController
         return is_numeric($v) ? (float) $v : null;
     }
 
-    /** Haversine distance in statute miles between two (lat,lng) points. */
-    private static function haversineMiles(float $lat1, float $lng1, float $lat2, float $lng2): float
-    {
-        $r = 3958.8;
-        $dLat = deg2rad($lat2 - $lat1);
-        $dLng = deg2rad($lng2 - $lng1);
-        $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
-        return round(2 * $r * asin(min(1.0, sqrt($a))), 2);
-    }
 }
