@@ -13,6 +13,9 @@
     <include>
       <directory suffix=".php">src/Services</directory>
       <directory suffix=".php">src/Core</directory>
+      <directory suffix=".php">src/PrivateData</directory>
+      <directory suffix=".php">src/MarketData</directory>
+      <directory suffix=".php">src/SharedRef</directory>
     </include>
   </source>
 </phpunit>

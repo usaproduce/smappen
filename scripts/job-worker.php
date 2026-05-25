@@ -8,6 +8,18 @@ use App\Services\TerritoryGenerator;
 use App\Services\CompetitorScanner;
 use App\Services\WebhookDispatcher;
 use App\Services\GeoUtils;
+use App\Services\PosService;
+use App\Services\PlateCostService;
+use App\Services\MenuEngineeringService;
+use App\Controllers\OnboardingController;
+use App\PrivateData\PosIntegrationRepository;
+use App\PrivateData\MenuItemRepository;
+use App\PrivateData\RecipeRepository;
+use App\PrivateData\PlateCostRepository;
+use App\PrivateData\RecommendationRepository;
+use App\PrivateData\RestaurantRepository;
+use App\PrivateData\PosSalesRepository;
+use App\SharedRef\CogsBenchmarkRepository;
 
 Config::load(dirname(__DIR__));
 ini_set('memory_limit', '1024M');
@@ -128,6 +140,58 @@ while ($claimed < $maxJobs) {
                 if ($sub) {
                     $result = (new WebhookDispatcher())->dispatch($sub, $payload['event'], $payload['data']);
                 }
+                break;
+
+            case 'pos.sync':
+                $restaurantId = $payload['restaurant_id'] ?? null;
+                $provider = $payload['provider'] ?? null;
+                if (!$restaurantId || !$provider) throw new RuntimeException('pos.sync missing restaurant_id/provider');
+                $integrations = new PosIntegrationRepository();
+                $items = new MenuItemRepository();
+                $sales = new PosSalesRepository();
+                $pos = new PosService();
+                $syncResult = $pos->sync($restaurantId, $provider, $integrations, $items, $sales);
+
+                // Refresh plate costs for any items with linked recipes — new
+                // items default to no recipe, so this is a no-op for the very
+                // first sync but useful on subsequent syncs.
+                $restaurant = $db->fetch('SELECT organization_id, region FROM restaurants WHERE id = ?', [$restaurantId]);
+                if ($restaurant) {
+                    $plateCostSvc = new PlateCostService(
+                        $items,
+                        new RecipeRepository(),
+                        new PlateCostRepository(),
+                        new CogsBenchmarkRepository(),
+                    );
+                    $computedCount = $plateCostSvc->computeForRestaurant(
+                        $restaurantId,
+                        $restaurant['organization_id'],
+                        $restaurant['region'] ?? null,
+                    );
+
+                    // Then refresh recommendations — now backed by real PMIX volume.
+                    $engine = new MenuEngineeringService(
+                        $items,
+                        new PlateCostRepository(),
+                        new RecommendationRepository(),
+                        $sales,
+                    );
+                    $recCount = $engine->recommendForRestaurant($restaurantId, $restaurant['organization_id']);
+                    $syncResult['plate_costs_computed'] = $computedCount;
+                    $syncResult['recommendations_created'] = $recCount;
+                }
+                $result = $syncResult;
+
+                // Activation stamp: first time we successfully pull menu items.
+                if (($syncResult['pulled_count'] ?? 0) > 0 && !empty($job['user_id'])) {
+                    OnboardingController::stampActivation(
+                        (string) $job['user_id'],
+                        (string) $job['organization_id'],
+                        'first_menu_synced_at'
+                    );
+                }
+
+                fanout($job, 'pos.sync.completed', $syncResult);
                 break;
 
             default:

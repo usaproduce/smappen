@@ -43,6 +43,12 @@ use App\Controllers\OnboardingController;
 use App\Controllers\AlertsController;
 use App\Controllers\CustomLayerController;
 use App\Controllers\EmbedController;
+use App\Controllers\RestaurantController;
+use App\Controllers\PosController;
+use App\Controllers\MenuController;
+use App\Controllers\MenuEngineeringController;
+use App\Controllers\RoiController;
+use App\Controllers\PlanningController;
 
 return function (Router $r) {
     $auth = [Middleware::auth()];
@@ -325,4 +331,48 @@ return function (Router $r) {
     $r->post('/api/projects/{projectId}/embeds',        [EmbedController::class, 'create'],  $auth);
     $r->put('/api/embeds/{id}',                         [EmbedController::class, 'update'],  $auth);
     $r->delete('/api/embeds/{id}',                      [EmbedController::class, 'destroy'], $auth);
+
+    // ─────────────────────────── Carafe (Phase 1) ───────────────────────────
+
+    // Restaurants — Carafe's primary org-scoped entity.
+    $r->get('/api/restaurants',          [RestaurantController::class, 'index'],   $auth);
+    $r->post('/api/restaurants',         [RestaurantController::class, 'create'],  $auth);
+    $r->get('/api/restaurants/{id}',     [RestaurantController::class, 'show'],    $auth);
+    $r->delete('/api/restaurants/{id}',  [RestaurantController::class, 'destroy'], $auth);
+
+    // POS OAuth + sync. Provider-scoped under /pos/{provider} for clarity.
+    // Callback is auth-less — validates via signed state token (see PosService).
+    $r->get('/api/restaurants/{id}/pos',                       [PosController::class, 'listForRestaurant'], $auth);
+    $r->post('/api/restaurants/{id}/pos/{provider}/connect',   [PosController::class, 'connect'],           $auth);
+    $r->get('/api/integrations/pos/{provider}/callback',       [PosController::class, 'callback']);
+    $r->post('/api/restaurants/{id}/pos/{provider}/sync',      [PosController::class, 'sync'],              $auth);
+
+    // Menu + recipes + plate-cost compute.
+    $r->get('/api/restaurants/{id}/menu',                       [MenuController::class, 'listMenu'],              $auth);
+    $r->post('/api/restaurants/{id}/menu',                      [MenuController::class, 'createMenuItem'],        $auth);
+    $r->put('/api/menu-items/{id}/price',                       [MenuController::class, 'setPrice'],              $auth);
+    $r->put('/api/menu-items/{id}/recipe',                      [MenuController::class, 'setRecipe'],             $auth);
+    $r->post('/api/restaurants/{id}/recipes',                   [MenuController::class, 'createRecipe'],          $auth);
+    $r->post('/api/recipes/{id}/ingredients',                   [MenuController::class, 'addIngredient'],         $auth);
+    $r->post('/api/restaurants/{id}/plate-costs/recompute',     [MenuController::class, 'recomputePlateCosts'],   $auth);
+    $r->get('/api/restaurants/{id}/cogs/overpay',               [MenuController::class, 'overpayFlags'],          $auth);
+
+    // Menu engineering — recommendations + accept/dismiss ledger.
+    $r->post('/api/menu-items/{id}/recommend',                  [MenuEngineeringController::class, 'recommendForItem'],       $auth);
+    $r->post('/api/restaurants/{id}/recommendations/run',       [MenuEngineeringController::class, 'recommendForRestaurant'], $auth);
+    $r->get('/api/restaurants/{id}/recommendations',            [MenuEngineeringController::class, 'listForRestaurant'],      $auth);
+    $r->get('/api/restaurants/{id}/menu/classify',              [MenuEngineeringController::class, 'classify'],               $auth);
+    $r->post('/api/recommendations/{id}/accept',                [MenuEngineeringController::class, 'accept'],                  $auth);
+    $r->post('/api/recommendations/{id}/dismiss',               [MenuEngineeringController::class, 'dismiss'],                 $auth);
+
+    // ROI ledger — Carafe-found-you-$X-this-month.
+    $r->get('/api/restaurants/{id}/roi/monthly',                [RoiController::class, 'monthly'], $auth);
+    $r->post('/api/restaurants/{id}/roi/measure',               [RoiController::class, 'measure'], $auth);
+
+    // Planning sandbox — model a menu change / new location before committing.
+    $r->get('/api/sandbox',                                     [PlanningController::class, 'index'],   $auth);
+    $r->post('/api/sandbox',                                    [PlanningController::class, 'create'],  $auth);
+    $r->get('/api/sandbox/{id}',                                [PlanningController::class, 'show'],    $auth);
+    $r->post('/api/sandbox/{id}/compute',                       [PlanningController::class, 'compute'], $auth);
+    $r->delete('/api/sandbox/{id}',                             [PlanningController::class, 'destroy'], $auth);
 };

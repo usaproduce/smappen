@@ -60,20 +60,40 @@ echo "  returned_in_week_2: scanned " . count($eligible) . " eligible users, $re
 
 // 2. health_score — recompute for every row. Weights sum to 100; tweak in
 //    one place if product ever re-prioritizes the funnel.
-$rows = $db->fetchAll(
-    'SELECT user_id, first_area_at, first_demographic_at, first_export_at,
-            first_share_at, first_report_at, returned_in_week_2
-       FROM activation_metrics'
-);
+// Detect whether the Carafe milestone columns exist (added in migration 021).
+// Lets this script run safely against droplets that haven't applied 021 yet.
+$hasCarafeCols = (int) ($db->fetch(
+    "SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'activation_metrics'
+        AND COLUMN_NAME = 'first_dollar_measured_at'"
+)['c'] ?? 0) === 1;
+
+$baseCols = 'user_id, first_area_at, first_demographic_at, first_export_at, '
+          . 'first_share_at, first_report_at, returned_in_week_2';
+$carafeCols = $hasCarafeCols
+    ? ', first_pos_connected_at, first_menu_synced_at, first_recommendation_accepted_at, first_dollar_measured_at'
+    : '';
+
+$rows = $db->fetchAll('SELECT ' . $baseCols . $carafeCols . ' FROM activation_metrics');
 $updated = 0;
 foreach ($rows as $r) {
     $score = 0;
-    if (!empty($r['first_area_at']))        $score += 20;
-    if (!empty($r['first_demographic_at'])) $score += 15;
-    if (!empty($r['first_export_at']))      $score += 15;
-    if (!empty($r['first_share_at']))       $score += 15;
-    if (!empty($r['first_report_at']))      $score += 15;
-    if ((int) $r['returned_in_week_2'] === 1) $score += 20;
+    if (!empty($r['first_area_at']))        $score += 15;
+    if (!empty($r['first_demographic_at'])) $score += 10;
+    if (!empty($r['first_export_at']))      $score += 10;
+    if (!empty($r['first_share_at']))       $score += 10;
+    if (!empty($r['first_report_at']))      $score += 10;
+    if ((int) $r['returned_in_week_2'] === 1) $score += 15;
+    // Carafe-side milestones — heavier weights on the bottom-of-funnel
+    // ones (acceptance + measured dollars) because they prove value.
+    if ($hasCarafeCols) {
+        if (!empty($r['first_pos_connected_at']))            $score += 10;
+        if (!empty($r['first_menu_synced_at']))              $score += 5;
+        if (!empty($r['first_recommendation_accepted_at']))  $score += 5;
+        if (!empty($r['first_dollar_measured_at']))          $score += 10;
+    }
+    $score = min($score, 100);
     $db->query(
         'UPDATE activation_metrics SET health_score = ? WHERE user_id = ?',
         [$score, $r['user_id']]

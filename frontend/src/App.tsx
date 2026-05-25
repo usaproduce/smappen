@@ -22,6 +22,8 @@ import HomePage from './components/marketing/HomePage';
 import BlogPage from './components/marketing/BlogPage';
 import DashboardPage from './components/dashboard/DashboardPage';
 import ProjectGalleryPage from './components/projects/ProjectGalleryPage';
+import RestaurantsPage from './components/restaurants/RestaurantsPage';
+import MenuPage from './components/restaurants/MenuPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useAuthStore } from './stores/authStore';
 import { useTheme } from './hooks/useTheme';
@@ -58,6 +60,9 @@ export default function App() {
           <Route path="webhooks" element={<WebhookSettings />} />
           <Route path="billing" element={<BillingSettings />} />
         </Route>
+        {/* Carafe surfaces — standalone (no map chrome) */}
+        <Route path="/app/restaurants" element={<ProtectedRoute><RestaurantsPage /></ProtectedRoute>} />
+        <Route path="/app/restaurants/:id/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
         <Route path="/app/*" element={<ProtectedRoute><AppLayout /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

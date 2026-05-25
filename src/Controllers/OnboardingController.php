@@ -145,11 +145,16 @@ class OnboardingController
         $b = $request->getBody() ?? [];
         $step = $b['step'] ?? null;
         $col = [
-            'first_area'         => 'first_area_at',
-            'first_demographic'  => 'first_demographic_at',
-            'first_export'       => 'first_export_at',
-            'first_share'        => 'first_share_at',
-            'first_report'       => 'first_report_at',
+            'first_area'                    => 'first_area_at',
+            'first_demographic'             => 'first_demographic_at',
+            'first_export'                  => 'first_export_at',
+            'first_share'                   => 'first_share_at',
+            'first_report'                  => 'first_report_at',
+            // Carafe milestones (added in migration 021)
+            'first_pos_connected'           => 'first_pos_connected_at',
+            'first_menu_synced'             => 'first_menu_synced_at',
+            'first_recommendation_accepted' => 'first_recommendation_accepted_at',
+            'first_dollar_measured'         => 'first_dollar_measured_at',
         ][$step] ?? null;
         if (!$col) Response::error('Invalid step', 422);
         self::stampActivation($request->user['id'], $request->user['organization_id'], $col);
