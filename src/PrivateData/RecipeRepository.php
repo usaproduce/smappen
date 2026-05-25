@@ -31,10 +31,14 @@ class RecipeRepository
 
     public function ingredientsFor(string $recipeId): array
     {
-        return Database::getInstance()->fetchAll(
+        $rows = Database::getInstance()->fetchAll(
             'SELECT id, ingredient_key, qty, unit, notes FROM recipe_ingredients WHERE recipe_id = ?',
             [$recipeId]
         );
+        // PDO stringifies DECIMAL — cast qty back to float so the frontend's
+        // `Number(ing.qty)` shows the right number in the recipe editor.
+        foreach ($rows as &$r) $r['qty'] = (float) $r['qty'];
+        return $rows;
     }
 
     public function listByRestaurant(string $restaurantId): array

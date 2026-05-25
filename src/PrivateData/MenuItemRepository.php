@@ -18,7 +18,7 @@ class MenuItemRepository
     public function listByRestaurant(string $restaurantId): array
     {
         // Joined with plate_costs so the UI can render margin in one round-trip.
-        return Database::getInstance()->fetchAll(
+        $rows = Database::getInstance()->fetchAll(
             'SELECT mi.id, mi.name, mi.category, mi.price_cents, mi.recipe_id, mi.is_active,
                     mi.pos_provider, mi.pos_item_id, mi.last_synced_at,
                     pc.true_cost_cents, pc.coverage_pct, pc.computed_at AS cost_computed_at
@@ -28,6 +28,15 @@ class MenuItemRepository
               ORDER BY mi.is_active DESC, mi.name ASC',
             [$restaurantId]
         );
+        // PDO stringifies INT/TINYINT — cast so the frontend's tabular-nums
+        // formatters and color logic (margin_pct < 0.6 ? red) work correctly.
+        foreach ($rows as &$r) {
+            $r['price_cents']     = (int) $r['price_cents'];
+            $r['is_active']       = (int) $r['is_active'];
+            $r['true_cost_cents'] = $r['true_cost_cents'] === null ? null : (int) $r['true_cost_cents'];
+            $r['coverage_pct']    = $r['coverage_pct']    === null ? null : (int) $r['coverage_pct'];
+        }
+        return $rows;
     }
 
     /**

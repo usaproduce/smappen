@@ -12,30 +12,42 @@ use App\Core\Database;
  */
 class RestaurantRepository
 {
+    /** Normalize PDO-stringified numerics so the frontend gets real numbers. */
+    private static function normalize(?array $row): ?array
+    {
+        if ($row === null) return null;
+        if (array_key_exists('lat', $row) && $row['lat'] !== null) $row['lat'] = (float) $row['lat'];
+        if (array_key_exists('lng', $row) && $row['lng'] !== null) $row['lng'] = (float) $row['lng'];
+        if (array_key_exists('is_sample', $row)) $row['is_sample'] = (int) $row['is_sample'];
+        return $row;
+    }
+
     public function findById(string $id, string $organizationId): ?array
     {
-        return Database::getInstance()->fetch(
+        return self::normalize(Database::getInstance()->fetch(
             'SELECT * FROM restaurants WHERE id = ? AND organization_id = ? AND archived_at IS NULL',
             [$id, $organizationId]
-        );
+        ));
     }
 
     public function listByOrg(string $organizationId): array
     {
-        return Database::getInstance()->fetchAll(
+        $rows = Database::getInstance()->fetchAll(
             'SELECT id, organization_id, name, address, lat, lng, timezone, region, is_sample, created_at
                FROM restaurants
               WHERE organization_id = ? AND archived_at IS NULL
               ORDER BY created_at DESC',
             [$organizationId]
         );
+        foreach ($rows as &$r) $r = self::normalize($r);
+        return $rows;
     }
 
     public function findSample(): ?array
     {
-        return Database::getInstance()->fetch(
+        return self::normalize(Database::getInstance()->fetch(
             'SELECT * FROM restaurants WHERE is_sample = 1 LIMIT 1'
-        );
+        ));
     }
 
     public function create(string $organizationId, array $data): string

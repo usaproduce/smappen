@@ -33,7 +33,7 @@ class RecommendationRepository
     public function listByRestaurant(string $restaurantId, ?string $status = null, int $limit = 100): array
     {
         if ($status !== null) {
-            return Database::getInstance()->fetchAll(
+            $rows = Database::getInstance()->fetchAll(
                 'SELECT id, menu_item_id, kind, payload, narrative, dollar_estimate_cents,
                         status, measured_impact_cents, created_at, decided_at, measured_at
                    FROM recommendations
@@ -41,15 +41,21 @@ class RecommendationRepository
                   ORDER BY created_at DESC LIMIT ?',
                 [$restaurantId, $status, $limit]
             );
+        } else {
+            $rows = Database::getInstance()->fetchAll(
+                'SELECT id, menu_item_id, kind, payload, narrative, dollar_estimate_cents,
+                        status, measured_impact_cents, created_at, decided_at, measured_at
+                   FROM recommendations
+                  WHERE restaurant_id = ?
+                  ORDER BY created_at DESC LIMIT ?',
+                [$restaurantId, $limit]
+            );
         }
-        return Database::getInstance()->fetchAll(
-            'SELECT id, menu_item_id, kind, payload, narrative, dollar_estimate_cents,
-                    status, measured_impact_cents, created_at, decided_at, measured_at
-               FROM recommendations
-              WHERE restaurant_id = ?
-              ORDER BY created_at DESC LIMIT ?',
-            [$restaurantId, $limit]
-        );
+        foreach ($rows as &$r) {
+            $r['dollar_estimate_cents']  = (int) $r['dollar_estimate_cents'];
+            $r['measured_impact_cents']  = $r['measured_impact_cents'] === null ? null : (int) $r['measured_impact_cents'];
+        }
+        return $rows;
     }
 
     public function findById(string $id, string $organizationId): ?array

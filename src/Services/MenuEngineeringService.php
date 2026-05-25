@@ -80,7 +80,12 @@ class MenuEngineeringService
 
         foreach ($items as &$it) {
             $highMargin = $it['margin_cents']   >= $marginMed;
-            $highVolume = $it['volume_monthly'] >= $volMed;
+            // An item with zero volume cannot be "high volume" — otherwise
+            // a restaurant with no sales data sees every item classified
+            // as a star (everything is >= 0). The strict > 0 floor here
+            // is belt-and-braces alongside the layoutRecsForRestaurant
+            // bail-out on median == 0.
+            $highVolume = $it['volume_monthly'] > 0 && $it['volume_monthly'] >= $volMed;
             $it['quadrant'] = match (true) {
                 $highMargin && $highVolume  => 'star',
                 $highMargin && !$highVolume => 'puzzle',
@@ -186,10 +191,20 @@ class MenuEngineeringService
      * Layout guidance — reposition stars (feature them), reprice puzzles
      * (drop slightly to lift volume), cut dogs (low margin AND low volume).
      * Conservative: at most one rec per quadrant per week per item.
+     *
+     * Requires real PMIX. If no menu item has any sales (median volume == 0),
+     * we'd otherwise classify every item as a "star" (everything is >= 0)
+     * and emit a misleading "feature this — it's a star with high volume"
+     * narrative when in fact NOTHING has volume. Skip the whole pass.
      */
     public function layoutRecsForRestaurant(string $restaurantId, string $organizationId): int
     {
         $cls = $this->classify($restaurantId);
+        $medianVolume = (int) ($cls['medians']['volume_monthly'] ?? 0);
+        if ($medianVolume === 0) {
+            // No PMIX yet — layout guidance is meaningless without sales context.
+            return 0;
+        }
         $created = 0;
         foreach ($cls['items'] ?? [] as $it) {
             $kind = match ($it['quadrant']) {

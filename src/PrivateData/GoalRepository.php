@@ -20,12 +20,18 @@ class GoalRepository
 
     public function listByRestaurant(string $restaurantId): array
     {
-        return Database::getInstance()->fetchAll(
+        $rows = Database::getInstance()->fetchAll(
             'SELECT id, metric, target_value, cadence, label, is_active, created_at
                FROM goals WHERE restaurant_id = ? AND is_active = 1
               ORDER BY created_at DESC',
             [$restaurantId]
         );
+        // PDO stringifies DECIMAL/TINYINT — cast for frontend math.
+        foreach ($rows as &$r) {
+            $r['target_value'] = (float) $r['target_value'];
+            $r['is_active']    = (int) $r['is_active'];
+        }
+        return $rows;
     }
 
     public function findById(string $id, string $organizationId): ?array
@@ -66,11 +72,13 @@ class GoalRepository
 
     public function recentSnapshots(string $goalId, int $limit = 12): array
     {
-        return Database::getInstance()->fetchAll(
+        $rows = Database::getInstance()->fetchAll(
             'SELECT period_start, period_end, actual_value
                FROM goal_snapshots WHERE goal_id = ?
               ORDER BY period_end DESC LIMIT ?',
             [$goalId, $limit]
         );
+        foreach ($rows as &$r) $r['actual_value'] = (float) $r['actual_value'];
+        return $rows;
     }
 }
