@@ -23,14 +23,12 @@ class Area
         foreach ($data as $k => $v) {
             $stmt->bindValue(':' . $k, $v);
         }
-        // Pre-swap GeoJSON [lng,lat] → [lat,lng] before writing WKT so the
-        // stored geometry uses the unified (X=lat, Y=lng) convention shared
-        // with census_tracts/counties/states. Without this, ST_Intersects
-        // between areas.geometry and census_tracts.geometry silently finds
-        // nothing — that's why the right-panel demographics tiles came back
-        // empty for newly-created radius/isochrone areas.
-        $swapped = is_array($geometry) ? GeoUtils::swapGeometry($geometry) : null;
-        $wkt = $swapped !== null ? GeoUtils::geoJsonToWkt($swapped) : $geometry;
+        // GeoUtils::geoJsonToWkt now does the lat/lng conversion itself —
+        // it takes standard GeoJSON [lng, lat] and emits MySQL-correct
+        // WKT (lat lng). The prior pre-swap dance compensated for a bug
+        // in geoJsonToWkt (it used to emit lng lat unchanged); both that
+        // bug and this swap have been removed in the same commit.
+        $wkt = is_array($geometry) ? GeoUtils::geoJsonToWkt($geometry) : $geometry;
         $stmt->bindValue(':wkt', $wkt);
         $stmt->execute();
         return $id;
@@ -79,11 +77,10 @@ class Area
             $params[':set_' . $k] = $v;
         }
         if ($geometry !== null) {
-            // Same pre-swap as create() — keep storage convention unified
-            // with census_tracts so ST_Intersects works in both directions.
-            $swapped = is_array($geometry) ? GeoUtils::swapGeometry($geometry) : null;
+            // GeoUtils::geoJsonToWkt does the lat/lng conversion itself now
+            // (see create() above for the history).
             $sets[] = 'geometry = ST_GeomFromText(:wkt, 4326)';
-            $params[':wkt'] = $swapped !== null ? GeoUtils::geoJsonToWkt($swapped) : $geometry;
+            $params[':wkt'] = is_array($geometry) ? GeoUtils::geoJsonToWkt($geometry) : $geometry;
         }
         $sql = 'UPDATE areas SET ' . implode(',', $sets) . ' WHERE id = :where_id';
         $stmt = Database::getInstance()->pdo()->prepare($sql);

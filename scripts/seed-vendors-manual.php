@@ -35,6 +35,12 @@ $vendors = [
         'name'             => 'USA Produce',
         'legal_name'       => 'USA Produce LLC',
         'hq_address'       => 'Newark, NJ',
+        // Real Newark coordinates so the migration-026 backfill creates a
+        // primary vendor_location for USA Produce. Without these, the
+        // affiliated vendor was invisible on the spec's central
+        // "drop a pin / who serves me" query.
+        'hq_lat'           => 40.7357,
+        'hq_lng'           => -74.1724,
         'primary_category' => 'produce',
         'is_affiliated'    => true,
         'source'           => 'greendock_affiliate',

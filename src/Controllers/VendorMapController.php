@@ -81,9 +81,11 @@ class VendorMapController
         $lng = self::numQ($request, 'lng');
         if ($lat === null || $lng === null) Response::error('lat + lng required', 422);
         $rows = $this->geometry->whoServesPoint($lat, $lng);
-        // Annotate with primary-location distance so UI can sort by closeness.
+        // Batch-load primary locations so we don't run N queries inside the
+        // loop (a wide pin drop in a dense metro could return 30+ vendors).
+        $primaries = $this->locations->primaryForMany(array_map(fn($r) => (string) $r['vendor_id'], $rows));
         foreach ($rows as &$r) {
-            $primary = $this->locations->primaryFor((string) $r['vendor_id']);
+            $primary = $primaries[(string) $r['vendor_id']] ?? null;
             $r['primary_location'] = $primary;
             $r['distance_miles']   = $primary ? self::haversineMiles($lat, $lng, (float)$primary['lat'], (float)$primary['lng']) : null;
         }

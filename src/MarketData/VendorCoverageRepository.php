@@ -59,7 +59,7 @@ class VendorCoverageRepository
     public function vendorsServingPoint(float $lat, float $lng): array
     {
         $pt = sprintf('POINT(%f %f)', $lat, $lng);
-        return Database::getInstance()->fetchAll(
+        $rows = Database::getInstance()->fetchAll(
             'SELECT DISTINCT vc.vendor_id, vc.coverage_type, vc.confidence,
                     v.name AS vendor_name, v.type, v.primary_category, v.is_affiliated,
                     v.aggregate_rating, v.rating_count
@@ -70,5 +70,13 @@ class VendorCoverageRepository
               ORDER BY v.is_affiliated DESC, v.aggregate_rating DESC, vc.confidence DESC',
             [$pt, $pt]
         );
+        // Cast PDO-stringified numerics so the frontend ranking + .toFixed work.
+        foreach ($rows as &$r) {
+            $r['confidence'] = (int) $r['confidence'];
+            $r['is_affiliated'] = (int) $r['is_affiliated'];
+            $r['aggregate_rating'] = $r['aggregate_rating'] === null ? null : (float) $r['aggregate_rating'];
+            $r['rating_count'] = (int) $r['rating_count'];
+        }
+        return $rows;
     }
 }

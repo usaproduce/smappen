@@ -71,6 +71,8 @@ class VendorSearchService
                  ORDER BY v.is_affiliated DESC, v.aggregate_rating DESC, v.name
                  LIMIT $limit";
 
-        return Database::getInstance()->fetchAll($sql, $params);
+        return \App\MarketData\VendorRepository::normalizeRows(
+            Database::getInstance()->fetchAll($sql, $params)
+        );
     }
 }

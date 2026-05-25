@@ -106,6 +106,18 @@ $dataset = [
             ['label' => 'Baldor Washington', 'address' => '7707 Lockport Pl, Lorton, VA',  'lat' => 38.6985, 'lng' => -77.2278],
         ],
     ],
+    // Affiliated row — the entire spec hinges on USA Produce being honestly
+    // ranked next to the big boys. Without these branches the affiliated
+    // vendor was a directory row with zero map presence.
+    'USA Produce' => [
+        'type' => 'produce',
+        'categories' => ['produce','specialty_imported'],
+        'branches' => [
+            ['label' => 'USA Produce Newark HQ',  'address' => '101 Avenue P, Newark, NJ',           'lat' => 40.7357, 'lng' => -74.1724],
+            ['label' => 'USA Produce Boston',     'address' => '12 New England Produce Ctr, Chelsea, MA','lat' => 42.3996, 'lng' => -71.0383],
+            ['label' => 'USA Produce Philadelphia','address' => '6700 Essington Ave, Philadelphia, PA','lat' => 39.8836, 'lng' => -75.2274],
+        ],
+    ],
 ];
 
 $summary = ['vendors_touched' => 0, 'locations_inserted' => 0, 'locations_skipped' => 0, 'coverage_rows' => 0];

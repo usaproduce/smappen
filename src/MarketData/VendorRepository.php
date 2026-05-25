@@ -16,6 +16,41 @@ use App\Core\Database;
  */
 class VendorRepository
 {
+    /**
+     * Coerce numeric vendor fields back to PHP scalars after PDO has
+     * stringified them. Returns a copy with `aggregate_rating` as float|null,
+     * `rating_count` as int, `is_affiliated` as int, `hq_lat/hq_lng` as float|null.
+     * Pass any vendor row through this before handing it to a controller.
+     */
+    public static function normalizeRow(array $row): array
+    {
+        if (array_key_exists('aggregate_rating', $row)) {
+            $row['aggregate_rating'] = $row['aggregate_rating'] === null ? null : (float) $row['aggregate_rating'];
+        }
+        if (array_key_exists('rating_count', $row)) {
+            $row['rating_count'] = (int) $row['rating_count'];
+        }
+        if (array_key_exists('is_affiliated', $row)) {
+            $row['is_affiliated'] = (int) $row['is_affiliated'];
+        }
+        if (array_key_exists('completeness_score', $row)) {
+            $row['completeness_score'] = (int) $row['completeness_score'];
+        }
+        if (array_key_exists('hq_lat', $row) && $row['hq_lat'] !== null) {
+            $row['hq_lat'] = (float) $row['hq_lat'];
+        }
+        if (array_key_exists('hq_lng', $row) && $row['hq_lng'] !== null) {
+            $row['hq_lng'] = (float) $row['hq_lng'];
+        }
+        return $row;
+    }
+
+    public static function normalizeRows(array $rows): array
+    {
+        foreach ($rows as &$r) $r = self::normalizeRow($r);
+        return $rows;
+    }
+
     public function create(array $data): string
     {
         $id = Database::uuid();
@@ -43,12 +78,14 @@ class VendorRepository
 
     public function findById(string $id): ?array
     {
-        return Database::getInstance()->fetch('SELECT * FROM vendors WHERE id = ?', [$id]);
+        $row = Database::getInstance()->fetch('SELECT * FROM vendors WHERE id = ?', [$id]);
+        return $row === null ? null : self::normalizeRow($row);
     }
 
     public function findByName(string $name): ?array
     {
-        return Database::getInstance()->fetch('SELECT * FROM vendors WHERE name = ?', [$name]);
+        $row = Database::getInstance()->fetch('SELECT * FROM vendors WHERE name = ?', [$name]);
+        return $row === null ? null : self::normalizeRow($row);
     }
 
     /**
@@ -78,12 +115,12 @@ class VendorRepository
         }
         $sql = 'SELECT v.id, v.name, v.legal_name, v.hq_address, v.hq_lat, v.hq_lng,
                        v.phone, v.website, v.primary_category, v.source, v.is_affiliated,
-                       v.claim_status
+                       v.claim_status, v.aggregate_rating, v.rating_count
                   FROM vendors v
                  WHERE ' . implode(' AND ', $where) . '
-                 ORDER BY v.is_affiliated DESC, v.name ASC
+                 ORDER BY v.is_affiliated DESC, v.aggregate_rating DESC, v.name ASC
                  LIMIT 200';
-        return Database::getInstance()->fetchAll($sql, $params);
+        return self::normalizeRows(Database::getInstance()->fetchAll($sql, $params));
     }
 
     public function listingsFor(string $vendorId): array
@@ -136,7 +173,7 @@ class VendorRepository
             $whereRegion = 'AND (vl.region = ? OR vl.region IS NULL)';
             $params[] = $region;
         }
-        return Database::getInstance()->fetchAll(
+        return self::normalizeRows(Database::getInstance()->fetchAll(
             "SELECT DISTINCT v.id, v.name, v.is_affiliated, v.claim_status, v.primary_category,
                     v.hq_lat, v.hq_lng, v.aggregate_rating, v.rating_count
                FROM vendors v
@@ -146,6 +183,6 @@ class VendorRepository
               ORDER BY v.is_affiliated DESC, v.aggregate_rating DESC, v.name ASC
               LIMIT 50",
             $params
-        );
+        ));
     }
 }

@@ -64,6 +64,39 @@ class VendorLocationRepository
     }
 
     /**
+     * Batch variant of primaryFor — single query for N vendors. Returns
+     * [vendor_id => location_row]. Use this in loops to avoid the N+1
+     * pattern that the per-vendor primaryFor() falls into.
+     */
+    public function primaryForMany(array $vendorIds): array
+    {
+        if (empty($vendorIds)) return [];
+        $ids = array_values(array_unique(array_map('strval', $vendorIds)));
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $rows = Database::getInstance()->fetchAll(
+            "SELECT vl.id, vl.vendor_id, vl.lat, vl.lng, vl.address, vl.label,
+                    vl.is_primary, vl.created_at
+               FROM vendor_locations vl
+              WHERE vl.vendor_id IN ($placeholders)
+              ORDER BY vl.vendor_id, vl.is_primary DESC, vl.created_at ASC",
+            $ids
+        );
+        $out = [];
+        foreach ($rows as $r) {
+            $vid = (string) $r['vendor_id'];
+            if (isset($out[$vid])) continue; // first row per vendor wins (sorted)
+            $out[$vid] = [
+                'id'      => $r['id'],
+                'lat'     => (float) $r['lat'],
+                'lng'     => (float) $r['lng'],
+                'address' => $r['address'],
+                'label'   => $r['label'],
+            ];
+        }
+        return $out;
+    }
+
+    /**
      * Spatial bounding-box query — used by the map cluster endpoint. Lat/lng
      * here are the min/max corners of the visible viewport.
      */
@@ -78,7 +111,7 @@ class VendorLocationRepository
             $maxLat, $minLng,
             $minLat, $minLng
         );
-        return Database::getInstance()->fetchAll(
+        $rows = Database::getInstance()->fetchAll(
             'SELECT vl.id, vl.vendor_id, vl.lat, vl.lng, vl.label,
                     v.name AS vendor_name, v.type, v.primary_category, v.is_affiliated,
                     v.aggregate_rating, v.rating_count
@@ -89,6 +122,16 @@ class VendorLocationRepository
               LIMIT ?',
             [$bboxWkt, $limit]
         );
+        // PDO with native prepares stringifies DECIMAL/BIGINT — cast back so
+        // the frontend can call .toFixed() on aggregate_rating without crash.
+        foreach ($rows as &$r) {
+            $r['lat'] = (float) $r['lat'];
+            $r['lng'] = (float) $r['lng'];
+            $r['is_affiliated'] = (int) $r['is_affiliated'];
+            $r['aggregate_rating'] = $r['aggregate_rating'] === null ? null : (float) $r['aggregate_rating'];
+            $r['rating_count'] = (int) $r['rating_count'];
+        }
+        return $rows;
     }
 
     public function deleteForVendor(string $vendorId): void

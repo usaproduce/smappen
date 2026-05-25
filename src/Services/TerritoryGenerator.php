@@ -306,9 +306,12 @@ class TerritoryGenerator
      * roughly 80ms per union step on a typical droplet. Cap at 80 tracts per
      * cluster so the generation pipeline stays under ~30s for an 8-cluster run.
      *
-     * Coordinate-axis quirk: ST_AsGeoJSON on a SRID-4326 column returns
-     * [lat, lng] pairs (per WKT spec), but we use [lng, lat] in GeoJSON
-     * everywhere else. Swap via GeoUtils::swapGeometry on the way out.
+     * ST_AsGeoJSON on a SRID-4326 column emits STANDARD GeoJSON [lng, lat]
+     * regardless of MySQL's lat-long storage axis, so no swap is needed
+     * on the output. (Prior to fixing GeoUtils::geoJsonToWkt's axis bug
+     * a swap WAS applied here to make later geoJsonToWkt() round-trips
+     * accidentally produce correct WKT; both that bug and this swap have
+     * been removed.)
      */
     private static function unionTractGeometries(array $tractIds): ?array
     {
@@ -362,7 +365,8 @@ class TerritoryGenerator
         }
         $current = $current[0];
 
-        // Convert WKT → GeoJSON via MySQL ST_AsGeoJSON, then swap coord order.
+        // Convert WKT → GeoJSON via MySQL ST_AsGeoJSON. MySQL emits standard
+        // [lng, lat] for SRID 4326; no swap required.
         try {
             $row = $db->fetch(
                 'SELECT ST_AsGeoJSON(ST_GeomFromText(?, 4326), 5) AS gj',
@@ -371,7 +375,7 @@ class TerritoryGenerator
             if (empty($row['gj'])) return null;
             $geom = json_decode($row['gj'], true);
             if (!is_array($geom)) return null;
-            return \App\Services\GeoUtils::swapGeometry($geom);
+            return $geom;
         } catch (\Throwable $e) {
             error_log('TerritoryGenerator ST_AsGeoJSON failed: ' . $e->getMessage());
             return null;

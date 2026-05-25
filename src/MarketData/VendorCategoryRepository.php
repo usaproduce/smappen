@@ -26,7 +26,7 @@ class VendorCategoryRepository
 
     public function vendorsForCategory(string $category, int $limit = 200): array
     {
-        return Database::getInstance()->fetchAll(
+        return VendorRepository::normalizeRows(Database::getInstance()->fetchAll(
             'SELECT DISTINCT v.id, v.name, v.type, v.is_affiliated, v.aggregate_rating, v.rating_count
                FROM vendors v
                JOIN vendor_categories vc ON vc.vendor_id = v.id
@@ -34,6 +34,6 @@ class VendorCategoryRepository
               ORDER BY v.is_affiliated DESC, v.aggregate_rating DESC, v.name
               LIMIT ?',
             [$category, $limit]
-        );
+        ));
     }
 }

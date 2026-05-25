@@ -27,7 +27,7 @@ class SavedVendorRepository
 
     public function listForOrg(string $organizationId): array
     {
-        return Database::getInstance()->fetchAll(
+        $rows = Database::getInstance()->fetchAll(
             'SELECT sv.vendor_id, sv.note, sv.created_at,
                     v.name, v.type, v.primary_category, v.is_affiliated,
                     v.aggregate_rating, v.rating_count
@@ -37,6 +37,12 @@ class SavedVendorRepository
               ORDER BY sv.created_at DESC',
             [$organizationId]
         );
+        foreach ($rows as &$r) {
+            $r['is_affiliated'] = (int) $r['is_affiliated'];
+            $r['aggregate_rating'] = $r['aggregate_rating'] === null ? null : (float) $r['aggregate_rating'];
+            $r['rating_count'] = (int) $r['rating_count'];
+        }
+        return $rows;
     }
 
     public function isSaved(string $organizationId, string $vendorId): bool

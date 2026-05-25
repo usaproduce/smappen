@@ -216,7 +216,7 @@ function RecipeEditor({
 
   const totalCents = useMemo(() => {
     let total = 0;
-    for (const ing of recipe.ingredients) {
+    for (const ing of recipe.ingredients ?? []) {
       const cat = catalog.find((c) => c.ingredient_key === ing.ingredient_key);
       if (!cat) continue;
       // Naïve same-unit total — proper conversion happens server-side
@@ -248,11 +248,11 @@ function RecipeEditor({
 
       <div>
         <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Ingredients</h3>
-        {recipe.ingredients.length === 0 ? (
+        {(recipe.ingredients ?? []).length === 0 ? (
           <div className="text-sm text-slate-500 italic">None yet.</div>
         ) : (
           <ul className="space-y-1">
-            {recipe.ingredients.map((ing) => {
+            {(recipe.ingredients ?? []).map((ing) => {
               const cat = catalog.find((c) => c.ingredient_key === ing.ingredient_key);
               return (
                 <li key={ing.id} className="flex items-center gap-3 p-2 bg-slate-50 rounded">

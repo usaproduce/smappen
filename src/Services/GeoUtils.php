@@ -3,6 +3,26 @@ namespace App\Services;
 
 class GeoUtils
 {
+    /**
+     * GeoJSON → WKT, with axis-order conversion.
+     *
+     * GeoJSON spec: coordinates are `[lng, lat]`.
+     * MySQL 8 + SRID 4326: WKT must be `(lat lng)` (axis-order=lat-long).
+     * Confirmed empirically: `ST_GeomFromText('POINT(37 -122)', 4326)` works
+     * (37 is lat); `POINT(-122 37)` throws "Latitude -122 out of range".
+     *
+     * So we swap on conversion: GeoJSON `$p[0]=lng, $p[1]=lat` → WKT
+     * `lat lng` = `$p[1] $p[0]`.
+     *
+     * NOTE: prior to this fix this method emitted `$p[0] $p[1]` (lng lat),
+     * which was wrong for MySQL — ReachController and IsochroneService
+     * paths were broken for any geometry with longitude outside [-90, 90]
+     * (i.e., most of the US). Some callers compensated by pre-swapping
+     * (`Area::create`, `TerritoryGenerator::unionTractGeometries`); those
+     * compensations have been removed in the same commit as this fix.
+     * New callers should pass standard GeoJSON `[lng, lat]` coordinates
+     * and trust this method to produce correct WKT.
+     */
     public static function geoJsonToWkt(array $geoJson): string
     {
         $type = $geoJson['type'] ?? '';
@@ -15,7 +35,8 @@ class GeoUtils
             foreach ($geoJson['coordinates'] as $ring) {
                 $points = [];
                 foreach ($ring as $p) {
-                    $points[] = sprintf('%.7f %.7f', $p[0], $p[1]);
+                    // GeoJSON [lng, lat] → WKT (lat lng) for SRID 4326.
+                    $points[] = sprintf('%.7f %.7f', $p[1], $p[0]);
                 }
                 $rings[] = '(' . implode(',', $points) . ')';
             }
@@ -27,12 +48,16 @@ class GeoUtils
                 $rings = [];
                 foreach ($poly as $ring) {
                     $points = [];
-                    foreach ($ring as $p) $points[] = sprintf('%.7f %.7f', $p[0], $p[1]);
+                    foreach ($ring as $p) $points[] = sprintf('%.7f %.7f', $p[1], $p[0]);
                     $rings[] = '(' . implode(',', $points) . ')';
                 }
                 $polys[] = '(' . implode(',', $rings) . ')';
             }
             return 'MULTIPOLYGON(' . implode(',', $polys) . ')';
+        }
+        if ($type === 'Point') {
+            $p = $geoJson['coordinates'] ?? [];
+            if (count($p) >= 2) return sprintf('POINT(%.7f %.7f)', $p[1], $p[0]);
         }
         throw new \InvalidArgumentException('Unsupported GeoJSON type: ' . $type);
     }
