@@ -26,6 +26,20 @@ class PosIntegrationRepository
         );
     }
 
+    /**
+     * Boolean: has the org ever connected ANY POS? Used as a verification
+     * strength signal by `VendorReviewService` (a stronger review tier).
+     * Returns just true/false — caller never sees token contents.
+     */
+    public function organizationHasAnyConnection(string $organizationId): bool
+    {
+        $row = Database::getInstance()->fetch(
+            'SELECT 1 AS one FROM pos_integrations WHERE organization_id = ? LIMIT 1',
+            [$organizationId]
+        );
+        return $row !== null;
+    }
+
     public function listByRestaurant(string $restaurantId): array
     {
         return Database::getInstance()->fetchAll(

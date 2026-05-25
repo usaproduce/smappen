@@ -54,6 +54,9 @@ use App\Controllers\FoodCostController;
 use App\Controllers\LaborController;
 use App\Controllers\VendorController;
 use App\Controllers\VendorClaimController;
+use App\Controllers\VendorMapController;
+use App\Controllers\VendorReviewController;
+use App\Controllers\SavedVendorController;
 use App\Controllers\ComparisonController;
 use App\Controllers\ConsolidationController;
 use App\Controllers\LeadController;
@@ -407,6 +410,23 @@ return function (Router $r) {
     // Vendor directory — browse + show. Cross-tenant by design.
     $r->get('/api/vendors',                                     [VendorController::class, 'index'], $auth);
     $r->get('/api/vendors/{id}',                                [VendorController::class, 'show'],  $auth);
+
+    // Vendor map — bbox query, drop-a-pin, detail with coverage geometry.
+    $r->get('/api/vendors/map/bbox',                            [VendorMapController::class, 'bbox'],   $auth);
+    $r->get('/api/vendors/map/serves',                          [VendorMapController::class, 'serves'], $auth);
+    $r->get('/api/vendors/map/search',                          [VendorMapController::class, 'search'], $auth);
+    $r->get('/api/vendors/{id}/detail',                         [VendorMapController::class, 'detail'], $auth);
+
+    // Vendor reviews — verified-operator only.
+    $r->get('/api/vendors/{id}/reviews',                        [VendorReviewController::class, 'list'],      $auth);
+    $r->post('/api/vendors/{id}/reviews',                       [VendorReviewController::class, 'submit'],    $auth);
+    $r->get('/api/vendors/{id}/reviews/aggregate',              [VendorReviewController::class, 'aggregate'], $auth);
+    $r->post('/api/vendor-reviews/{id}/respond',                [VendorReviewController::class, 'respond'],   $auth);
+
+    // Saved vendors (follow / shortlist).
+    $r->get('/api/saved-vendors',                               [SavedVendorController::class, 'index'],  $auth);
+    $r->post('/api/vendors/{id}/save',                          [SavedVendorController::class, 'save'],   $auth);
+    $r->delete('/api/vendors/{id}/save',                        [SavedVendorController::class, 'unsave'], $auth);
 
     // Vendor claim workflow.
     $r->post('/api/vendors/{id}/claims',                        [VendorClaimController::class, 'create'],        $auth);

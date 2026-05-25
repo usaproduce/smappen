@@ -71,10 +71,23 @@ class VendorComparisonService
                 }
             }
             // Coverage score: 0..10. Region match is the strongest signal.
+            // Review signals layer in WHEN AVAILABLE — reliability + quality
+            // sub-scores. Per spec §1.3 + §6.2, this is honest math:
+            // affiliated is NOT a factor, only a label.
             $score = 0;
             if ($coversCategory) $score += 5;
             if ($coversRegion)   $score += 4;
             if ($v['claim_status'] === 'claimed') $score += 1;
+
+            // Pull the aggregated rating from the vendors row (refreshed by
+            // VendorReviewService on every submit). Up to +5 for a perfect
+            // 5-star aggregate, scaled by review count so a 5★/1-review
+            // doesn't outrank a 4★/40-review.
+            $rating = isset($v['aggregate_rating']) ? (float) $v['aggregate_rating'] : 0.0;
+            $rcount = isset($v['rating_count'])     ? (int)   $v['rating_count']     : 0;
+            $ratingWeight = $rcount === 0 ? 0 : min(1.0, $rcount / 10.0);   // saturates at 10 reviews
+            $ratingPts = ($rating / 5.0) * 5.0 * $ratingWeight;             // up to +5
+            $score += $ratingPts;
 
             $ranked[] = [
                 'vendor_id'        => $v['id'],
@@ -87,7 +100,9 @@ class VendorComparisonService
                 'covers_category'  => $coversCategory,
                 'covers_region'    => $coversRegion,
                 'min_order_cents'  => $minOrderCents,
-                'score'            => $score,
+                'aggregate_rating' => $rating > 0 ? $rating : null,
+                'rating_count'     => $rcount,
+                'score'            => round($score, 2),
             ];
         }
 

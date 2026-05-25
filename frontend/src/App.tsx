@@ -30,6 +30,8 @@ import GoalsPage from './components/restaurants/GoalsPage';
 import CostsPage from './components/restaurants/CostsPage';
 import LaborPage from './components/restaurants/LaborPage';
 import VendorsPage from './components/vendors/VendorsPage';
+import VendorMapPage from './components/vendors/VendorMapPage';
+import SavedVendorsPage from './components/vendors/SavedVendorsPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useAuthStore } from './stores/authStore';
 import { useTheme } from './hooks/useTheme';
@@ -74,7 +76,10 @@ export default function App() {
         <Route path="/app/restaurants/:id/costs"       element={<ProtectedRoute><CostsPage /></ProtectedRoute>} />
         <Route path="/app/restaurants/:id/labor"       element={<ProtectedRoute><LaborPage /></ProtectedRoute>} />
         <Route path="/app/restaurants/:id/goals"       element={<ProtectedRoute><GoalsPage /></ProtectedRoute>} />
-        <Route path="/app/vendors"                     element={<ProtectedRoute><VendorsPage /></ProtectedRoute>} />
+        <Route path="/app/vendors"                     element={<ProtectedRoute><VendorMapPage /></ProtectedRoute>} />
+        <Route path="/app/vendors/map"                 element={<ProtectedRoute><VendorMapPage /></ProtectedRoute>} />
+        <Route path="/app/vendors/saved"               element={<ProtectedRoute><SavedVendorsPage /></ProtectedRoute>} />
+        <Route path="/app/vendors/list"                element={<ProtectedRoute><VendorsPage /></ProtectedRoute>} />
         <Route path="/app/*" element={<ProtectedRoute><AppLayout /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

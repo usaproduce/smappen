@@ -138,12 +138,12 @@ class VendorRepository
         }
         return Database::getInstance()->fetchAll(
             "SELECT DISTINCT v.id, v.name, v.is_affiliated, v.claim_status, v.primary_category,
-                    v.hq_lat, v.hq_lng
+                    v.hq_lat, v.hq_lng, v.aggregate_rating, v.rating_count
                FROM vendors v
                LEFT JOIN vendor_listings vl ON vl.vendor_id = v.id
               WHERE (v.primary_category = ? OR vl.category = ?)
                 $whereRegion
-              ORDER BY v.is_affiliated DESC, v.name ASC
+              ORDER BY v.is_affiliated DESC, v.aggregate_rating DESC, v.name ASC
               LIMIT 50",
             $params
         );

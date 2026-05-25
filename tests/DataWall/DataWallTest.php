@@ -55,6 +55,14 @@ class DataWallTest extends TestCase
         'vendor_listings',
         'vendor_claims',
         'vendor_promotions',
+        'vendor_locations',
+        'vendor_coverage',
+        'vendor_categories',
+        'vendor_sources',
+        'vendor_reviews',
+        'vendor_review_responses',
+        'saved_vendors',
+        'vendor_searches',
         'comparison_requests',
         'supplier_leads',
     ];
@@ -121,6 +129,29 @@ class DataWallTest extends TestCase
                 "DATA WALL VIOLATION: $f imports App\\MarketData\\. "
                 . "Private code must not know about the funnel."
             );
+        }
+        $this->assertTrue(true);
+    }
+
+    /**
+     * Symmetric to testMarketDataDoesNotReferencePrivateTables: PrivateData
+     * code must not name any market-reservoir table either. The private
+     * side does its work without knowing the funnel exists.
+     */
+    public function testPrivateDataDoesNotReferenceMarketTables(): void
+    {
+        $privateFiles = $this->phpFiles($this->srcPath() . '/PrivateData');
+        foreach ($privateFiles as $f) {
+            $body = (string) file_get_contents($f);
+            foreach (self::MARKET_TABLES as $t) {
+                $this->assertStringNotContainsString(
+                    $t,
+                    $body,
+                    "DATA WALL VIOLATION: $f references market table `$t`. "
+                    . "Private code must not know about the funnel — see "
+                    . "src/MarketData/README.md."
+                );
+            }
         }
         $this->assertTrue(true);
     }
