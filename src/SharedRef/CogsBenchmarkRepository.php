@@ -82,4 +82,32 @@ class CogsBenchmarkRepository
         $row = Database::getInstance()->fetch('SELECT 1 AS one FROM cogs_benchmark LIMIT 1');
         return $row !== null;
     }
+
+    /**
+     * List every known ingredient_key with its current best price. Used by
+     * the recipe-builder UI to autocomplete and show "the market rate"
+     * inline so operators know what they're committing to.
+     */
+    public function listAvailableIngredients(?string $region = null): array
+    {
+        $rows = Database::getInstance()->fetchAll(
+            'SELECT ingredient_key, region, market_price_cents, unit, source, as_of
+               FROM cogs_benchmark
+              ORDER BY ingredient_key, as_of DESC'
+        );
+        $byKey = [];
+        foreach ($rows as $r) {
+            // Take the first row per key (sorted by as_of DESC), preferring
+            // the regional one if a region is passed.
+            $key = (string) $r['ingredient_key'];
+            $isPreferred = $region !== null && $r['region'] === $region;
+            if (!isset($byKey[$key]) || ($isPreferred && !($byKey[$key]['_pref'] ?? false))) {
+                $byKey[$key] = $r + ['_pref' => $isPreferred];
+            }
+        }
+        $out = array_values($byKey);
+        foreach ($out as &$x) unset($x['_pref']);
+        usort($out, fn($a, $b) => strcmp($a['ingredient_key'], $b['ingredient_key']));
+        return $out;
+    }
 }

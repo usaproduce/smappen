@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { Plus, Store, ChefHat } from 'lucide-react';
 import { restaurantsApi } from '../../api/restaurants';
 import { useRestaurantStore, type Restaurant } from '../../stores/restaurantStore';
+import AppNav from '../layout/AppNav';
 
 /**
  * Carafe restaurant gallery. Reuses the dashboard's card grid pattern.
@@ -38,26 +39,10 @@ export default function RestaurantsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      <header className="bg-white border-b border-slate-200">
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-          <Link to="/dashboard" className="flex items-center gap-2 font-extrabold text-[16px]" style={{ color: '#1A1A2E' }}>
-            <span
-              className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-white font-extrabold text-base shadow-sm"
-              style={{ background: 'linear-gradient(135deg, #F57C00 0%, #E53935 50%, #7848BB 100%)' }}
-            >S</span>
-            smappen
-          </Link>
-          <nav className="flex items-center gap-4 text-sm font-semibold text-slate-700">
-            <Link to="/projects" className="hover:text-violet-700">Projects</Link>
-            <Link to="/app/restaurants" className="text-violet-700">Restaurants</Link>
-            <Link to="/app/vendors" className="hover:text-violet-700">Vendors</Link>
-            <Link to="/settings/profile" className="hover:text-violet-700">Settings</Link>
-          </nav>
-        </div>
-      </header>
+    <div className="min-h-screen bg-slate-50">
+      <AppNav />
 
-      <main className="max-w-6xl mx-auto px-6 py-8">
+      <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="flex items-end justify-between mb-8">
           <div>
             <h1 className="text-3xl font-extrabold flex items-center gap-2" style={{ color: '#1A1A2E' }}>
@@ -98,7 +83,7 @@ export default function RestaurantsPage() {
             {restaurants.map((r) => (
               <Link
                 key={r.id}
-                to={`/app/restaurants/${r.id}/menu`}
+                to={`/app/restaurants/${r.id}`}
                 className="bg-white border border-slate-200 rounded-xl p-4 hover:border-violet-300 hover:shadow-sm transition"
               >
                 <div className="flex items-center gap-2 mb-2">

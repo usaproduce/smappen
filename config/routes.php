@@ -361,7 +361,11 @@ return function (Router $r) {
     $r->put('/api/menu-items/{id}/price',                       [MenuController::class, 'setPrice'],              $auth);
     $r->put('/api/menu-items/{id}/recipe',                      [MenuController::class, 'setRecipe'],             $auth);
     $r->post('/api/restaurants/{id}/recipes',                   [MenuController::class, 'createRecipe'],          $auth);
+    $r->get('/api/restaurants/{id}/recipes',                    [MenuController::class, 'listRecipes'],           $auth);
+    $r->get('/api/recipes/{id}',                                [MenuController::class, 'showRecipe'],            $auth);
     $r->post('/api/recipes/{id}/ingredients',                   [MenuController::class, 'addIngredient'],         $auth);
+    $r->delete('/api/recipe-ingredients/{id}',                  [MenuController::class, 'removeIngredient'],      $auth);
+    $r->get('/api/ingredient-catalog',                          [MenuController::class, 'listIngredientCatalog'], $auth);
     $r->post('/api/restaurants/{id}/plate-costs/recompute',     [MenuController::class, 'recomputePlateCosts'],   $auth);
     $r->get('/api/restaurants/{id}/cogs/overpay',               [MenuController::class, 'overpayFlags'],          $auth);
 

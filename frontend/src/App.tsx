@@ -24,6 +24,11 @@ import DashboardPage from './components/dashboard/DashboardPage';
 import ProjectGalleryPage from './components/projects/ProjectGalleryPage';
 import RestaurantsPage from './components/restaurants/RestaurantsPage';
 import MenuPage from './components/restaurants/MenuPage';
+import RestaurantOverviewPage from './components/restaurants/RestaurantOverviewPage';
+import RecipesPage from './components/restaurants/RecipesPage';
+import GoalsPage from './components/restaurants/GoalsPage';
+import CostsPage from './components/restaurants/CostsPage';
+import LaborPage from './components/restaurants/LaborPage';
 import VendorsPage from './components/vendors/VendorsPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useAuthStore } from './stores/authStore';
@@ -62,9 +67,14 @@ export default function App() {
           <Route path="billing" element={<BillingSettings />} />
         </Route>
         {/* Carafe surfaces — standalone (no map chrome) */}
-        <Route path="/app/restaurants" element={<ProtectedRoute><RestaurantsPage /></ProtectedRoute>} />
-        <Route path="/app/restaurants/:id/menu" element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
-        <Route path="/app/vendors" element={<ProtectedRoute><VendorsPage /></ProtectedRoute>} />
+        <Route path="/app/restaurants"                 element={<ProtectedRoute><RestaurantsPage /></ProtectedRoute>} />
+        <Route path="/app/restaurants/:id"             element={<ProtectedRoute><RestaurantOverviewPage /></ProtectedRoute>} />
+        <Route path="/app/restaurants/:id/menu"        element={<ProtectedRoute><MenuPage /></ProtectedRoute>} />
+        <Route path="/app/restaurants/:id/recipes"     element={<ProtectedRoute><RecipesPage /></ProtectedRoute>} />
+        <Route path="/app/restaurants/:id/costs"       element={<ProtectedRoute><CostsPage /></ProtectedRoute>} />
+        <Route path="/app/restaurants/:id/labor"       element={<ProtectedRoute><LaborPage /></ProtectedRoute>} />
+        <Route path="/app/restaurants/:id/goals"       element={<ProtectedRoute><GoalsPage /></ProtectedRoute>} />
+        <Route path="/app/vendors"                     element={<ProtectedRoute><VendorsPage /></ProtectedRoute>} />
         <Route path="/app/*" element={<ProtectedRoute><AppLayout /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

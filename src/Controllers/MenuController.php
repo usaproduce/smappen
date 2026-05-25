@@ -104,6 +104,39 @@ class MenuController
         Response::success(['id' => $id], 'Recipe created', 201);
     }
 
+    public function listRecipes(Request $request): void
+    {
+        $r = $this->verifyOwnedRestaurant($request);
+        Response::success(['recipes' => $this->recipes->listByRestaurant($r['id'])]);
+    }
+
+    public function showRecipe(Request $request): void
+    {
+        $id = (string) $request->getParam('id');
+        $recipe = $this->recipes->findById($id, $request->user['organization_id']);
+        if (!$recipe) Response::error('Recipe not found', 404);
+        $recipe['ingredients'] = $this->recipes->ingredientsFor($id);
+        Response::success(['recipe' => $recipe]);
+    }
+
+    public function removeIngredient(Request $request): void
+    {
+        $ingredientId = (string) $request->getParam('id');
+        $ok = $this->recipes->removeIngredient($ingredientId, $request->user['organization_id']);
+        if (!$ok) Response::error('Ingredient not found', 404);
+        Response::success([], 'Removed');
+    }
+
+    public function listIngredientCatalog(Request $request): void
+    {
+        // The catalog is org-agnostic shared reference data — but require
+        // auth to access so we don't broadcast our COGS-stub contents.
+        $region = $request->getQuery('region');
+        $catalog = (new \App\SharedRef\CogsBenchmarkRepository())
+            ->listAvailableIngredients($region ? (string) $region : null);
+        Response::success(['ingredients' => $catalog]);
+    }
+
     public function addIngredient(Request $request): void
     {
         // Ingredient additions don't need explicit ownership check past the

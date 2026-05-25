@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
-  ArrowLeft, RefreshCw, Sparkles, Check, X, ExternalLink, AlertCircle, MapPin,
+  RefreshCw, Sparkles, Check, X, ExternalLink, AlertCircle, MapPin,
 } from 'lucide-react';
 import {
-  restaurantsApi, posApi, menuApi, recommendationsApi, roiApi, type RoiMonthly,
+  posApi, menuApi, recommendationsApi, roiApi, type RoiMonthly,
 } from '../../api/restaurants';
 import { useRestaurantStore, type MenuItem, type Recommendation } from '../../stores/restaurantStore';
+import RestaurantWorkspaceLayout from './RestaurantWorkspaceLayout';
 
 /**
  * Carafe menu workspace — the entire Phase 1 vertical slice lives here.
@@ -21,8 +22,6 @@ import { useRestaurantStore, type MenuItem, type Recommendation } from '../../st
 export default function MenuPage() {
   const { id } = useParams<{ id: string }>();
   const restaurantId = id ?? '';
-  const currentRestaurant = useRestaurantStore((s) => s.currentRestaurant);
-  const setCurrentRestaurant = useRestaurantStore((s) => s.setCurrentRestaurant);
   const menuItems = useRestaurantStore((s) => s.menuItems);
   const setMenuItems = useRestaurantStore((s) => s.setMenuItems);
   const recommendations = useRestaurantStore((s) => s.recommendations);
@@ -40,15 +39,13 @@ export default function MenuPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [r, items, recs, pos, roiMonthly] = await Promise.all([
-          restaurantsApi.show(restaurantId),
+        const [items, recs, pos, roiMonthly] = await Promise.all([
           menuApi.listItems(restaurantId),
           recommendationsApi.list(restaurantId, 'suggested'),
           posApi.listIntegrations(restaurantId).catch(() => []),
           roiApi.monthly(restaurantId).catch(() => null),
         ]);
         if (cancelled) return;
-        setCurrentRestaurant(r);
         setMenuItems(items);
         setRecommendations(recs);
         setPosIntegrations(pos);
@@ -60,7 +57,7 @@ export default function MenuPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [restaurantId, setCurrentRestaurant, setMenuItems, setRecommendations]);
+  }, [restaurantId, setMenuItems, setRecommendations]);
 
   const squareConnected = useMemo(() => posIntegrations.some((p) => p.provider === 'square'), [posIntegrations]);
 
@@ -130,30 +127,19 @@ export default function MenuPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-white">
-        <div className="max-w-6xl mx-auto px-6 py-6 space-y-3">
+      <RestaurantWorkspaceLayout>
+        <div className="space-y-3">
           <div className="skeleton h-8 w-64" />
           <div className="skeleton h-32 w-full" />
           <div className="skeleton h-64 w-full" />
         </div>
-      </div>
+      </RestaurantWorkspaceLayout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      <header className="bg-white border-b border-slate-200">
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-          <Link to="/app/restaurants" className="text-sm font-semibold text-slate-700 hover:text-violet-700 flex items-center gap-1">
-            <ArrowLeft size={14} /> Restaurants
-          </Link>
-          <div className="text-sm font-bold" style={{ color: '#1A1A2E' }}>
-            {currentRestaurant?.name ?? '—'}
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-6xl mx-auto px-6 py-6">
+    <RestaurantWorkspaceLayout>
+      <div className="space-y-6">
         {/* ROI strip — only when there's something to show */}
         {roi && roi.found_cents > 0 && (
           <section className="bg-gradient-to-r from-emerald-50 to-white border border-emerald-200 rounded-xl p-4 mb-6 flex items-center justify-between">
@@ -252,8 +238,8 @@ export default function MenuPage() {
             <MenuTable items={menuItems} />
           )}
         </section>
-      </main>
-    </div>
+      </div>
+    </RestaurantWorkspaceLayout>
   );
 }
 

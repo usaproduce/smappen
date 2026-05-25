@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Search, Building2, ShieldCheck, Sparkles } from 'lucide-react';
 import { vendorsApi, type Vendor, type ComparisonResult } from '../../api/vendors';
 import { useAuthStore } from '../../stores/authStore';
 import { leadsApi } from '../../api/vendors';
+import AppNav from '../layout/AppNav';
 
 const CATEGORIES = ['produce', 'protein', 'dairy', 'broadline', 'specialty'];
 
@@ -60,25 +60,10 @@ export default function VendorsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      <header className="bg-white border-b border-slate-200">
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-          <Link to="/dashboard" className="flex items-center gap-2 font-extrabold text-[16px]" style={{ color: '#1A1A2E' }}>
-            <span
-              className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-white font-extrabold text-base shadow-sm"
-              style={{ background: 'linear-gradient(135deg, #F57C00 0%, #E53935 50%, #7848BB 100%)' }}
-            >S</span>
-            smappen
-          </Link>
-          <nav className="flex items-center gap-4 text-sm font-semibold text-slate-700">
-            <Link to="/app/restaurants" className="hover:text-violet-700">Restaurants</Link>
-            <Link to="/app/vendors" className="text-violet-700">Vendors</Link>
-            <Link to="/settings/profile" className="hover:text-violet-700">Settings</Link>
-          </nav>
-        </div>
-      </header>
+    <div className="min-h-screen bg-slate-50">
+      <AppNav />
 
-      <main className="max-w-6xl mx-auto px-6 py-8">
+      <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="flex items-end justify-between mb-6">
           <div>
             <h1 className="text-3xl font-extrabold flex items-center gap-2" style={{ color: '#1A1A2E' }}>
