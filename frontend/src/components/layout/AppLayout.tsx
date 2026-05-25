@@ -24,10 +24,11 @@ import { useDynamicFavicon } from '../../hooks/useDynamicFavicon';
 import { useViewUrl } from '../../hooks/useViewUrl';
 import { saveProjectSnapshot, downloadMapSnapshot } from '../../utils/mapExport';
 import { SMAPPEN_MAP_STYLE_DARK, MAP_STYLE_PRESETS } from '../../utils/mapStyle';
+import { GOOGLE_MAPS_LIBRARIES } from '../../utils/mapsLoader';
 
-const LIBRARIES: ('drawing' | 'visualization' | 'geometry' | 'places')[] = [
-  'drawing', 'visualization', 'geometry', 'places',
-];
+// Local alias kept for the existing isLoaded call — see ../../utils/mapsLoader
+// for why every useJsApiLoader call must share the same options object.
+const LIBRARIES = GOOGLE_MAPS_LIBRARIES;
 
 export default function AppLayout() {
   const { selectedAreaId, mapInstance, timeMachineRequest, closeTimeMachine } = useMapStore();

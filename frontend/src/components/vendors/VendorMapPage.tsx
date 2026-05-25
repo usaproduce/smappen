@@ -7,6 +7,7 @@ import AppNav from '../layout/AppNav';
 import { vendorMapApi, type VendorPin, type VendorServesRow } from '../../api/vendorMap';
 import { useVendorMapStore, type VendorTypeFilter, type VendorCategoryFilter } from '../../stores/vendorMapStore';
 import VendorSidePanel from './VendorSidePanel';
+import { GOOGLE_MAPS_LIBRARIES } from '../../utils/mapsLoader';
 
 /**
  * The map-first vendor product (spec §6.1 + §6.2).
@@ -20,7 +21,6 @@ import VendorSidePanel from './VendorSidePanel';
  * + a "USA Produce — affiliated supplier" label in the InfoWindow.
  */
 
-const LIBRARIES: any[] = ['geometry'];
 const US_CENTER = { lat: 39.8283, lng: -98.5795 };
 const US_DEFAULT_ZOOM = 4;
 
@@ -54,7 +54,7 @@ const CATEGORIES: Array<{ k: VendorCategoryFilter; label: string }> = [
 
 export default function VendorMapPage() {
   const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY ?? '';
-  const { isLoaded, loadError } = useJsApiLoader({ googleMapsApiKey: apiKey, libraries: LIBRARIES });
+  const { isLoaded, loadError } = useJsApiLoader({ googleMapsApiKey: apiKey, libraries: GOOGLE_MAPS_LIBRARIES });
 
   const {
     q, type, category, minRating, affiliatedOnly,
