@@ -365,7 +365,10 @@ class VendorUpsertService
      */
     private const KEEP_PATTERNS = [
         // Operational B2B markers anywhere in the name.
-        '/\b(wholesale|wholesalers?|whole\s?sales?|distributor|distributors|distribution|distributing|foodservice|food\s?service|purveyors?|importers?|importing|imports|depot|cash\s?(?:and|&)\s?carry|terminal\s?market|farmers\s?market|food\s?supply|restaurant\s?supply|smallwares)\b/iu',
+        // Note: 'depot' standalone removed — "Home Depot" matches it.
+        // Restaurant Depot still kept via the brand-whitelist regex.
+        // 'farmers market' removed — overwhelmingly consumer-facing.
+        '/\b(wholesale|wholesalers?|whole\s?sales?|distributor|distributors|distribution|distributing|foodservice|food\s?service|purveyors?|importers?|importing|imports|cash\s?(?:and|&)\s?carry|terminal\s?market|food\s?supply|restaurant\s?supply|smallwares)\b/iu',
         // Food-product noun at end of name, optionally followed by Inc/LLC/Corp/Co.
         // Restaurants and retail rarely end with these words (they say "Cafe", "Restaurant", "Market", etc.).
         '/\b(foods?|meats|seafoods?|produce|dairy|poultry|beverages?|bakery|fish|fishery|fisheries|provisions?|deli\s?meats|deli\s?products)\s*(?:co\.?|inc\.?|llc\.?|corp\.?|ltd\.?)?\s*$/iu',
