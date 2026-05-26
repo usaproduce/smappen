@@ -8,32 +8,56 @@ use App\Models\Project;
 
 class AreaController
 {
+    /**
+     * Cast all numeric area columns out of the PDO string land. PDO with
+     * ATTR_EMULATE_PREPARES=false returns DECIMAL + BIGINT as PHP strings;
+     * shipped as-is they hit the frontend where `lat += dLat` becomes
+     * string concatenation (breaks Duplicate-with-Offset) and `lat.toFixed`
+     * throws (breaks reach-pin labelling). Apply to every area returned.
+     */
+    private static function normalizeArea(?array $a): ?array
+    {
+        if ($a === null) return null;
+        foreach (['center_lat', 'center_lng', 'fill_opacity', 'travel_distance_km'] as $k) {
+            if (array_key_exists($k, $a) && $a[$k] !== null) $a[$k] = (float) $a[$k];
+        }
+        foreach (['travel_time_minutes', 'stroke_weight', 'is_favorite', 'sort_order'] as $k) {
+            if (array_key_exists($k, $a) && $a[$k] !== null) $a[$k] = (int) $a[$k];
+        }
+        return $a;
+    }
+
     public function index(Request $request): void
     {
         $project = $this->verifyProject($request);
         $folderId = $request->getQuery('folder_id');
         $areas = Area::getByProject($project['id'], $folderId);
-        $features = array_map(fn($a) => [
-            'type' => 'Feature',
-            'id' => $a['id'],
-            'geometry' => $a['geometry'] ?? null,
-            'properties' => [
-                'name' => $a['name'],
-                'area_type' => $a['area_type'],
-                'travel_mode' => $a['travel_mode'],
-                'travel_time_minutes' => $a['travel_time_minutes'],
-                'fill_color' => $a['fill_color'],
-                'fill_opacity' => (float)$a['fill_opacity'],
-                'stroke_color' => $a['stroke_color'],
-                'stroke_weight' => (int)$a['stroke_weight'],
-                'folder_id' => $a['folder_id'],
-                'center_lat' => $a['center_lat'],
-                'center_lng' => $a['center_lng'],
-                'center_address' => $a['center_address'],
-                'notes' => $a['notes'],
-                'demographics_cache' => $a['demographics_cache'] ?? null,
-            ],
-        ], $areas);
+        $features = array_map(function ($a) {
+            $a = self::normalizeArea($a);
+            return [
+                'type' => 'Feature',
+                'id' => $a['id'],
+                'geometry' => $a['geometry'] ?? null,
+                'properties' => [
+                    'name' => $a['name'],
+                    'area_type' => $a['area_type'],
+                    'travel_mode' => $a['travel_mode'],
+                    'travel_time_minutes' => $a['travel_time_minutes'],
+                    'travel_distance_km' => $a['travel_distance_km'] ?? null,
+                    'fill_color' => $a['fill_color'],
+                    'fill_opacity' => $a['fill_opacity'] ?? 0.3,
+                    'stroke_color' => $a['stroke_color'],
+                    'stroke_weight' => $a['stroke_weight'] ?? 2,
+                    'folder_id' => $a['folder_id'],
+                    'center_lat' => $a['center_lat'],
+                    'center_lng' => $a['center_lng'],
+                    'center_address' => $a['center_address'],
+                    'notes' => $a['notes'],
+                    'demographics_cache' => $a['demographics_cache'] ?? null,
+                    'is_favorite' => $a['is_favorite'] ?? 0,
+                ],
+            ];
+        }, $areas);
         Response::success(['type' => 'FeatureCollection', 'features' => $features]);
     }
 
@@ -66,13 +90,13 @@ class AreaController
             'geometry' => $geometry,
         ]);
         OnboardingController::stampActivation($request->user['id'], $request->user['organization_id'], 'first_area_at');
-        Response::success(Area::findById($id), 'Area created', 201);
+        Response::success(self::normalizeArea(Area::findById($id)), 'Area created', 201);
     }
 
     public function show(Request $request): void
     {
         $area = $this->verifyArea($request);
-        Response::success($area);
+        Response::success(self::normalizeArea($area));
     }
 
     public function update(Request $request): void
@@ -98,7 +122,7 @@ class AreaController
         }
         if (isset($body['geometry'])) $update['geometry'] = $body['geometry'];
         Area::update($area['id'], $update);
-        Response::success(Area::findById($area['id']), 'Area updated');
+        Response::success(self::normalizeArea(Area::findById($area['id'])), 'Area updated');
     }
 
     public function destroy(Request $request): void
