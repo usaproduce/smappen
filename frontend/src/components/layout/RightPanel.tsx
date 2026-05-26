@@ -63,8 +63,13 @@ export default function RightPanel() {
   // have no travel_mode, instead of the old Hexagon which looked unrelated.
   const ModeIcon = modeIcon[area.travel_mode ?? ''] ?? MapPin;
 
+  // right-16 = 64px from edge. RightToolbar sits at right-4 w-12, so its
+  // left edge is at vw-64. Setting the panel's right to 64px makes them
+  // share a seam with no gap — the blob morph that scales out from
+  // transform-origin: 100% 50% then visibly grows out of the toolbar
+  // instead of materialising in empty space.
   return (
-    <aside className="absolute top-4 right-20 w-[300px] md:w-[340px] lg:w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20 panel-blob-open">
+    <aside className="absolute top-4 right-16 w-[300px] md:w-[340px] lg:w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20 panel-blob-open">
       {/* Header */}
       <div className="px-4 pt-3 pb-3 border-b border-slate-100">
         {/* VT13 — breadcrumb so context is always visible. Truncates the
