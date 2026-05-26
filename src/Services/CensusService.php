@@ -6,6 +6,15 @@ use App\Core\Database;
 
 class CensusService
 {
+    /**
+     * Bump this whenever the cached demographic shape changes (e.g. fixed
+     * the bracket sums Nov-2026). Anything cached with a lower version is
+     * treated as stale and refetched on next read — saves us from having
+     * to TRUNCATE areas.demographics_cache by hand every time the
+     * aggregation logic changes.
+     */
+    public const CACHE_VERSION = 2;
+
     private string $apiKey;
     private string $baseUrl = 'https://api.census.gov/data';
     private string $acsYear = '2023';
@@ -135,11 +144,20 @@ class CensusService
         $area = $db->fetch('SELECT *, ST_AsGeoJSON(geometry) AS geom_json FROM areas WHERE id = ?', [$areaId]);
         if (!$area) return null;
 
-        // Check cache (< 30 days)
+        // Check cache (< 30 days AND schema version matches). If the cache
+        // version on disk is older than CACHE_VERSION, the aggregation
+        // logic has changed since the cache was written and we need to
+        // refetch — otherwise users keep seeing pre-fix data (e.g. the
+        // flat-zero income bracket histogram) until the natural 30-day
+        // TTL rolls over.
         if (!empty($area['demographics_cache']) && !empty($area['demographics_cached_at'])) {
             $cachedTs = strtotime($area['demographics_cached_at']);
             if (time() - $cachedTs < 86400 * 30) {
-                return json_decode($area['demographics_cache'], true);
+                $cached = json_decode($area['demographics_cache'], true);
+                $cachedVer = is_array($cached) ? (int)($cached['meta']['cache_version'] ?? 0) : 0;
+                if ($cachedVer >= self::CACHE_VERSION) {
+                    return $cached;
+                }
             }
         }
 
@@ -248,6 +266,7 @@ class CensusService
                 'area_sq_km' => round($areaSqKm, 3),
                 'tracts_intersected' => count($tracts),
                 'data_year' => (int)$this->acsYear,
+                'cache_version' => self::CACHE_VERSION,
             ],
         ];
 
