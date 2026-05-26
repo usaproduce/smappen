@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS places_rate_buckets (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Seed default buckets. Conservative defaults — admin can tune via
--- direct SQL UPDATE without code change. Capacity = burst headroom;
+-- direct SQL UPDATE without code change. Capacity = burst headroom,
 -- fill_rate = sustained QPS.
 INSERT INTO places_rate_buckets (bucket, capacity, fill_rate_per_sec, tokens_available, last_refill_at)
 VALUES

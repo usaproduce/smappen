@@ -1,7 +1,7 @@
 -- 029_carafe_seed_campaigns.sql — Carafe Vendor Network Spec v3 §4 + §6.
 --
 -- The unit of work for the vendor-network seeding pipeline. A campaign
--- defines the geography, vendor types, source mix, and enrich policy;
+-- defines the geography, vendor types, source mix, and enrich policy —
 -- runs as a parent job that spawns tile children on the existing `jobs`
 -- queue (mig 006). The estimator (§5.2) writes its dual-pass projection
 -- back to the campaign row before the admin approves a run, and the
