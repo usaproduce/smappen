@@ -46,13 +46,25 @@ class RestaurantController
         if ($name === '' || mb_strlen($name) > 160) {
             Response::error('name (1–160 chars) required', 422);
         }
+        $placeId = isset($b['google_place_id']) ? trim((string) $b['google_place_id']) : '';
+        // Dedupe: if this org already has a restaurant for this Google place,
+        // return it instead of creating a duplicate.
+        if ($placeId !== '') {
+            $existing = $this->repo->findByGooglePlaceId($request->user['organization_id'], $placeId);
+            if ($existing) {
+                Response::success(['id' => $existing['id'], 'already_exists' => true], 'Restaurant already in your workspace', 200);
+            }
+        }
         $id = $this->repo->create($request->user['organization_id'], [
-            'name'     => $name,
-            'address'  => isset($b['address'])  ? (string) $b['address']  : null,
-            'lat'      => isset($b['lat'])      ? (float)  $b['lat']      : null,
-            'lng'      => isset($b['lng'])      ? (float)  $b['lng']      : null,
-            'timezone' => isset($b['timezone']) ? (string) $b['timezone'] : null,
-            'region'   => isset($b['region'])   ? (string) $b['region']   : null,
+            'name'            => $name,
+            'address'         => isset($b['address'])  ? (string) $b['address']  : null,
+            'lat'             => isset($b['lat'])      ? (float)  $b['lat']      : null,
+            'lng'             => isset($b['lng'])      ? (float)  $b['lng']      : null,
+            'timezone'        => isset($b['timezone']) ? (string) $b['timezone'] : null,
+            'region'          => isset($b['region'])   ? (string) $b['region']   : null,
+            'google_place_id' => $placeId !== '' ? $placeId : null,
+            'phone'           => isset($b['phone'])    ? (string) $b['phone']    : null,
+            'website'         => isset($b['website'])  ? (string) $b['website']  : null,
         ]);
         Response::success(['id' => $id], 'Restaurant created', 201);
     }

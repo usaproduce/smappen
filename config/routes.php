@@ -57,6 +57,7 @@ use App\Controllers\VendorClaimController;
 use App\Controllers\VendorMapController;
 use App\Controllers\VendorReviewController;
 use App\Controllers\SavedVendorController;
+use App\Controllers\SeedCampaignController;
 use App\Controllers\ComparisonController;
 use App\Controllers\ConsolidationController;
 use App\Controllers\LeadController;
@@ -444,4 +445,12 @@ return function (Router $r) {
     $r->post('/api/leads',                                      [LeadController::class, 'create'],        $auth);
     $r->get('/api/leads',                                       [LeadController::class, 'index'],         $auth);
     $r->post('/api/leads/{id}/emit',                            [LeadController::class, 'emit'],          $auth);
+
+    // ─── Carafe vendor-network seeding (admin-only) ──────────────────────
+    // Spec v3 §7 + §8. Estimator first — every later mutation route lands
+    // here too; the middleware below is the single admin gate for all of
+    // them. SeedEstimatorService does the math; PlacesClient is the
+    // call-time choke point (spec §9 phase 1+2).
+    $adminAuth = [Middleware::auth(), Middleware::requireRole(['admin', 'owner'])];
+    $r->post('/api/admin/seed-campaigns/estimate',              [SeedCampaignController::class, 'estimate'], $adminAuth);
 };

@@ -55,8 +55,9 @@ class RestaurantRepository
         $id = Database::uuid();
         Database::getInstance()->query(
             'INSERT INTO restaurants
-                (id, organization_id, name, address, lat, lng, timezone, region, is_sample, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())',
+                (id, organization_id, name, address, lat, lng, timezone, region,
+                 google_place_id, phone, website, is_sample, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())',
             [
                 $id, $organizationId,
                 $data['name'],
@@ -65,10 +66,23 @@ class RestaurantRepository
                 $data['lng'] ?? null,
                 $data['timezone'] ?? null,
                 $data['region'] ?? null,
+                $data['google_place_id'] ?? null,
+                $data['phone'] ?? null,
+                $data['website'] ?? null,
                 !empty($data['is_sample']) ? 1 : 0,
             ]
         );
         return $id;
+    }
+
+    public function findByGooglePlaceId(string $organizationId, string $placeId): ?array
+    {
+        return self::normalize(Database::getInstance()->fetch(
+            'SELECT * FROM restaurants
+              WHERE organization_id = ? AND google_place_id = ? AND archived_at IS NULL
+              LIMIT 1',
+            [$organizationId, $placeId]
+        ));
     }
 
     public function archive(string $id, string $organizationId): void

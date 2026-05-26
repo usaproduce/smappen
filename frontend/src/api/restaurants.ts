@@ -48,7 +48,17 @@ export const restaurantsApi = {
     const { data } = await api.get(`/api/restaurants/${id}`);
     return data.data.restaurant;
   },
-  async create(input: { name: string; address?: string; lat?: number; lng?: number; timezone?: string; region?: string }): Promise<{ id: string }> {
+  async create(input: {
+    name: string;
+    address?: string;
+    lat?: number;
+    lng?: number;
+    timezone?: string;
+    region?: string;
+    google_place_id?: string;
+    phone?: string;
+    website?: string;
+  }): Promise<{ id: string; already_exists?: boolean }> {
     const { data } = await api.post('/api/restaurants', input);
     return data.data;
   },
