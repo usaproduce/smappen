@@ -330,10 +330,18 @@ class VendorUpsertService
      * Is this place name overwhelmingly likely to be retail/restaurant
      * rather than B2B wholesale? Returns true to short-circuit insert.
      *
-     * Pure + case-insensitive. The patterns are conservative — they
-     * catch obvious pollution (Starbucks, Safeway, "Big Bear Cafe")
-     * without rejecting borderline B2B candidates that genuinely belong
-     * in the review queue. Tune by adding more patterns to DENY_PATTERNS.
+     * Two-stage filter:
+     *   1. DENY_PATTERNS — obvious retail/restaurant/cafe matches reject.
+     *   2. KEEP_PATTERNS — name must contain at least one B2B marker
+     *      (wholesale / distributor / depot / a food-product noun like
+     *      "Poultry" or "Foods" at the end / a known brand). Otherwise
+     *      reject. This is aggressive — names like "ABOVEGROUND" or
+     *      "Capital Eagle Inc" get dropped because there's no signal
+     *      that they're B2B food. Spec §2 target is B2B wholesale ONLY.
+     *
+     * If a legit B2B vendor gets rejected because its name lacks any
+     * marker (rare but possible — e.g. a single-brand-name vendor),
+     * add it to the brand whitelist in KEEP_PATTERNS group 3.
      */
     public static function isLikelyJunk(string $name): bool
     {
@@ -342,8 +350,29 @@ class VendorUpsertService
         foreach (self::DENY_PATTERNS as $pat) {
             if (preg_match($pat, $n)) return true;
         }
-        return false;
+        foreach (self::KEEP_PATTERNS as $pat) {
+            if (preg_match($pat, $n)) return false; // explicit B2B signal → keep
+        }
+        return true; // no B2B marker found → reject
     }
+
+    /**
+     * Allow-list. ANY match → keep. Three groups:
+     *   - operational B2B markers ("wholesale", "distributor", etc.)
+     *   - food-product nouns at end-of-name ("Capitol Hill Poultry",
+     *     "Euro Foods") — restaurants don't end this way
+     *   - explicit known B2B brand prefixes
+     */
+    private const KEEP_PATTERNS = [
+        // Operational B2B markers anywhere in the name.
+        '/\b(wholesale|wholesalers?|whole\s?sales?|distributor|distributors|distribution|distributing|foodservice|food\s?service|purveyors?|importers?|importing|imports|depot|cash\s?(?:and|&)\s?carry|terminal\s?market|farmers\s?market|food\s?supply|restaurant\s?supply|smallwares)\b/iu',
+        // Food-product noun at end of name, optionally followed by Inc/LLC/Corp/Co.
+        // Restaurants and retail rarely end with these words (they say "Cafe", "Restaurant", "Market", etc.).
+        '/\b(foods?|meats|seafoods?|produce|dairy|poultry|beverages?|bakery|fish|fishery|fisheries|provisions?|deli\s?meats|deli\s?products)\s*(?:co\.?|inc\.?|llc\.?|corp\.?|ltd\.?)?\s*$/iu',
+        // Known B2B brand prefixes / contains. Add to this list when an
+        // operator flags a real B2B that the other two groups missed.
+        '/^(sysco|us\s?foods|pfg\b|performance\s?food|gordon\s?food|reinhart|baldor|coosemans|cuisine\s?solutions|jetro|restaurant\s?depot|chef.?s\s?warehouse|costco\s?business|a\.?\s*litteri|saval|coastal\s?sunbelt|lancaster\s?foods|pat\s?lafrieda|usa\s?produce|hunts\s?point|maine\s?avenue\s?fish|fulton\s?fish|empson|euro\s?foods|fruver)/iu',
+    ];
 
     /**
      * Case-insensitive regex patterns. Match → reject at insert.
