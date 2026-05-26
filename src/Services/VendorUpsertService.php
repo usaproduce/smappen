@@ -70,6 +70,19 @@ class VendorUpsertService
             throw new \InvalidArgumentException('place must include displayName + location.latitude + location.longitude');
         }
 
+        // §2 Carafe target = B2B wholesale only. Places sweeps inevitably
+        // return adjacent retail (cafés, Starbucks, Safeway, 7-Eleven) even
+        // with strict includedTypes. Filter at write time so the dedupe
+        // queue + downstream pipeline stays clean.
+        if (self::isLikelyJunk((string) $name)) {
+            return [
+                'vendor_id'   => '',
+                'location_id' => '',
+                'created'     => false,
+                'skipped'     => 'retail_or_restaurant_pattern',
+            ];
+        }
+
         $this->pdo->beginTransaction();
         try {
             // Existing vendor for this place_id?
@@ -312,6 +325,46 @@ class VendorUpsertService
     // ─────────────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Is this place name overwhelmingly likely to be retail/restaurant
+     * rather than B2B wholesale? Returns true to short-circuit insert.
+     *
+     * Pure + case-insensitive. The patterns are conservative — they
+     * catch obvious pollution (Starbucks, Safeway, "Big Bear Cafe")
+     * without rejecting borderline B2B candidates that genuinely belong
+     * in the review queue. Tune by adding more patterns to DENY_PATTERNS.
+     */
+    public static function isLikelyJunk(string $name): bool
+    {
+        $n = strtolower(trim($name));
+        if ($n === '') return true; // unnamed = noise
+        foreach (self::DENY_PATTERNS as $pat) {
+            if (preg_match($pat, $n)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Case-insensitive regex patterns. Match → reject at insert.
+     *
+     * Grouped by reason so the reader can see why each pattern exists.
+     * Add to a group rather than appending a new line of unknown intent.
+     */
+    private const DENY_PATTERNS = [
+        // ─ Restaurant + cafe + food-service-to-consumer ──────────────
+        '/\b(cafe|café|coffee\s?shop|restaurant|grill|diner|bistro|pizzeria|pizza\s?hut|trattoria|brasserie|tavern|gastropub|brewpub|brewery|brewing\s?co|beer\s?garden|wine\s?bar|cocktail\s?bar|taproom|tea\s?house|teahouse|pastry\s?shop|ice\s?cream|gelato|smoothie|juicery|donut|doughnut|bagel\s?shop|sandwich\s?shop|takeout|take[-\s]out|carry[-\s]?out|sushi\s?bar|hibachi|ramen|noodle\s?house|food\s?truck|food\s?court)\b/i',
+        // ─ Major consumer-retail food chains ─────────────────────────
+        '/\b(7[-\s]?eleven|safeway|aldi\b|wegmans|whole\s?foods|trader\s?joe|harris\s?teeter|balducci|wal[-\s]?mart|target\b|food\s?lion|giant\s?food|publix|kroger|albertsons|stop\s?&?\s?shop|shoprite|sam.s\s?club|bj.s\s?wholesale|dollar\s?(tree|general)|family\s?dollar|fresh\s?market|sprouts\s?farmers|h[-\s]?e[-\s]?b|meijer|piggly\s?wiggly|ingles|winn[-\s]?dixie|costco\s?wholesale|fresh\s?direct)\b/i',
+        // ─ QSR / coffee + bakery chains ─────────────────────────────
+        '/\b(starbucks|dunkin|panera|chick[-\s]?fil[-\s]?a|chipotle|mcdonald|burger\s?king|wendy|taco\s?bell|subway\b|domino|kfc|popeyes|baskin[-\s]?robbins|jamba|tim\s?hortons|cold\s?stone|krispy\s?kreme|five\s?guys|in[-\s]?n[-\s]?out|shake\s?shack|sweetgreen|cava\b|pret\s?a\s?manger|le\s?pain|chopt|chopt\b|jersey\s?mike|jimmy\s?john|capital\s?one\s?café|capital\s?one\s?cafe)\b/i',
+        // ─ Gas + convenience + pharmacy ─────────────────────────────
+        '/\b(shell\b|exxon|mobil\b|chevron|sunoco|valero|wawa|sheetz|circle\s?k|^bp\s|^bp$|cvs\b|walgreens|rite\s?aid|duane\s?reade|liquor\s?store)\b/i',
+        // ─ Non-food businesses ───────────────────────────────────────
+        '/\b(christmas\s?tree|car\s?park|parking|hair\s?salon|nail\s?salon|gym\b|fitness|spa\b|battery|florist|jewelry|laundry|dry\s?clean|barber|tobacco|smoke\s?shop|vape|cigar|hardware|auto\s?parts|tire\s?shop)\b/i',
+        // ─ Hotels + lodging + government ─────────────────────────────
+        '/\b(hotel\b|motel\b|inn\b|hostel|resort|commissary|exchange\s?store|naval\s?station|air\s?force|fort\s+\w+)\b/i',
+    ];
 
     /**
      * Map a Google primaryType to a coarse Carafe category. Best-effort

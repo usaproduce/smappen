@@ -28,62 +28,75 @@
 return [
 
     'broadline' => [
-        'places_types'    => ['wholesaler', 'food_store'],
-        'text_queries'    => ['food distributor', 'foodservice distributor', 'Sysco', 'US Foods', 'PFG'],
+        // STRICT B2B only — `food_store` removed because it pulled in
+        // 7-Eleven, Starbucks-adjacent retail. `wholesaler` is the only
+        // Places (New) type that's reliably B2B.
+        'places_types'    => ['wholesaler'],
+        'text_queries'    => ['foodservice distributor', 'food service distributor', 'Sysco', 'US Foods', 'PFG', 'Gordon Food Service', 'Reinhart Foodservice'],
         'category'        => 'broadline',
         'priority_enrich' => true,
     ],
 
     'cash_carry' => [
+        // `warehouse_store` catches Restaurant Depot + Costco Business —
+        // legitimate B2B targets. But it ALSO catches Sam's Club / BJ's,
+        // which are consumer-wholesale. Filter is at insert (see
+        // VendorUpsertService::isLikelyJunk).
         'places_types'    => ['warehouse_store', 'wholesaler'],
-        'text_queries'    => ['restaurant depot', 'cash and carry', "Chef's Warehouse"],
+        'text_queries'    => ['restaurant depot', "Chef's Warehouse", 'Jetro Cash and Carry'],
         'category'        => 'broadline',
         'priority_enrich' => true,
     ],
 
     'produce' => [
-        // 'produce_market' is NOT a valid Places (New) includedType — Google
-        // returns HTTP 400. Stick with 'wholesaler' + the text queries which
-        // catch the actual produce houses.
-        'places_types'    => ['wholesaler', 'farm'],
-        'text_queries'    => ['produce wholesale', 'produce distributor'],
+        // `farm` removed — catches U-pick / agritourism retail.
+        // The text queries pull in the actual produce wholesalers.
+        'places_types'    => ['wholesaler'],
+        'text_queries'    => ['produce wholesale', 'produce distributor', 'produce wholesalers', 'terminal market'],
         'category'        => 'produce',
         'priority_enrich' => true,
     ],
 
     'meat' => [
+        // `butcher_shop` kept — many catch real B2B (e.g. Capitol Hill
+        // Poultry). Retail butchers filtered at insert by name pattern.
         'places_types'    => ['wholesaler', 'butcher_shop'],
-        'text_queries'    => ['meat wholesale', 'meat purveyor'],
+        'text_queries'    => ['meat wholesale', 'meat purveyor', 'meat distributor', 'poultry wholesale'],
         'category'        => 'protein',
         'priority_enrich' => true,
     ],
 
     'seafood' => [
-        // 'seafood_market' and 'fish_market' both return HTTP 400 from
-        // Places (New). Text queries do the work for this type.
         'places_types'    => ['wholesaler'],
-        'text_queries'    => ['seafood wholesale', 'seafood distributor', 'fish market wholesale'],
+        'text_queries'    => ['seafood wholesale', 'seafood distributor', 'seafood purveyor'],
         'category'        => 'seafood',
         'priority_enrich' => true,
     ],
 
     'dairy_bakery_bev' => [
         'places_types'    => ['wholesaler'],
-        'text_queries'    => ['dairy distributor', 'bakery distributor', 'beverage distributor'],
+        'text_queries'    => ['dairy distributor', 'bakery distributor', 'beverage distributor', 'wholesale bakery'],
         'category'        => 'specialty',
         'priority_enrich' => false,
     ],
 
     'specialty_ethnic' => [
-        // 'market' is NOT a valid Places (New) includedType.
-        'places_types'    => ['wholesaler', 'asian_grocery_store'],
-        'text_queries'    => ['Asian wholesale', 'Latino wholesale', 'specialty importer'],
+        // `asian_grocery_store` removed — overwhelmingly retail. The
+        // import-specific text queries catch the actual B2B importers.
+        'places_types'    => ['wholesaler'],
+        'text_queries'    => ['Asian food importer', 'Latino food importer', 'specialty food importer', 'ethnic food wholesale'],
         'category'        => 'specialty',
         'priority_enrich' => false,
     ],
 
     'local_grocery' => [
-        'places_types'    => ['supermarket', 'grocery_store', 'asian_grocery_store'],
+        // CONSUMER RETAIL — disabled by default. Spec §2 listed this
+        // because some restaurants source from neighborhood grocers,
+        // but in practice Places returns Safeway / 7-Eleven / Whole
+        // Foods which is pure pollution. Keep the entry so the type
+        // is still selectable, but with NO Places types or queries
+        // until we have a tighter pattern.
+        'places_types'    => [],
         'text_queries'    => [],
         'category'        => 'specialty',
         'priority_enrich' => false,
