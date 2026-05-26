@@ -139,6 +139,13 @@ return [
             'id', 'displayName', 'location', 'formattedAddress', 'addressComponents',
             'primaryType', 'types', 'plusCode', 'viewport',
         ],
+        // tier_warm follows spec §12.1 literally (hours + phone + website +
+        // attributes on a 90-day TTL). Note this stacks Pro + Contact +
+        // Atmosphere SKUs at refresh time because hours fields bill
+        // Atmosphere. If the cost becomes an issue, the optimization is
+        // to split warm into warm_contact (phone/website only — Pro+Contact)
+        // and warm_hours (hours/attributes — Pro+Atmosphere) with the
+        // same 90-day TTL on each, refreshed independently.
         'tier_warm' => [
             'id', 'nationalPhoneNumber', 'internationalPhoneNumber', 'websiteUri',
             'regularOpeningHours', 'currentOpeningHours', 'secondaryOpeningHours',

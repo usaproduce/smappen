@@ -177,15 +177,16 @@ export default function Header() {
     }
   }
 
+  // Header is rendered INSIDE AppNav's children slot (see AppLayout) — no
+  // outer <header> wrapper, no brand, no max-width container. Just the
+  // /app-specific actions: project switcher · save status · undo/redo ·
+  // $cost · bell · share · user menu (AppNav still owns the user menu so
+  // we skip that here).
   return (
-    <header className="bg-white border-b border-slate-200 h-12 flex items-center justify-between px-4 sticky z-30" style={{ top: 49 /* sits below AppNav (49px tall) */ }}>
-      <div className="flex items-center gap-3">
-        {/* Brand mark moved to AppNav (rendered by AppLayout above this
-            header) — the previous duplicate brand on every /app page was
-            redundant once cross-product navigation landed. */}
-
+    <>
+      <div className="flex items-center gap-2 min-w-0 flex-1">
         {/* Editable project name / breadcrumb */}
-        <div ref={projectDropdownRef} className="relative flex items-center gap-1">
+        <div ref={projectDropdownRef} className="relative flex items-center gap-1 min-w-0">
           {renaming ? (
             <div className="flex items-center gap-1">
               <input
@@ -206,20 +207,20 @@ export default function Header() {
           ) : (
             <>
               <button
-                className="text-[16px] font-semibold hover:bg-slate-50 px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1.5"
+                className="text-[13px] font-semibold hover:bg-slate-50 px-2 py-1 rounded inline-flex items-center gap-1 min-w-0 max-w-[180px]"
                 style={{ color: '#1A1A2E' }}
                 onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
-                title="Switch project"
+                title={currentProject?.name ?? 'Switch project'}
               >
-                {currentProject?.name ?? 'Choose project'}
-                <ChevronDown size={14} className="text-slate-400" />
+                <span className="truncate">{currentProject?.name ?? 'Choose project'}</span>
+                <ChevronDown size={12} className="text-slate-400 flex-shrink-0" />
               </button>
               <button
-                className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-50"
+                className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-50 hidden lg:inline-flex"
                 onClick={startRename}
                 title="Rename"
               >
-                <MoreHorizontal size={14} />
+                <MoreHorizontal size={13} />
               </button>
               <SaveStatus />
             </>
@@ -364,71 +365,17 @@ export default function Header() {
         </div>
 
         <button
-          className="text-slate-600 hover:bg-slate-50 px-3 py-1.5 rounded text-sm font-semibold inline-flex items-center gap-1.5"
+          className="text-slate-600 hover:bg-slate-50 px-2.5 py-1 rounded text-[12px] font-semibold inline-flex items-center gap-1"
           onClick={share}
           title="Copy share link"
         >
-          <Share2 size={15} /> Share
+          <Share2 size={13} /> <span className="hidden lg:inline">Share</span>
         </button>
 
-        <div ref={userMenuRef} className="relative">
-          <UserAvatarButton user={user} onClick={() => setShowUserMenu(!showUserMenu)} />
-          {showUserMenu && (
-            <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[260px] z-40 py-1 card-expand">
-              <div className="px-3 py-3 border-b border-slate-100">
-                <div className="flex items-center gap-2.5">
-                  <UserAvatarChip user={user} size={36} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-bold truncate" style={{ color: '#1A1A2E' }}>{user?.name}</div>
-                    <div className="text-[11px] text-slate-500 truncate">{user?.email}</div>
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center justify-between gap-2">
-                  <div className="text-[11px] text-slate-500 truncate">
-                    {user?.organization_name ?? 'Personal'}
-                  </div>
-                  <PlanBadge plan={user?.plan} />
-                </div>
-              </div>
-              <Link to="/settings/profile" className="block px-3 py-2 hover:bg-slate-50 text-sm flex items-center gap-2" onClick={() => setShowUserMenu(false)}>
-                <Settings size={14} /> Profile
-              </Link>
-              <Link to="/settings/team" className="block px-3 py-2 hover:bg-slate-50 text-sm" onClick={() => setShowUserMenu(false)}>
-                Team
-              </Link>
-              <Link to="/settings/integrations" className="block px-3 py-2 hover:bg-slate-50 text-sm" onClick={() => setShowUserMenu(false)}>
-                Integrations
-              </Link>
-              <Link to="/settings/billing" className="block px-3 py-2 hover:bg-slate-50 text-sm" onClick={() => setShowUserMenu(false)}>
-                Billing
-              </Link>
-              <button
-                className="block w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-t border-slate-100 flex items-center gap-2 mt-1"
-                onClick={() => {
-                  const cur = document.documentElement.getAttribute('data-theme') === 'dark';
-                  const next = cur ? 'light' : 'dark';
-                  document.documentElement.setAttribute('data-theme', next);
-                  document.body.classList.toggle('dark-mode', next === 'dark');
-                  // Match the key useTheme() reads from. Old code wrote
-                  // 'gd_theme' which the hook ignored, so the toggle felt
-                  // like a no-op on reload.
-                  localStorage.setItem('smappen-theme', next);
-                }}
-              >
-                <span className="inline-block w-3.5 h-3.5 rounded-full border border-slate-300" style={{ background: 'linear-gradient(135deg, #fff 50%, #1A1A2E 50%)' }} />
-                Toggle dark mode
-              </button>
-              <button
-                className="block w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-t border-slate-100 flex items-center gap-2 text-red-600"
-                onClick={() => { logout(); location.href = '/login'; }}
-              >
-                <LogOut size={14} /> Sign out
-              </button>
-            </div>
-          )}
-        </div>
+        {/* The legacy in-Header user menu used to live here. AppNav now owns
+            it across the whole product so we don't duplicate. */}
       </div>
-    </header>
+    </>
   );
 }
 

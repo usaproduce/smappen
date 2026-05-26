@@ -6,6 +6,7 @@ import { api } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
 import { useCostStore } from '../../stores/costStore';
 import { formatNumber } from '../../utils/format';
+import AppNav from '../layout/AppNav';
 
 /**
  * /dashboard — landing page after login.
@@ -54,24 +55,9 @@ export default function DashboardPage() {
     // the result was a flat, washed-out "grayed-out" look against the
     // body's same #F9F9FB.
     <div className="min-h-screen bg-white">
-      <header className="bg-white border-b border-slate-200">
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-          <Link to="/dashboard" className="flex items-center gap-2 font-extrabold text-[16px]" style={{ color: '#1A1A2E' }}>
-            <span
-              className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-white font-extrabold text-base shadow-sm"
-              style={{ background: 'linear-gradient(135deg, #F57C00 0%, #E53935 50%, #7848BB 100%)' }}
-            >S</span>
-            smappen
-          </Link>
-          <nav className="flex items-center gap-4 text-sm font-semibold text-slate-700">
-            <Link to="/projects" className="hover:text-violet-700">Projects</Link>
-            <Link to="/settings/profile" className="hover:text-violet-700">Settings</Link>
-            <Link to="/changelog" className="hover:text-violet-700">What's new</Link>
-          </nav>
-        </div>
-      </header>
+      <AppNav />
 
-      <main className="max-w-6xl mx-auto px-6 py-8">
+      <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="flex items-end justify-between mb-8">
           <div>
             <h1 className="text-3xl font-extrabold" style={{ color: '#1A1A2E' }}>

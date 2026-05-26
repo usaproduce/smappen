@@ -4,6 +4,7 @@ import { Plus, Search, Layers, Grid3x3, List as ListIcon, Trash2, Edit3, Archive
 import toast from 'react-hot-toast';
 import { projectsApi } from '../../api/projects';
 import { api } from '../../api/client';
+import AppNav from '../layout/AppNav';
 
 type ViewMode = 'grid' | 'list';
 
@@ -93,20 +94,9 @@ export default function ProjectGalleryPage() {
 
   return (
     <div className="min-h-screen bg-white">
-      <header className="bg-white border-b border-slate-200">
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-          <Link to="/dashboard" className="flex items-center gap-2 font-extrabold text-[16px]" style={{ color: '#1A1A2E' }}>
-            <span
-              className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-white font-extrabold shadow-sm"
-              style={{ background: 'linear-gradient(135deg, #F57C00 0%, #E53935 50%, #7848BB 100%)' }}
-            >S</span>
-            smappen
-          </Link>
-          <Link to="/app" className="btn btn-secondary h-9 text-sm">Open map →</Link>
-        </div>
-      </header>
+      <AppNav />
 
-      <main className="max-w-6xl mx-auto px-6 py-8">
+      <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="flex items-end justify-between mb-6">
           <div>
             <h1 className="text-3xl font-extrabold" style={{ color: '#1A1A2E' }}>Projects</h1>

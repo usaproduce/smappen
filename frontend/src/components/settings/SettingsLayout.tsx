@@ -1,31 +1,23 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { ArrowLeft, User, Users, Plug, CreditCard, KeyRound, Webhook } from 'lucide-react';
+import { NavLink, Outlet } from 'react-router-dom';
+import { User, Users, Plug, CreditCard, KeyRound, Webhook } from 'lucide-react';
+import AppNav from '../layout/AppNav';
 
 const ITEMS = [
-  { to: '/settings/profile',     label: 'Profile',       icon: User },
-  { to: '/settings/team',        label: 'Team',          icon: Users },
+  { to: '/settings/profile',      label: 'Profile',      icon: User },
+  { to: '/settings/team',         label: 'Team',         icon: Users },
   { to: '/settings/integrations', label: 'Integrations', icon: Plug },
-  { to: '/settings/webhooks',    label: 'Webhooks',      icon: Webhook },
-  { to: '/settings/api',         label: 'API keys',      icon: KeyRound },
-  { to: '/settings/billing',     label: 'Billing',       icon: CreditCard },
+  { to: '/settings/webhooks',     label: 'Webhooks',     icon: Webhook },
+  { to: '/settings/api',          label: 'API keys',     icon: KeyRound },
+  { to: '/settings/billing',      label: 'Billing',      icon: CreditCard },
 ];
 
 export default function SettingsLayout() {
-  const nav = useNavigate();
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3">
-        <button
-          onClick={() => nav('/')}
-          className="text-slate-500 hover:text-slate-900 p-1 rounded hover:bg-slate-50"
-          title="Back to map"
-        >
-          <ArrowLeft size={16} />
-        </button>
-        <h1 className="font-extrabold text-lg" style={{ color: '#1A1A2E' }}>Settings</h1>
-      </header>
-      <div className="max-w-5xl mx-auto px-4 py-6 flex gap-6">
+      <AppNav />
+      <div className="max-w-7xl mx-auto px-6 py-6 flex gap-6">
         <aside className="w-56 shrink-0">
+          <h1 className="font-extrabold text-lg mb-3 px-2" style={{ color: '#1A1A2E' }}>Settings</h1>
           <nav className="space-y-0.5">
             {ITEMS.map((it) => {
               const Icon = it.icon;

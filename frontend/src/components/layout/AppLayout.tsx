@@ -102,8 +102,12 @@ export default function AppLayout() {
 
   return (
     <div className="flex flex-col h-screen">
-      <AppNav />
-      <Header />
+      {/* Single bar — AppNav (brand + cross-product tabs + user) wraps
+          the map-specific Header (project switcher + undo/redo + cost +
+          bell + Share) into its page-context slot. One row, not two. */}
+      <AppNav>
+        <Header />
+      </AppNav>
       {/* Map fills the row; sidebars and toolbar float over it as cards. */}
       <div className="relative flex-1 min-h-0 bg-slate-50">
         {loadError && (
