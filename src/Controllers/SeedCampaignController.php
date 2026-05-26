@@ -320,7 +320,7 @@ class SeedCampaignController
         $logDir = $base . '/storage/logs';
         if (!is_dir($logDir)) { @mkdir($logDir, 0775, true); }
         $log = $logDir . '/seed-pipeline.log';
-        $php = defined('PHP_BINARY') && PHP_BINARY ? PHP_BINARY : '/usr/bin/php';
+        $php = self::resolvePhpCliBinary();
 
         $chain = sprintf(
             '%s %s --max-tiles=100 --max-seconds=540 --quiet && '
@@ -341,6 +341,24 @@ class SeedCampaignController
         // just needs to wait for cron (or kick manually).
         @exec($cmd);
         error_log("[seed-pipeline] spawned: $cmd");
+    }
+
+    /**
+     * Find the PHP CLI binary. PHP_BINARY inside PHP-FPM resolves to
+     * php-fpm itself, which can't run scripts — invoking it with a
+     * script path just prints the FPM help and exits. We need the
+     * actual CLI binary. Try a few well-known paths in order.
+     */
+    private static function resolvePhpCliBinary(): string
+    {
+        // PHP_BINARY first, but only if it's NOT php-fpm.
+        if (defined('PHP_BINARY') && PHP_BINARY && !str_contains(PHP_BINARY, 'fpm')) {
+            return PHP_BINARY;
+        }
+        foreach (['/usr/bin/php', '/usr/bin/php8.4', '/usr/bin/php8.3', '/usr/bin/php8.2', '/usr/local/bin/php'] as $candidate) {
+            if (is_executable($candidate)) return $candidate;
+        }
+        return 'php'; // last-resort PATH lookup
     }
 
     /**
