@@ -362,15 +362,14 @@ export default function AreaCreator({ onClose, editing }: Props) {
         .panel-slide-in-l { animation: panelSlideInL 320ms cubic-bezier(0.16, 1, 0.3, 1); }
       `}</style>
 
-      <header
-        className="px-4 py-3 flex items-center justify-between shrink-0"
-        style={{ background: 'linear-gradient(135deg, #F57C00 0%, #E53935 50%, #7848BB 100%)' }}
-      >
-        <div className="flex items-center gap-2 text-white font-extrabold text-[15px]">
-          {editing ? <Pencil size={15} /> : <Sparkles size={15} />}
+      <header className="px-4 py-3 flex items-center justify-between shrink-0 border-b border-slate-100 bg-white">
+        <div className="flex items-center gap-2 font-extrabold text-sm" style={{ color: '#1A1A2E' }}>
+          {editing ? <Pencil size={14} style={{ color: '#7848BB' }} /> : <Sparkles size={14} style={{ color: '#7848BB' }} />}
           {editing ? 'Edit area' : 'Create area'}
         </div>
-        <button onClick={onClose} className="text-white/85 hover:text-white"><X size={15} /></button>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-700" title="Close">
+          <X size={16} />
+        </button>
       </header>
 
       <div className="overflow-y-auto flex-1 px-3 py-2.5 space-y-2">

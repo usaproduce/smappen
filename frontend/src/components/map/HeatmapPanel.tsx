@@ -50,7 +50,13 @@ export default function HeatmapPanel({ meta }: Props) {
     : null;
 
   return (
-    <div className="absolute bottom-4 left-4 bg-white rounded-xl shadow-float p-4 w-[360px] z-30 border border-slate-200 transition-all duration-200">
+    <div
+      // Lives in the bottom-right corner, clear of the LeftPanel column
+      // (left-4) — used to stack on top of the area list, which the user
+      // flagged as "covering the sidebar" on laptop-class viewports.
+      // right-20 leaves the floating RightToolbar (right-4, w-12) alone.
+      className="absolute bottom-4 right-20 bg-white rounded-xl shadow-float p-4 w-[320px] max-w-[calc(100vw-280px)] z-30 border border-slate-200 transition-all duration-200"
+    >
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 font-bold text-base" style={{ color: '#1A1A2E' }}>
           <MapIcon size={18} style={{ color: '#7848BB' }} /> Heatmap
