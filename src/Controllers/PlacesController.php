@@ -9,6 +9,7 @@ use App\Models\Project;
 use App\Models\POICache;
 use App\Services\GoogleMapsService;
 use App\Services\GeoUtils;
+use App\Services\PlacesBenchmarkService;
 
 class PlacesController
 {
@@ -159,6 +160,122 @@ class PlacesController
                 'estimated_cost_usd' => \App\Services\GooglePricing::costFor(
                     $validType ? 'places_nearby' : 'places_text',
                     max(1, $svc->lastCallCount)
+                ),
+            ],
+        ]);
+    }
+
+    /**
+     * Run the same search the user just ran against 10 reference US metros
+     * sized to match the user's area_sq_km, then return percentile + median
+     * + a one-sentence English insight. Replaces the made-up Sparse/Dense
+     * bucket with a real "your area vs comparable US suburbs" comparison.
+     *
+     * Reference searches are 48h-cached by the existing places_nearby_v3
+     * cache layer, so the second user to hit "compare" for the same
+     * category + radius pays $0.
+     */
+    public function benchmark(Request $request): void
+    {
+        $body = $request->getBody() ?? [];
+        $areaId = $body['area_id'] ?? null;
+        $type = $body['type'] ?? null;
+        $keyword = $body['keyword'] ?? null;
+        $userCount = isset($body['user_count']) ? (int) $body['user_count'] : null;
+
+        if (!$areaId) Response::error('area_id required', 422);
+        if ($userCount === null) Response::error('user_count required', 422);
+
+        $area = Area::findById($areaId);
+        if (!$area) Response::error('Area not found', 404);
+        $proj = Project::findById($area['project_id']);
+        if (!$proj || $proj['organization_id'] !== $request->user['organization_id']) {
+            Response::error('Access denied', 403);
+        }
+
+        $geom = is_string($area['geometry']) ? json_decode($area['geometry'], true) : $area['geometry'];
+        if (!is_array($geom) || !isset($geom['type'])) {
+            Response::error('Area has no geometry to benchmark against', 422);
+        }
+        $areaSqKm = GeoUtils::calculateArea($geom);
+        if ($areaSqKm <= 0 || $areaSqKm > 7500) {
+            Response::error('Area must be between 1 and 7500 km² to benchmark', 422);
+        }
+
+        // Pick the density tier from the user area's demographics so the
+        // benchmark cohort is suburbs-vs-suburbs (not Manhattan vs Sterling).
+        $popPerSqKm = null;
+        $userPop = null;
+        if (!empty($area['demographics_cache'])) {
+            $cache = is_string($area['demographics_cache'])
+                ? json_decode($area['demographics_cache'], true)
+                : $area['demographics_cache'];
+            if (is_array($cache)) {
+                $userPop = $cache['population']['total'] ?? null;
+                $popPerSqKm = isset($cache['population']['density_per_sq_km'])
+                    ? (float) $cache['population']['density_per_sq_km']
+                    : null;
+            }
+        }
+
+        $tier = PlacesBenchmarkService::tierForDensity($popPerSqKm);
+        $refs = PlacesBenchmarkService::getReferences($tier);
+        $refRadiusM = PlacesBenchmarkService::equivalentCircleRadiusM($areaSqKm);
+
+        // Same chip → Table A type map as nearby(). Free-text searches go
+        // through searchPlacesText so the keyword IS the type filter.
+        static $TABLE_A_MAP = [
+            'restaurant' => 'restaurant', 'cafe' => 'cafe', 'pharmacy' => 'pharmacy',
+            'gym' => 'gym', 'school' => 'school', 'hospital' => 'hospital',
+            'bank' => 'bank', 'gas_station' => 'gas_station', 'store' => 'grocery_store',
+        ];
+        $validType = $type ? ($TABLE_A_MAP[$type] ?? null) : null;
+
+        $svc = new GoogleMapsService();
+        $referenceResults = [];
+        try {
+            foreach ($refs as $ref) {
+                if ($validType) {
+                    $places = $svc->searchPlacesNearby($ref['lat'], $ref['lng'], $refRadiusM, $validType, $keyword);
+                } else {
+                    $q = $keyword ?: ($type ?: 'businesses');
+                    $places = $svc->searchPlacesText($q, $ref['lat'], $ref['lng'], $refRadiusM);
+                }
+                $referenceResults[] = [
+                    'name'  => $ref['name'],
+                    'count' => count($places),
+                ];
+            }
+            // Log a single benchmark usage event with the total upstream
+            // calls actually billed; the per-tile counter inside the
+            // service already incremented across all references.
+            if ($svc->lastCallCount > 0) {
+                $svc->logApiUsage('places_benchmark', $request->user['id'], 'places_benchmark', $svc->lastCallCount);
+            }
+        } catch (\Throwable $e) {
+            self::handleGoogleError($e, 'places_benchmark');
+        }
+
+        $summary = PlacesBenchmarkService::summarize($userCount, $referenceResults, $tier);
+
+        Response::success([
+            'user_area' => [
+                'name' => $area['name'],
+                'count' => $userCount,
+                'area_sq_km' => round($areaSqKm, 2),
+                'population' => $userPop,
+                'density_per_sq_km' => $popPerSqKm,
+                'tier' => $tier,
+                'tier_label' => PlacesBenchmarkService::tierLabel($tier),
+            ],
+            'references' => $referenceResults,
+            'reference_radius_meters' => $refRadiusM,
+            'summary' => $summary,
+            '_meta' => [
+                'upstream_calls' => $svc->lastCallCount ?? 0,
+                'estimated_cost_usd' => \App\Services\GooglePricing::costFor(
+                    'places_nearby',
+                    max(1, $svc->lastCallCount ?? 1)
                 ),
             ],
         ]);

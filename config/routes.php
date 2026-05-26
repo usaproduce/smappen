@@ -145,6 +145,7 @@ return function (Router $r) {
     // Places
     $r->post('/api/places/nearby', [PlacesController::class, 'nearby'], $rlPlaces);
     $r->post('/api/places/search', [PlacesController::class, 'search'], $rlPlaces);
+    $r->post('/api/places/benchmark', [PlacesController::class, 'benchmark'], $rlPlaces);
     $r->get('/api/places/{placeId}', [PlacesController::class, 'show'], $auth);
 
     // Import / Export

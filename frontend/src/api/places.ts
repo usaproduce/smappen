@@ -32,4 +32,41 @@ export const placesApi = {
     const { data } = await api.get(`/api/places/${placeId}`);
     return data.data as Place;
   },
+  async benchmark(payload: {
+    area_id: string;
+    user_count: number;
+    type?: string;
+    keyword?: string;
+  }) {
+    const { data } = await api.post('/api/places/benchmark', payload);
+    return data.data as PlacesBenchmark;
+  },
 };
+
+export interface PlacesBenchmarkReference {
+  name: string;
+  count: number;
+}
+
+export interface PlacesBenchmark {
+  user_area: {
+    name: string;
+    count: number;
+    area_sq_km: number;
+    population: number | null;
+    density_per_sq_km: number | null;
+    tier: 'urban' | 'suburban' | 'exurban';
+    tier_label: string;
+  };
+  references: PlacesBenchmarkReference[];
+  reference_radius_meters: number;
+  summary: {
+    min: number | null;
+    max: number | null;
+    median: number | null;
+    p25: number | null;
+    p75: number | null;
+    user_percentile: number | null;
+    insight: string;
+  };
+}

@@ -4,7 +4,8 @@ import {
   Building, Search as SearchIcon, Utensils, Coffee, ShoppingBag, Pill,
   Dumbbell, GraduationCap, Stethoscope, Landmark, Fuel, Sparkles,
 } from 'lucide-react';
-import { placesApi } from '../../api/places';
+import { placesApi, type PlacesBenchmark } from '../../api/places';
+import { BarChart3, Loader2 } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 import EmptyState from '../common/EmptyState';
 import type { Area, Place } from '../../types';
@@ -40,6 +41,8 @@ export default function POISearchPanel({ area }: { area: Area }) {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<Place[]>([]);
   const [meta, setMeta] = useState<SearchMeta | null>(null);
+  const [benchmark, setBenchmark] = useState<PlacesBenchmark | null>(null);
+  const [benchmarking, setBenchmarking] = useState(false);
   const { setPoiResults } = useMapStore();
 
   async function search() {
@@ -63,6 +66,8 @@ export default function POISearchPanel({ area }: { area: Area }) {
         density_per_1k_people: r.density_per_1k_people,
         density_label: r.density_label,
       });
+      // A new search invalidates any prior benchmark (different params).
+      setBenchmark(null);
       setPoiResults(r.places);
       toast.success(`${r.count} results`);
     } catch (e: any) {
@@ -92,6 +97,22 @@ export default function POISearchPanel({ area }: { area: Area }) {
         toast.error(err);
       }
     } finally { setLoading(false); }
+  }
+
+  async function runBenchmark() {
+    if (!results.length) return;
+    setBenchmarking(true);
+    try {
+      const b = await placesApi.benchmark({
+        area_id: area.id,
+        user_count: results.length,
+        type: type || undefined,
+        keyword: keyword || undefined,
+      });
+      setBenchmark(b);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error ?? 'Benchmark failed');
+    } finally { setBenchmarking(false); }
   }
 
   return (
@@ -150,6 +171,24 @@ export default function POISearchPanel({ area }: { area: Area }) {
       {!loading && results.length > 0 && (
         <>
           <ConcentrationHeader count={results.length} meta={meta} />
+          {/* Benchmark CTA — sits between the header and the list so the
+              comparison is offered before the operator dives into individual
+              POIs. Once run, the BenchmarkPanel replaces the button. */}
+          {!benchmark && !benchmarking && (
+            <button
+              type="button"
+              onClick={runBenchmark}
+              className="w-full mt-1 mb-2 flex items-center justify-center gap-1.5 text-xs font-bold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-md px-3 py-2 transition"
+            >
+              <BarChart3 size={13} /> Compare to 10 similar US areas
+            </button>
+          )}
+          {benchmarking && (
+            <div className="w-full mt-1 mb-2 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-3 py-2">
+              <Loader2 size={13} className="animate-spin" /> Running the same search on 10 reference US areas…
+            </div>
+          )}
+          {benchmark && <BenchmarkPanel data={benchmark} onClose={() => setBenchmark(null)} />}
           <div className="space-y-2">
             {results.map((p) => (
               <div key={p.id} className="card">
@@ -174,6 +213,97 @@ export default function POISearchPanel({ area }: { area: Area }) {
  * numbers like "1.4 cafes per km²". The per-capita ratio shows up next
  * to it when the area has census coverage.
  */
+/**
+ * Renders the user's area against the 10 reference cities as a sorted bar
+ * row: each reference + the user (highlighted violet) ordered by count.
+ * The horizontal position of the user bar IS the percentile, no extra
+ * computation needed.
+ */
+function BenchmarkPanel({ data, onClose }: { data: PlacesBenchmark; onClose: () => void }) {
+  // Merge user + references into one sorted list, tag the user row.
+  const rows = [
+    ...data.references.map((r) => ({ name: r.name, count: r.count, isUser: false })),
+    { name: data.user_area.name + ' (you)', count: data.user_area.count, isUser: true },
+  ].sort((a, b) => a.count - b.count);
+  const maxCount = Math.max(1, ...rows.map((r) => r.count));
+  const s = data.summary;
+  const pct = s.user_percentile;
+
+  const pctBadge = (() => {
+    if (pct === null) return { text: '—', bg: 'bg-slate-100 text-slate-700' };
+    if (pct >= 90) return { text: `${pct}th pct · top decile`,  bg: 'bg-emerald-50 text-emerald-800' };
+    if (pct >= 70) return { text: `${pct}th pct · above avg`,   bg: 'bg-violet-50 text-violet-800' };
+    if (pct >= 40) return { text: `${pct}th pct · about avg`,   bg: 'bg-sky-50 text-sky-800' };
+    if (pct >= 20) return { text: `${pct}th pct · below avg`,   bg: 'bg-amber-50 text-amber-800' };
+    return { text: `${pct}th pct · bottom decile`, bg: 'bg-rose-50 text-rose-800' };
+  })();
+
+  return (
+    <div className="my-2 bg-white border border-violet-200 rounded-lg p-3 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-violet-700">
+          <BarChart3 size={12} /> Vs comparable US areas
+        </div>
+        <button onClick={onClose} className="text-[10px] text-slate-400 hover:text-slate-700 font-semibold">Close</button>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={`text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${pctBadge.bg}`}>
+          {pctBadge.text}
+        </span>
+        <span className="text-[11px] text-slate-700 font-semibold">
+          vs <span className="text-slate-900">{data.user_area.tier_label}</span>
+        </span>
+      </div>
+
+      <div className="text-[13px] text-slate-800 leading-snug font-medium">{s.insight}</div>
+
+      <div className="grid grid-cols-3 gap-2 text-center pt-1">
+        <Stat label="Yours" value={data.user_area.count} highlight />
+        <Stat label="Median (10)" value={s.median ?? '—'} />
+        <Stat label={`Range`} value={s.min !== null && s.max !== null ? `${s.min}–${s.max}` : '—'} />
+      </div>
+
+      {/* Sorted bar list — user row gets the violet highlight + bold label
+          so the reader can find themselves immediately. */}
+      <div className="space-y-0.5 pt-1">
+        {rows.map((r, i) => {
+          const w = Math.round((r.count / maxCount) * 100);
+          return (
+            <div key={`${r.name}-${i}`} className="flex items-center gap-2 text-[11px] tabular-nums">
+              <span className={`flex-1 min-w-0 truncate ${r.isUser ? 'font-extrabold text-violet-800' : 'font-semibold text-slate-700'}`}>
+                {r.name}
+              </span>
+              <div className="w-28 h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full ${r.isUser ? 'bg-violet-600' : 'bg-slate-400'}`}
+                  style={{ width: `${Math.max(2, w)}%` }}
+                />
+              </div>
+              <span className={`w-7 text-right ${r.isUser ? 'font-extrabold text-violet-800' : 'font-semibold text-slate-700'}`}>
+                {r.count}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="text-[10px] text-slate-500 font-medium pt-1 border-t border-slate-100">
+        Same search run on equal-sized {Math.round(data.reference_radius_meters / 100) / 10} km-radius circles around 10 reference US metros.
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, highlight }: { label: string; value: number | string; highlight?: boolean }) {
+  return (
+    <div className={`px-2 py-1.5 rounded-md border ${highlight ? 'border-violet-300 bg-violet-50' : 'border-slate-200 bg-slate-50'}`}>
+      <div className={`text-[9px] font-extrabold uppercase tracking-wider ${highlight ? 'text-violet-700' : 'text-slate-600'}`}>{label}</div>
+      <div className={`text-base font-extrabold tabular-nums leading-none mt-0.5 ${highlight ? 'text-violet-800' : 'text-slate-800'}`}>{value}</div>
+    </div>
+  );
+}
+
 function ConcentrationHeader({ count, meta }: { count: number; meta: SearchMeta | null }) {
   const labelColor: Record<DensityLabel, string> = {
     'Sparse':     'bg-slate-100 text-slate-700',
