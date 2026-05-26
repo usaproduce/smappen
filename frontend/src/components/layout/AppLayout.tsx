@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import Header from './Header';
+import AppNav from './AppNav';
 import LeftPanel from './LeftPanel';
 import RightPanel from './RightPanel';
 import RightToolbar from './RightToolbar';
@@ -101,6 +102,7 @@ export default function AppLayout() {
 
   return (
     <div className="flex flex-col h-screen">
+      <AppNav />
       <Header />
       {/* Map fills the row; sidebars and toolbar float over it as cards. */}
       <div className="relative flex-1 min-h-0 bg-slate-50">

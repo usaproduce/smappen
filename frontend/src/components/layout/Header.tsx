@@ -178,25 +178,11 @@ export default function Header() {
   }
 
   return (
-    <header className="bg-white border-b border-slate-200 h-14 flex items-center justify-between px-4 sticky top-0 z-30">
+    <header className="bg-white border-b border-slate-200 h-12 flex items-center justify-between px-4 sticky z-30" style={{ top: 49 /* sits below AppNav (49px tall) */ }}>
       <div className="flex items-center gap-3">
-        <Link
-          to="/"
-          className="flex items-center gap-2 font-extrabold text-[17px] tracking-tight pr-2"
-          style={{ color: '#1A1A2E' }}
-        >
-          {/* Brand mark — gradient sweep + shimmer on hover. Tile rotates
-              -3deg and a diagonal highlight slides across (~600ms) for a
-              subtle "alive" cue without distracting from real work. */}
-          <span
-            className="brand-logo-tile inline-flex items-center justify-center w-9 h-9 rounded-lg text-white font-extrabold text-lg shadow-sm"
-          >
-            S
-          </span>
-          smappen
-        </Link>
-
-        <div className="h-7 w-px bg-slate-200 mx-1" />
+        {/* Brand mark moved to AppNav (rendered by AppLayout above this
+            header) — the previous duplicate brand on every /app page was
+            redundant once cross-product navigation landed. */}
 
         {/* Editable project name / breadcrumb */}
         <div ref={projectDropdownRef} className="relative flex items-center gap-1">
