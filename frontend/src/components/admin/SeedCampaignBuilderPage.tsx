@@ -312,6 +312,7 @@ function CostPreview({ estimate, budgetCap, loading, error, valid }: { estimate?
 
   const overCap = budgetCap !== null && estimate.total.expected > budgetCap;
   const e = estimate;
+  const freeTierCovered = e.total.expected === 0 && (e.sweep.calls.expected + e.enrich.calls.expected) > 0;
 
   return (
     <Card title={
@@ -322,12 +323,17 @@ function CostPreview({ estimate, budgetCap, loading, error, valid }: { estimate?
     }>
       <div className="text-center py-2">
         <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Expected</div>
-        <div className={`text-4xl font-extrabold mt-1 ${overCap ? 'text-red-600' : 'text-slate-900'}`}>
+        <div className={`text-4xl font-extrabold mt-1 ${overCap ? 'text-red-600' : freeTierCovered ? 'text-emerald-600' : 'text-slate-900'}`}>
           ${e.total.expected.toFixed(2)}
         </div>
         <div className="text-xs text-slate-500 mt-1">
           low&nbsp;${e.total.low.toFixed(2)} · high&nbsp;${e.total.high.toFixed(2)}
         </div>
+        {freeTierCovered && (
+          <div className="mt-2 inline-block text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+            Free tier covers it
+          </div>
+        )}
       </div>
 
       {overCap && (
