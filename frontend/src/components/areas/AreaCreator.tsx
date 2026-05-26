@@ -378,9 +378,11 @@ export default function AreaCreator({ onClose, editing }: Props) {
   return (
     <aside
       ref={panelRef}
-      // top-6 leaves a real 24px gap below the AppNav so the panel no
-      // longer reads as visually fused to the navbar — top-4 was too tight.
-      className="absolute top-6 max-h-[calc(100%-3rem)] w-[380px] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20 panel-slide-in-l"
+      // top-10 (40px) is the real fix here — at top-6 the white panel
+      // header was butted up against the white AppNav with only the navbar
+      // shadow between them, which read as "the card is cut off". 4rem of
+      // bottom margin so the action bar never hugs the viewport edge either.
+      className="absolute top-10 max-h-[calc(100%-4rem)] w-[380px] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20 panel-slide-in-l"
       style={{ left: 'calc(360px + 1rem + 8px)' }}
       onClick={(e) => e.stopPropagation()}
     >
@@ -393,9 +395,12 @@ export default function AreaCreator({ onClose, editing }: Props) {
         .panel-slide-in-l { animation: panelSlideInL 320ms cubic-bezier(0.16, 1, 0.3, 1); }
       `}</style>
 
-      <header className="px-4 py-3 flex items-center justify-between shrink-0 border-b border-slate-100 bg-white">
-        <div className="flex items-center gap-2 font-extrabold text-sm" style={{ color: '#1A1A2E' }}>
-          {editing ? <Pencil size={14} style={{ color: '#7848BB' }} /> : <Sparkles size={14} style={{ color: '#7848BB' }} />}
+      {/* 2px violet accent strip at the very top so the panel never visually
+          fuses with the white AppNav above it. */}
+      <div className="h-[3px] shrink-0" style={{ background: '#7848BB' }} aria-hidden="true" />
+      <header className="px-4 py-3.5 flex items-center justify-between shrink-0 border-b border-slate-100 bg-white">
+        <div className="flex items-center gap-2 font-extrabold text-base" style={{ color: '#1A1A2E' }}>
+          {editing ? <Pencil size={16} style={{ color: '#7848BB' }} /> : <Sparkles size={16} style={{ color: '#7848BB' }} />}
           {editing ? 'Edit area' : 'Create area'}
         </div>
         <button
