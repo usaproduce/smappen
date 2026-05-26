@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   X, MapPin, Users, Clock, Circle, PenSquare, FileText,
-  Search, Folder as FolderIcon, ChevronDown, Sparkles, Loader2, Pencil,
+  Folder as FolderIcon, ChevronDown, Sparkles, Loader2, Pencil,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { isochroneApi } from '../../api/isochrone';
@@ -11,7 +11,7 @@ import { reachApi } from '../../api/reach';
 import { useProjectStore } from '../../stores/projectStore';
 import { useMapStore } from '../../stores/mapStore';
 import { useUiPrefsStore } from '../../stores/uiPrefsStore';
-import { AREA_PALETTE_NAMED, contrastInk } from '../../utils/colors';
+import { AREA_PALETTE_NAMED } from '../../utils/colors';
 import { formatNumber } from '../../utils/format';
 import type { Area } from '../../types';
 
@@ -230,41 +230,59 @@ export default function AreaCreator({ onClose, editing }: Props) {
     };
   }
 
-  async function calculate() {
+  /** Builds the geometry for the current mode/inputs. Returns the
+   *  pending-shape object on success (also stashed in `pending` state so
+   *  the map preview renders), or null on failure / no center. Called
+   *  inside save() — no separate Calculate button anymore. */
+  async function calculate(): Promise<any | null> {
     setPending(null);
     const c = await resolveCenter();
-    if (!c) { toast.error('Enter an address or pick a point first'); return; }
+    if (!c) { toast.error('Enter an address or pick a point first'); return null; }
     setCalculating(true);
+    let result: any | null = null;
     try {
       if (mode === 'travel') {
         const r = await isochroneApi.calculate({ lat: c.lat, lng: c.lng, time_minutes: time, travel_mode: travelMode });
-        setPending({ type: 'isochrone', geojson: r.geojson, area_sq_km: r.area_sq_km });
+        result = { type: 'isochrone', geojson: r.geojson, area_sq_km: r.area_sq_km };
+        setPending(result);
         fitBoundsToArea(r.geojson);
-        toast.success(`~${r.area_sq_km.toFixed(1)} km² ready — Save to keep`);
       } else if (mode === 'reach') {
         const r = await reachApi.calculate(c.lat, c.lng, targetPop);
-        setPending({
+        result = {
           type: 'radius', geojson: r.geometry,
           area_sq_km: r.area_sq_km, radius_km: r.radius_km, radius_mi: r.radius_mi,
           center: r.center,
-        });
+        };
+        setPending(result);
         fitBoundsToArea(r.geometry);
-        toast.success(`${r.radius_km} km · ${formatNumber(r.population)} people — Save to keep`);
       } else if (mode === 'radius') {
         const km = units === 'mi' ? radiusKm / 0.6213712 : radiusKm;
         const r = clientCircle(c.lat, c.lng, km);
-        setPending({ type: 'radius', geojson: r.geometry, area_sq_km: r.area_sq_km, radius_km: r.radius_km, radius_mi: r.radius_mi });
+        result = { type: 'radius', geojson: r.geometry, area_sq_km: r.area_sq_km, radius_km: r.radius_km, radius_mi: r.radius_mi };
+        setPending(result);
         fitBoundsToArea(r.geometry);
       }
     } catch (e: any) {
       toast.error(e?.response?.data?.error ?? 'Calculation failed');
+      return null;
     } finally { setCalculating(false); }
+    return result;
   }
 
   async function save() {
+    // One-button flow: if we don't already have geometry (create) or the
+    // user changed something that affects shape (edit + dirtyGeo), compute
+    // it inline before persisting. Saves the operator the explicit
+    // "Calculate, then Save" two-step.
+    let geom = pending;
+    if (!geom && (!editing || dirtyGeo)) {
+      geom = await calculate();
+      if (!geom) return; // toast already shown by calculate()
+    }
+
     // Edit path — PATCH the existing area. Meta (color/opacity/name/notes/
-    // folder) always goes; geometry + travel fields only when the user
-    // actually recomputed (pending set).
+    // folder) always goes; geometry + travel fields only when we re-ran
+    // calculate above (i.e. dirtyGeo).
     if (editing) {
       setSaving(true);
       try {
@@ -276,28 +294,26 @@ export default function AreaCreator({ onClose, editing }: Props) {
           notes: notes.trim() || null,
           folder_id: folderId,
         };
-        if (pending && lat != null && lng != null) {
-          patch.geometry = pending.geojson;
+        if (geom && lat != null && lng != null) {
+          patch.geometry = geom.geojson;
           patch.center_lat = lat;
           patch.center_lng = lng;
           patch.center_address = address || null;
-          if (pending.type === 'isochrone') {
+          if (geom.type === 'isochrone') {
             patch.travel_mode = travelMode;
             patch.travel_time_minutes = time;
             patch.travel_distance_km = null;
           } else {
             patch.travel_mode = null;
             patch.travel_time_minutes = null;
-            patch.travel_distance_km = pending.radius_km ?? null;
+            patch.travel_distance_km = geom.radius_km ?? null;
           }
         }
         const a = await areasApi.update(editing.id, patch);
-        // Re-apply geometry locally so the map updates without a refetch —
-        // server returns the updated row but the store wants geometry
-        // alongside it, and `a` may not include it depending on the endpoint.
-        updateArea({ ...editing, ...a, geometry: pending?.geojson ?? editing.geometry } as Area);
+        // Re-apply geometry locally so the map updates without a refetch.
+        updateArea({ ...editing, ...a, geometry: geom?.geojson ?? editing.geometry } as Area);
         pushRecentColor(color);
-        if (pending) fitBoundsToArea(pending.geojson);
+        if (geom) fitBoundsToArea(geom.geojson);
         toast.success('Area updated');
         onClose();
       } catch (e: any) {
@@ -306,23 +322,23 @@ export default function AreaCreator({ onClose, editing }: Props) {
       return;
     }
 
-    // Create path — original behavior.
-    if (!pending || !currentProject || lat == null || lng == null) return;
+    // Create path.
+    if (!geom || !currentProject || lat == null || lng == null) return;
     setSaving(true);
     try {
       const a = await areasApi.create(currentProject.id, {
         name: name || 'Untitled area',
-        area_type: pending.type === 'isochrone' ? 'isochrone' : 'radius',
+        area_type: geom.type === 'isochrone' ? 'isochrone' : 'radius',
         center_lat: lat, center_lng: lng, center_address: address,
-        travel_mode: pending.type === 'isochrone' ? travelMode : null,
-        travel_time_minutes: pending.type === 'isochrone' ? time : null,
-        travel_distance_km: pending.type === 'radius' ? pending.radius_km : null,
+        travel_mode: geom.type === 'isochrone' ? travelMode : null,
+        travel_time_minutes: geom.type === 'isochrone' ? time : null,
+        travel_distance_km: geom.type === 'radius' ? geom.radius_km : null,
         fill_color: color, stroke_color: color, fill_opacity: opacity,
-        geometry: pending.geojson,
+        geometry: geom.geojson,
         folder_id: folderId,
         notes: notes || null,
       } as any);
-      addArea({ ...a, geometry: pending.geojson } as Area);
+      addArea({ ...a, geometry: geom.geojson } as Area);
       pushRecentColor(color);
       toast.success('Area saved');
       onClose();
@@ -357,7 +373,7 @@ export default function AreaCreator({ onClose, editing }: Props) {
         <button onClick={onClose} className="text-white/85 hover:text-white"><X size={15} /></button>
       </header>
 
-      <div className="overflow-y-auto flex-1 p-3 space-y-3">
+      <div className="overflow-y-auto flex-1 px-3 py-2.5 space-y-2">
         {/* Mode picker — hidden in edit mode. Converting an isochrone into a
             radius (or vice versa) would orphan the original geometry; the
             cleaner path is delete + recreate. */}
@@ -387,20 +403,18 @@ export default function AreaCreator({ onClose, editing }: Props) {
         </div>
         )}
 
-        {/* Address */}
+        {/* Address — no leading icon so the placeholder + autocomplete text
+            sit flush left. The magnifier was visually crowding the input. */}
         <div>
           <label className="label">Starting point</label>
           <div className="flex gap-1.5">
-            <div className="relative flex-1">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-              <input
-                ref={addressRef}
-                className="input pl-8 h-9 text-sm"
-                placeholder="Address, intersection, or city"
-                value={address}
-                onChange={(e) => { setAddress(e.target.value); setLat(null); setLng(null); setPending(null); }}
-              />
-            </div>
+            <input
+              ref={addressRef}
+              className="input flex-1 h-9 text-sm px-3"
+              placeholder="Address, intersection, or city"
+              value={address}
+              onChange={(e) => { setAddress(e.target.value); setLat(null); setLng(null); setPending(null); }}
+            />
             <button
               type="button"
               className="btn btn-secondary px-2.5 h-9"
@@ -438,7 +452,20 @@ export default function AreaCreator({ onClose, editing }: Props) {
             <div>
               <label className="label flex items-center justify-between">
                 <span>Travel time</span>
-                <span className="text-violet-700 font-extrabold text-base tabular-nums">{time} min</span>
+                <span className="flex items-baseline gap-1">
+                  <input
+                    type="number" min={1} max={60} step={1}
+                    value={time}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      if (Number.isNaN(n)) return;
+                      setTime(Math.max(1, Math.min(60, n)));
+                      setPending(null);
+                    }}
+                    className="w-12 text-right text-violet-700 font-extrabold text-base tabular-nums bg-white border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
+                  />
+                  <span className="text-violet-700 font-bold text-[11px]">min</span>
+                </span>
               </label>
               <input type="range" min={1} max={60} value={time} onChange={(e) => { setTime(+e.target.value); setPending(null); }} className="w-full accent-violet-600" />
               <div className="flex gap-1 mt-1 flex-wrap">
@@ -488,7 +515,17 @@ export default function AreaCreator({ onClose, editing }: Props) {
             <label className="label flex items-center justify-between">
               <span>Radius</span>
               <span className="flex items-center gap-2">
-                <span className="text-violet-700 font-extrabold text-base tabular-nums">{radiusKm} {units}</span>
+                <input
+                  type="number" min={0.1} step={0.1}
+                  value={radiusKm}
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value);
+                    if (Number.isNaN(n) || n <= 0) return;
+                    setRadiusKm(n);
+                    setPending(null);
+                  }}
+                  className="w-16 text-right text-violet-700 font-extrabold text-base tabular-nums bg-white border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-violet-400"
+                />
                 <div className="bg-slate-100 rounded p-0.5 flex text-[10px] font-bold">
                   {(['km', 'mi'] as const).map((u) => (
                     <button
@@ -521,48 +558,33 @@ export default function AreaCreator({ onClose, editing }: Props) {
           </div>
         )}
 
-        {/* Color palette */}
+        {/* Color — compact 12-col strip (2 rows for the 24-color brand
+            palette + any recent picks the user hasn't seen in it yet).
+            The separate Recent block was the single biggest source of
+            vertical weight in the old layout. */}
         <div>
-          <label className="label">Color</label>
-          {recentColors.length > 0 && (
-            <div className="mb-1.5">
-              <div className="text-[9px] uppercase font-bold tracking-wider text-slate-400 mb-1">Recent</div>
-              <div className="flex gap-1.5 flex-wrap">
-                {recentColors.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    className={`w-5 h-5 rounded-full transition-transform border border-black/10 ${
-                      color === c ? 'ring-2 ring-offset-1 ring-slate-700 scale-110' : 'hover:scale-110'
-                    }`}
-                    style={{ background: c }}
-                    onClick={() => setColor(c)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="grid grid-cols-6 gap-1">
-            {AREA_PALETTE_NAMED.map((c) => {
-              const Active = color === c.hex;
+          <label className="label flex items-center justify-between">
+            <span>Color</span>
+            <span
+              className="inline-block w-4 h-4 rounded-full border border-black/10"
+              style={{ background: color }}
+            />
+          </label>
+          <div className="grid grid-cols-12 gap-1">
+            {dedupeColors([...recentColors, ...AREA_PALETTE_NAMED.map((c) => c.hex)]).map((hex) => {
+              const Active = color.toLowerCase() === hex.toLowerCase();
+              const name = AREA_PALETTE_NAMED.find((c) => c.hex.toLowerCase() === hex.toLowerCase())?.name ?? hex;
               return (
                 <button
-                  key={c.hex}
+                  key={hex}
                   type="button"
-                  title={c.name}
-                  className={`relative aspect-square rounded-md transition-transform border border-black/10 ${
-                    Active ? 'ring-2 ring-offset-1 ring-slate-700 scale-105' : 'hover:scale-105'
+                  title={name}
+                  className={`h-5 rounded border border-black/10 transition-transform ${
+                    Active ? 'ring-2 ring-slate-700 ring-offset-1' : 'hover:scale-110'
                   }`}
-                  style={{ background: c.hex }}
-                  onClick={() => setColor(c.hex)}
-                >
-                  {Active && (
-                    <span
-                      className="absolute inset-0 flex items-center justify-center text-[9px] font-extrabold"
-                      style={{ color: contrastInk(c.hex) }}
-                    >✓</span>
-                  )}
-                </button>
+                  style={{ background: hex }}
+                  onClick={() => setColor(hex)}
+                />
               );
             })}
           </div>
@@ -618,54 +640,34 @@ export default function AreaCreator({ onClose, editing }: Props) {
         </div>
       </div>
 
-      {/* Action bar — Calculate / Save / Cancel (creator) or
-                       Recalculate / Update (editor). */}
-      <div className="px-3 py-2.5 border-t border-slate-100 flex gap-2 shrink-0">
-        {editing ? (
-          <>
-            {dirtyGeo && !pending && (
-              <button
-                className="btn btn-secondary h-9 px-3"
-                onClick={calculate}
-                disabled={calculating || (!address && (lat == null || lng == null))}
-                title="Recalculate the polygon for the new drive time / radius"
-              >
-                {calculating ? <><Loader2 size={13} className="animate-spin" /> Recalc…</> : 'Recalculate'}
-              </button>
-            )}
-            {pending && (
-              <button className="btn btn-secondary h-9 px-3" onClick={() => setPending(null)} title="Discard the new shape and keep the saved one">
-                Reset shape
-              </button>
-            )}
-            <button
-              className="btn btn-primary flex-1 justify-center h-9"
-              disabled={saving || (dirtyGeo && !pending)}
-              onClick={save}
-              title={dirtyGeo && !pending ? 'Click Recalculate first to update the polygon' : undefined}
-            >
-              {saving ? <><Loader2 size={13} className="animate-spin" /> Saving…</> : 'Update area'}
-            </button>
-          </>
-        ) : !pending ? (
-          <button
-            className="btn btn-primary flex-1 justify-center h-9"
-            onClick={calculate}
-            disabled={calculating || (!address && (lat == null || lng == null))}
-          >
-            {calculating ? <><Loader2 size={13} className="animate-spin" /> Calculating…</> : 'Calculate'}
-          </button>
-        ) : (
-          <>
-            <button className="btn btn-secondary h-9 px-3" onClick={() => setPending(null)}>Recalc</button>
-            <button className="btn btn-primary flex-1 justify-center h-9" disabled={saving} onClick={save}>
-              {saving ? <><Loader2 size={13} className="animate-spin" /> Saving…</> : 'Save area'}
-            </button>
-          </>
-        )}
+      {/* Single-button action bar. Save auto-calculates the polygon (or
+          recalculates it if the user changed time/mode/radius) before
+          persisting — no separate Calculate step. */}
+      <div className="px-3 py-2 border-t border-slate-100 shrink-0">
+        <button
+          className="btn btn-primary w-full justify-center h-9"
+          onClick={save}
+          disabled={saving || calculating || (!address && (lat == null || lng == null))}
+        >
+          {calculating ? <><Loader2 size={13} className="animate-spin" /> Calculating…</>
+            : saving   ? <><Loader2 size={13} className="animate-spin" /> Saving…</>
+            : editing  ? 'Update area' : 'Save area'}
+        </button>
       </div>
     </aside>
   );
+}
+
+function dedupeColors(hexes: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const h of hexes) {
+    const k = h.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(h);
+  }
+  return out;
 }
 
 function flattenFolders(folders: any[], depth = 0): { id: string; name: string; indent: string }[] {
