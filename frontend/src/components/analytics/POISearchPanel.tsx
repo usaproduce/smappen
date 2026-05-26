@@ -24,23 +24,45 @@ const CATEGORIES: { key: string; label: string; icon: any }[] = [
   { key: 'gas_station',  label: 'Gas',         icon: Fuel },
 ];
 
+type DensityLabel = 'Sparse' | 'Moderate' | 'Dense' | 'Very dense';
+interface SearchMeta {
+  count: number;
+  area_sq_km?: number | null;
+  area_population?: number | null;
+  density_per_sq_km?: number | null;
+  density_per_1k_people?: number | null;
+  density_label?: DensityLabel | null;
+}
+
 export default function POISearchPanel({ area }: { area: Area }) {
   const [type, setType] = useState('');
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<Place[]>([]);
+  const [meta, setMeta] = useState<SearchMeta | null>(null);
   const { setPoiResults } = useMapStore();
 
   async function search() {
     if (!area.center_lat || !area.center_lng) return toast.error('Area has no center');
     setLoading(true);
     try {
+      // No `radius_meters` here — the backend derives one from the area's
+      // bounding box, so a 200 km² isochrone gets an 8 km search circle
+      // instead of the old hardcoded 5 km that missed everything on the rim.
       const r = await placesApi.nearby({
         lat: area.center_lat, lng: area.center_lng,
-        radius_meters: 5000, type: type || undefined, keyword: keyword || undefined,
+        type: type || undefined, keyword: keyword || undefined,
         area_id: area.id,
       });
       setResults(r.places);
+      setMeta({
+        count: r.count,
+        area_sq_km: r.area_sq_km,
+        area_population: r.area_population,
+        density_per_sq_km: r.density_per_sq_km,
+        density_per_1k_people: r.density_per_1k_people,
+        density_label: r.density_label,
+      });
       setPoiResults(r.places);
       toast.success(`${r.count} results`);
     } catch (e: any) {
@@ -127,7 +149,7 @@ export default function POISearchPanel({ area }: { area: Area }) {
       )}
       {!loading && results.length > 0 && (
         <>
-          <div className="text-xs font-semibold text-slate-500 uppercase">{results.length} found</div>
+          <ConcentrationHeader count={results.length} meta={meta} />
           <div className="space-y-2">
             {results.map((p) => (
               <div key={p.id} className="card">
@@ -140,6 +162,56 @@ export default function POISearchPanel({ area }: { area: Area }) {
             ))}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Concentration summary at the top of the results list. Backend computes
+ * density per km² + per 1k people; the badge gives a one-glance label
+ * (Sparse → Very dense) so the operator doesn't have to reason about raw
+ * numbers like "1.4 cafes per km²". The per-capita ratio shows up next
+ * to it when the area has census coverage.
+ */
+function ConcentrationHeader({ count, meta }: { count: number; meta: SearchMeta | null }) {
+  const labelColor: Record<DensityLabel, string> = {
+    'Sparse':     'bg-slate-100 text-slate-700',
+    'Moderate':   'bg-sky-50 text-sky-800',
+    'Dense':      'bg-violet-50 text-violet-800',
+    'Very dense': 'bg-emerald-50 text-emerald-800',
+  };
+  return (
+    <div className="border-b border-slate-100 pb-2 mb-1">
+      <div className="flex items-baseline gap-2">
+        <span className="text-2xl font-extrabold tabular-nums" style={{ color: '#1A1A2E' }}>{count}</span>
+        <span className="text-xs font-bold uppercase tracking-wider text-slate-700">found</span>
+        {meta?.density_label && (
+          <span className={`ml-auto text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${labelColor[meta.density_label]}`}>
+            {meta.density_label}
+          </span>
+        )}
+      </div>
+      {meta && (meta.density_per_sq_km !== null || meta.density_per_1k_people !== null) && (
+        <div className="text-[11px] text-slate-700 font-semibold mt-1 flex flex-wrap gap-x-3 gap-y-0.5 tabular-nums">
+          {meta.density_per_sq_km !== null && meta.density_per_sq_km !== undefined && (
+            <span>
+              {meta.density_per_sq_km.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              <span className="text-slate-500 font-medium"> per km²</span>
+            </span>
+          )}
+          {meta.density_per_1k_people !== null && meta.density_per_1k_people !== undefined && (
+            <span>
+              {meta.density_per_1k_people.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              <span className="text-slate-500 font-medium"> per 1K people</span>
+            </span>
+          )}
+          {meta.area_sq_km !== null && meta.area_sq_km !== undefined && (
+            <span className="text-slate-500 font-medium">
+              {meta.area_sq_km.toLocaleString(undefined, { maximumFractionDigits: 1 })} km² area
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

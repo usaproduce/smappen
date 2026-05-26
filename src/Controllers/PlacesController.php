@@ -22,6 +22,48 @@ class PlacesController
         $keyword = $body['keyword'] ?? null;
         $areaId = $body['area_id'] ?? null;
 
+        // Size the search to the area's actual extent instead of the 5km
+        // default. A 30-km² isochrone fits in a ~3km radius circle; a
+        // 200-km² one needs ~8km. Without this the old code missed
+        // businesses on the rim of large areas and over-fetched on small.
+        // Also pull population from the demographics cache so we can
+        // compute per-capita concentration later.
+        $areaGeometry = null;
+        $areaSqKm = null;
+        $areaPop = null;
+        if ($areaId) {
+            $area = Area::findById($areaId);
+            // Ownership check first — moved up so we don't read another
+            // org's geometry into our request before failing.
+            if ($area) {
+                $proj = Project::findById($area['project_id']);
+                if (!$proj || $proj['organization_id'] !== $request->user['organization_id']) {
+                    Response::error('Access denied', 403);
+                }
+            }
+            if ($area && !empty($area['geometry'])) {
+                $geom = is_string($area['geometry']) ? json_decode($area['geometry'], true) : $area['geometry'];
+                if (is_array($geom) && isset($geom['type'])) {
+                    $areaGeometry = $geom;
+                    $areaSqKm = GeoUtils::calculateArea($geom);
+                    [$minLng, $minLat, $maxLng, $maxLat] = GeoUtils::getBoundingBox($geom);
+                    $lat = ($minLat + $maxLat) / 2;
+                    $lng = ($minLng + $maxLng) / 2;
+                    // Half-diagonal of the bbox, in meters, gives a circle
+                    // that fully contains the area. cos(lat) shrinks the lng
+                    // axis at higher latitudes.
+                    $halfLatM = (($maxLat - $minLat) / 2) * 111320.0;
+                    $halfLngM = (($maxLng - $minLng) / 2) * 111320.0 * cos(deg2rad($lat));
+                    $diag = sqrt($halfLatM * $halfLatM + $halfLngM * $halfLngM);
+                    $radius = min(50000, max(1000, (int) ceil($diag)));
+                }
+                if (!empty($area['demographics_cache'])) {
+                    $cache = json_decode($area['demographics_cache'], true);
+                    if (is_array($cache)) $areaPop = $cache['population']['total'] ?? null;
+                }
+            }
+        }
+
         // Places API (New) searchNearby ONLY accepts the Table A type
         // strings (https://developers.google.com/maps/documentation/places/web-service/place-types)
         // and REQUIRES includedTypes to be non-empty. The frontend chip
@@ -77,42 +119,60 @@ class PlacesController
             self::handleGoogleError($e, 'places');
         }
 
-        if ($areaId) {
-            $area = Area::findById($areaId);
-            // Verify ownership so a caller can't poison another org's POI cache.
-            if ($area) {
-                $proj = Project::findById($area['project_id']);
-                if (!$proj || $proj['organization_id'] !== $request->user['organization_id']) {
-                    Response::error('Access denied', 403);
-                }
-            }
-            if ($area && !empty($area['geometry'])) {
-                $polygon = $area['geometry'];
-                $places = array_values(array_filter($places, function ($p) use ($polygon) {
-                    $loc = $p['location'] ?? null;
-                    if (!$loc) return false;
-                    return GeoUtils::pointInPolygon(
-                        (float)($loc['latitude'] ?? 0),
-                        (float)($loc['longitude'] ?? 0),
-                        $polygon
-                    );
-                }));
-                // Key matches what forArea/Reports/Exports read.
-                POICache::store(md5('area:' . $areaId), $areaId, $places);
-            }
+        if ($areaGeometry) {
+            $places = array_values(array_filter($places, function ($p) use ($areaGeometry) {
+                $loc = $p['location'] ?? null;
+                if (!$loc) return false;
+                return GeoUtils::pointInPolygon(
+                    (float)($loc['latitude'] ?? 0),
+                    (float)($loc['longitude'] ?? 0),
+                    $areaGeometry
+                );
+            }));
+            POICache::store(md5('area:' . $areaId), $areaId, $places);
         }
+
+        $count = count($places);
+        // Concentration metrics — primarily so the operator can read at a
+        // glance whether "16 cafes" is dense or sparse for the area's size.
+        $densityPerSqKm = ($areaSqKm && $areaSqKm > 0) ? round($count / $areaSqKm, 2) : null;
+        $densityPer1k   = ($areaPop && $areaPop > 0)   ? round($count / ($areaPop / 1000), 2) : null;
+        $densityLabel   = self::densityLabel($densityPerSqKm);
+
         Response::success([
             'places' => $places,
-            'count' => count($places),
+            'count' => $count,
+            'area_sq_km' => $areaSqKm === null ? null : round($areaSqKm, 2),
+            'area_population' => $areaPop,
+            'density_per_sq_km' => $densityPerSqKm,
+            'density_per_1k_people' => $densityPer1k,
+            'density_label' => $densityLabel,
             '_meta' => [
                 'api_name' => $validType ? 'places_nearby' : 'places_text',
                 'upstream_calls' => $svc->lastCallCount,
+                'search_radius_meters' => $radius,
                 'estimated_cost_usd' => \App\Services\GooglePricing::costFor(
                     $validType ? 'places_nearby' : 'places_text',
                     max(1, $svc->lastCallCount)
                 ),
             ],
         ]);
+    }
+
+    /**
+     * Coarse density bucket. Intentionally generic — categorising "5 gyms
+     * per km²" as Dense and "5 schools per km²" as Very Dense would need
+     * per-category baselines we don't have benchmarked yet. The numbers
+     * here roughly mirror US Census Bureau Business Patterns density
+     * tiers for "all retail+services" in metro areas.
+     */
+    private static function densityLabel(?float $perSqKm): ?string
+    {
+        if ($perSqKm === null) return null;
+        if ($perSqKm < 0.5) return 'Sparse';
+        if ($perSqKm < 2)   return 'Moderate';
+        if ($perSqKm < 10)  return 'Dense';
+        return 'Very dense';
     }
 
     public function search(Request $request): void

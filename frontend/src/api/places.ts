@@ -11,7 +11,18 @@ export const placesApi = {
     area_id?: string;
   }) {
     const { data } = await api.post('/api/places/nearby', payload);
-    return data.data as { places: Place[]; count: number };
+    return data.data as {
+      places: Place[];
+      count: number;
+      // Concentration metadata — populated when area_id resolves to an
+      // area with geometry. Lets the panel show "16 cafes · Dense · 1.4
+      // per km²" instead of just a raw count.
+      area_sq_km?: number | null;
+      area_population?: number | null;
+      density_per_sq_km?: number | null;
+      density_per_1k_people?: number | null;
+      density_label?: 'Sparse' | 'Moderate' | 'Dense' | 'Very dense' | null;
+    };
   },
   async search(query: string, lat?: number, lng?: number, radius_meters?: number) {
     const { data } = await api.post('/api/places/search', { query, lat, lng, radius_meters });

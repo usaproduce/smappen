@@ -112,7 +112,9 @@ class GoogleMapsService
      */
     public function searchPlacesNearby(float $lat, float $lng, int $radiusMeters, ?string $type = null, ?string $keyword = null): array
     {
-        $cacheKey = 'places_nearby_v2:' . md5("$lat,$lng,$radiusMeters,$type,$keyword");
+        // Bump the cache namespace to v3 — the tiling strategy changed and
+        // v2 entries would serve under-fetched results otherwise.
+        $cacheKey = 'places_nearby_v3:' . md5("$lat,$lng,$radiusMeters,$type,$keyword");
         $cached = CacheService::getJson($cacheKey);
         if ($cached) {
             $this->lastCallCount = 0; // cache hit — no billable call
@@ -120,30 +122,15 @@ class GoogleMapsService
         }
 
         $this->lastCallCount = 0;
-        // First call — full radius.
-        $places = $this->_searchNearbyCircle($lat, $lng, $radiusMeters, $type);
-        $this->lastCallCount++;
-
-        // Saturation heuristic: a saturated response is exactly maxResultCount.
-        // Only tile when the user gave a radius large enough that splitting
-        // it meaningfully samples different sub-areas (≥ 1km original).
-        if (count($places) >= 20 && $radiusMeters >= 1000) {
-            $byId = [];
-            foreach ($places as $p) {
-                if (!empty($p['id'])) $byId[$p['id']] = $p;
-            }
-            $subR = (int) round($radiusMeters / sqrt(2));
-            $offsetM = $radiusMeters / 2; // distance from center to each quadrant center
-            foreach ([[1, 1], [-1, 1], [1, -1], [-1, -1]] as [$dx, $dy]) {
-                [$qLat, $qLng] = self::offsetMeters($lat, $lng, $dx * $offsetM, $dy * $offsetM);
-                foreach ($this->_searchNearbyCircle($qLat, $qLng, $subR, $type) as $p) {
-                    if (!empty($p['id'])) $byId[$p['id']] = $p;
-                }
-                $this->lastCallCount++;
-                if (count($byId) >= 200) break;
-            }
-            $places = array_values($byId);
-        }
+        $byId = [];
+        // Recursive quadrant tiling: every saturated tile (returns 20 = the
+        // Places-New maxResultCount) is split into 4 sub-circles and re-
+        // searched. Depth 2 = up to 1 + 4 + 16 = 21 calls per query, which
+        // covers everything a 5-10 km dense-urban area can throw at us.
+        // Hard cap at 1000 unique places to keep payloads sane on the rare
+        // "find every cafe in Manhattan" case.
+        $this->searchTile($lat, $lng, $radiusMeters, $type, 0, 2, $byId, 1000);
+        $places = array_values($byId);
 
         // Server-side keyword filter (case-insensitive name substring).
         if ($keyword) {
@@ -164,6 +151,32 @@ class GoogleMapsService
 
         CacheService::set($cacheKey, $places, 172800); // 48h
         return $places;
+    }
+
+    /**
+     * Recursive one-circle search. Accumulates unique results into $byId
+     * (passed by reference) and recurses into 4 quadrants when the parent
+     * tile saturates AND we haven't hit max depth or the cap.
+     */
+    private function searchTile(float $lat, float $lng, int $radiusMeters, ?string $type, int $depth, int $maxDepth, array &$byId, int $cap): void
+    {
+        if (count($byId) >= $cap) return;
+        if ($radiusMeters < 200) return; // smaller than a city block — diminishing returns
+
+        $places = $this->_searchNearbyCircle($lat, $lng, $radiusMeters, $type);
+        $this->lastCallCount++;
+        foreach ($places as $p) {
+            if (!empty($p['id'])) $byId[$p['id']] = $p;
+            if (count($byId) >= $cap) return;
+        }
+        if (count($places) >= 20 && $depth < $maxDepth) {
+            $subR = (int) round($radiusMeters / sqrt(2));
+            $offsetM = $radiusMeters / 2;
+            foreach ([[1, 1], [-1, 1], [1, -1], [-1, -1]] as [$dx, $dy]) {
+                [$qLat, $qLng] = self::offsetMeters($lat, $lng, $dx * $offsetM, $dy * $offsetM);
+                $this->searchTile($qLat, $qLng, $subR, $type, $depth + 1, $maxDepth, $byId, $cap);
+            }
+        }
     }
 
     /** One Places searchNearby request — no tiling. */
