@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 
@@ -11,7 +12,14 @@ import { useAuthStore } from '../../stores/authStore';
  * expected to navigate directly via /admin/carafe.
  */
 export default function AdminOnlyRoute({ children }: { children: React.ReactNode }) {
-  const { token, user } = useAuthStore();
+  const { token, user, loadUser } = useAuthStore();
+
+  // Trigger user fetch when we have a token but no user loaded yet —
+  // matches ProtectedRoute's pattern so deep-linking to /admin/carafe
+  // doesn't sit forever on the loading screen.
+  useEffect(() => {
+    if (token && !user) loadUser();
+  }, [token, user, loadUser]);
 
   if (!token) return <Navigate to="/login" replace />;
   if (!user) {
