@@ -32,6 +32,15 @@ import LaborPage from './components/restaurants/LaborPage';
 import VendorsPage from './components/vendors/VendorsPage';
 import VendorMapPage from './components/vendors/VendorMapPage';
 import SavedVendorsPage from './components/vendors/SavedVendorsPage';
+// Carafe admin (Vendor-Network seeding) — NOT linked from any global nav.
+// Operators reach it by direct URL: /admin/carafe.
+import AdminOnlyRoute            from './components/admin/AdminOnlyRoute';
+import CarafeAdminLayout         from './components/admin/CarafeAdminLayout';
+import CarafeAdminHome           from './components/admin/CarafeAdminHome';
+import SeedCampaignsListPage     from './components/admin/SeedCampaignsListPage';
+import SeedCampaignBuilderPage   from './components/admin/SeedCampaignBuilderPage';
+import SeedCampaignDetailPage    from './components/admin/SeedCampaignDetailPage';
+import ReviewQueuePage           from './components/admin/ReviewQueuePage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useAuthStore } from './stores/authStore';
 import { useTheme } from './hooks/useTheme';
@@ -81,6 +90,14 @@ export default function App() {
         <Route path="/app/vendors/saved"               element={<ProtectedRoute><SavedVendorsPage /></ProtectedRoute>} />
         <Route path="/app/vendors/list"                element={<ProtectedRoute><VendorsPage /></ProtectedRoute>} />
         <Route path="/app/*" element={<ProtectedRoute><AppLayout /></ProtectedRoute>} />
+        {/* Carafe Vendor-Network admin — direct URL only, not on navbar */}
+        <Route path="/admin/carafe" element={<AdminOnlyRoute><CarafeAdminLayout /></AdminOnlyRoute>}>
+          <Route index                                 element={<CarafeAdminHome />} />
+          <Route path="campaigns"                      element={<SeedCampaignsListPage />} />
+          <Route path="campaigns/new"                  element={<SeedCampaignBuilderPage />} />
+          <Route path="campaigns/:id"                  element={<SeedCampaignDetailPage />} />
+          <Route path="review"                         element={<ReviewQueuePage />} />
+        </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </ErrorBoundary>

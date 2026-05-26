@@ -57,6 +57,7 @@ use App\Controllers\VendorClaimController;
 use App\Controllers\VendorMapController;
 use App\Controllers\VendorReviewController;
 use App\Controllers\SavedVendorController;
+use App\Controllers\ReviewQueueController;
 use App\Controllers\SeedCampaignController;
 use App\Controllers\ComparisonController;
 use App\Controllers\ConsolidationController;
@@ -453,4 +454,26 @@ return function (Router $r) {
     // call-time choke point (spec §9 phase 1+2).
     $adminAuth = [Middleware::auth(), Middleware::requireRole(['admin', 'owner'])];
     $r->post('/api/admin/seed-campaigns/estimate',              [SeedCampaignController::class, 'estimate'], $adminAuth);
+    $r->get('/api/admin/seed-campaigns',                        [SeedCampaignController::class, 'index'],    $adminAuth);
+    $r->post('/api/admin/seed-campaigns',                       [SeedCampaignController::class, 'create'],   $adminAuth);
+    $r->get('/api/admin/seed-campaigns/{id}',                   [SeedCampaignController::class, 'show'],     $adminAuth);
+    $r->post('/api/admin/seed-campaigns/{id}/run',              [SeedCampaignController::class, 'run'],      $adminAuth);
+    $r->post('/api/admin/seed-campaigns/{id}/pause',            [SeedCampaignController::class, 'pause'],    $adminAuth);
+    $r->post('/api/admin/seed-campaigns/{id}/resume',           [SeedCampaignController::class, 'resume'],   $adminAuth);
+    $r->post('/api/admin/seed-campaigns/{id}/cancel',           [SeedCampaignController::class, 'cancel'],   $adminAuth);
+    $r->post('/api/admin/seed-campaigns/{id}/enrich',           [SeedCampaignController::class, 'enrich'],   $adminAuth);
+    $r->post('/api/admin/vendors/{id}/enrich',                  [SeedCampaignController::class, 'enrichVendor'], $adminAuth);
+    $r->get('/api/admin/seed-campaigns/{id}/delta',             [SeedCampaignController::class, 'delta'],    $adminAuth);
+    $r->post('/api/admin/seed-campaigns/{id}/resweep',          [SeedCampaignController::class, 'resweep'],  $adminAuth);
+
+    // Review queue (spec v3 §8) — admin surface for ambiguous dedupe matches
+    // and low-confidence classifications. Two action namespaces under one
+    // controller because the underlying tables are different but the
+    // operator UI presents them as one feed.
+    $r->get('/api/admin/review-queue',                                  [ReviewQueueController::class, 'index'],            $adminAuth);
+    $r->post('/api/admin/review-queue/dedupe/{id}/merge',               [ReviewQueueController::class, 'dedupeMerge'],      $adminAuth);
+    $r->post('/api/admin/review-queue/dedupe/{id}/reject',              [ReviewQueueController::class, 'dedupeReject'],     $adminAuth);
+    $r->post('/api/admin/review-queue/dedupe/{id}/defer',               [ReviewQueueController::class, 'dedupeDefer'],      $adminAuth);
+    $r->post('/api/admin/review-queue/classify/{id}/approve',           [ReviewQueueController::class, 'classifyApprove'],  $adminAuth);
+    $r->post('/api/admin/review-queue/classify/{id}/update',            [ReviewQueueController::class, 'classifyUpdate'],   $adminAuth);
 };

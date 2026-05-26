@@ -4,6 +4,9 @@ namespace App\Controllers;
 use App\Core\Database;
 use App\Core\Request;
 use App\Core\Response;
+use App\Services\PlacesEnrichService;
+use App\Services\SeedCampaignService;
+use App\Services\SeedDeltaService;
 use App\Services\SeedEstimatorService;
 
 /**
@@ -88,6 +91,183 @@ class SeedCampaignController
             'estimate'        => $result,
             'monthly_volume'  => $monthlyVolume,
         ]);
+    }
+
+    /** POST /api/admin/seed-campaigns — create a draft + run the estimator. */
+    public function create(Request $request): void
+    {
+        try {
+            $svc      = new SeedCampaignService();
+            $campaign = $svc->create($request->getBody() ?? [], $request->user['id'] ?? null);
+            Response::success(['campaign' => $campaign], null, 201);
+        } catch (\InvalidArgumentException $e) {
+            Response::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            Response::error('Failed to create campaign: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /** POST /api/admin/seed-campaigns/{id}/run — approve + materialize tiles + status=running. */
+    public function run(Request $request): void
+    {
+        $id = $request->getParam('id');
+        if (!$id) { Response::error('id required', 422); return; }
+        try {
+            $svc = new SeedCampaignService();
+            $campaign = $svc->run($id);
+            Response::success(['campaign' => $campaign]);
+        } catch (\DomainException $e) {
+            Response::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** POST /api/admin/seed-campaigns/{id}/pause */
+    public function pause(Request $request): void
+    {
+        $id = $request->getParam('id');
+        if (!$id) { Response::error('id required', 422); return; }
+        $reason = (string) (($request->getBody() ?? [])['reason'] ?? 'paused_by_admin');
+        try {
+            $svc = new SeedCampaignService();
+            $svc->pause($id, $reason);
+            Response::success(['campaign' => $svc->findById($id)]);
+        } catch (\DomainException $e) {
+            Response::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** POST /api/admin/seed-campaigns/{id}/resume */
+    public function resume(Request $request): void
+    {
+        $id = $request->getParam('id');
+        if (!$id) { Response::error('id required', 422); return; }
+        try {
+            $svc = new SeedCampaignService();
+            $svc->resume($id);
+            Response::success(['campaign' => $svc->findById($id)]);
+        } catch (\DomainException $e) {
+            Response::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** POST /api/admin/seed-campaigns/{id}/cancel */
+    public function cancel(Request $request): void
+    {
+        $id = $request->getParam('id');
+        if (!$id) { Response::error('id required', 422); return; }
+        try {
+            $svc = new SeedCampaignService();
+            $svc->cancel($id);
+            Response::success(['campaign' => $svc->findById($id)]);
+        } catch (\Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * POST /api/admin/seed-campaigns/{id}/enrich — apply enrich_policy.
+     * Body (all optional):
+     *   { "batch_size": 100 }
+     *
+     * Returns the tally from PlacesEnrichService::enrichCampaign.
+     * Synchronous for now — wrap in a job (spec §9 step 7 + jobs queue)
+     * for long-running enriches in a later iteration.
+     */
+    public function enrich(Request $request): void
+    {
+        $id = $request->getParam('id');
+        if (!$id) { Response::error('id required', 422); return; }
+        $body = $request->getBody() ?? [];
+        $batchSize = max(1, min(1000, (int) ($body['batch_size'] ?? 100)));
+        try {
+            $svc = new PlacesEnrichService();
+            $tally = $svc->enrichCampaign($id, $batchSize);
+            Response::success(['result' => $tally]);
+        } catch (\Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * POST /api/admin/vendors/{id}/enrich — single-vendor on-demand enrich.
+     * For the spec's on_demand policy: identity is stored at seed time,
+     * full detail is pulled the first time an admin/operator opens the
+     * vendor. Subsequent views within the TTL hit the cache.
+     */
+    public function enrichVendor(Request $request): void
+    {
+        $id = $request->getParam('id');
+        if (!$id) { Response::error('id required', 422); return; }
+        $body = $request->getBody() ?? [];
+        $tier = (string) ($body['tier'] ?? 'full');
+        try {
+            $svc = new PlacesEnrichService();
+            $r = $svc->enrichVendor($id, $tier, null);
+            Response::success(['result' => $r]);
+        } catch (\Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * GET /api/admin/seed-campaigns/{id}/delta — pre-flight summary for a re-sweep.
+     * Returns counts of changed / unchanged / eligible / stuck tiles so the
+     * admin sees what a Resweep button would actually do (§12.3).
+     */
+    public function delta(Request $request): void
+    {
+        $id = $request->getParam('id');
+        if (!$id) { Response::error('id required', 422); return; }
+        $maxAge = max(1, min(365, (int) $request->getQuery('max_age_days', SeedDeltaService::DEFAULT_RESWEEP_AGE_DAYS)));
+        $svc = new SeedDeltaService();
+        Response::success(['delta' => $svc->deltaSummary($id, $maxAge)]);
+    }
+
+    /**
+     * POST /api/admin/seed-campaigns/{id}/resweep — re-queue stale tiles.
+     * Body: { "max_age_days": 30 } (optional, defaults to 30)
+     * Worker honors the existing result_id_hash so unchanged tiles
+     * cost only the Search calls, not the upsert/dedupe/enrich cascade.
+     */
+    public function resweep(Request $request): void
+    {
+        $id = $request->getParam('id');
+        if (!$id) { Response::error('id required', 422); return; }
+        $body = $request->getBody() ?? [];
+        $maxAge = max(1, min(365, (int) ($body['max_age_days'] ?? SeedDeltaService::DEFAULT_RESWEEP_AGE_DAYS)));
+        try {
+            $svc = new SeedDeltaService();
+            $count = $svc->scheduleResweepForCampaign($id, $maxAge);
+            Response::success(['requeued' => $count]);
+        } catch (\Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** GET /api/admin/seed-campaigns/{id} — live status snapshot. */
+    public function show(Request $request): void
+    {
+        $id = $request->getParam('id');
+        if (!$id) { Response::error('id required', 422); return; }
+        $svc = new SeedCampaignService();
+        $c   = $svc->summary($id);
+        if (!$c) { Response::error('not found', 404); return; }
+        Response::success(['campaign' => $c]);
+    }
+
+    /** GET /api/admin/seed-campaigns — list (most recent first). */
+    public function index(Request $request): void
+    {
+        $limit  = max(1, min(200, (int) $request->getQuery('limit',  50)));
+        $offset = max(0,         (int) $request->getQuery('offset', 0));
+        $svc    = new SeedCampaignService();
+        Response::success(['campaigns' => $svc->index($limit, $offset)]);
     }
 
     /**

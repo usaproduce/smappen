@@ -5,8 +5,19 @@ use App\Core\Config;
 
 class IsochroneService
 {
-    private const ENDPOINT = 'https://api.openrouteservice.org/v2/isochrones/';
+    /**
+     * Default endpoint when ORS_BASE_URL is not set. Carafe v3 §4.5
+     * recommends self-hosted ORS at scale ("free public tier dies at
+     * scale") — set ORS_BASE_URL=http://ors-host:8080/v2/isochrones/
+     * to point at the self-hosted instance without touching code.
+     */
+    private const DEFAULT_ENDPOINT = 'https://api.openrouteservice.org/v2/isochrones/';
     private const VALID_MODES = ['driving-car', 'cycling-regular', 'foot-walking', 'wheelchair'];
+
+    private static function endpoint(): string
+    {
+        return (string) (Config::get('ORS_BASE_URL', self::DEFAULT_ENDPOINT));
+    }
 
     public function calculate(float $lat, float $lng, int $timeMinutes, string $travelMode = 'driving-car'): array
     {
@@ -18,12 +29,14 @@ class IsochroneService
         $cached = CacheService::getJson($cacheKey);
         if ($cached) return $cached;
 
-        $apiKey = Config::get('ORS_API_KEY');
-        if (!$apiKey) {
-            throw new \RuntimeException('ORS_API_KEY not configured');
+        $apiKey       = Config::get('ORS_API_KEY');
+        $isSelfHosted = Config::get('ORS_BASE_URL') !== null;
+        // Public ORS requires the key; self-hosted normally runs without auth.
+        if (!$apiKey && !$isSelfHosted) {
+            throw new \RuntimeException('ORS_API_KEY not configured (or set ORS_BASE_URL for self-hosted ORS)');
         }
 
-        $url = self::ENDPOINT . $travelMode;
+        $url = self::endpoint() . $travelMode;
         // smoothing=0 → max detail, polygon hugs the road network.
         // attributes: area + reachfactor for UI display.
         // area_units: km for consistency with our display.
@@ -41,12 +54,12 @@ class IsochroneService
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($payload),
-            CURLOPT_HTTPHEADER => [
-                'Authorization: ' . $apiKey,
+            CURLOPT_HTTPHEADER => array_values(array_filter([
+                $apiKey ? 'Authorization: ' . $apiKey : null,
                 'Content-Type: application/json; charset=utf-8',
                 // ORS only serves application/geo+json — asking for application/json gives 406.
                 'Accept: application/geo+json, application/json',
-            ],
+            ])),
             // smoothing=0 + long travel times can take 30-60s on the public ORS endpoint.
             CURLOPT_TIMEOUT => 90,
             CURLOPT_CONNECTTIMEOUT => 15,
