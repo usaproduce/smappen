@@ -1,22 +1,18 @@
-import { useState } from 'react';
-import { X, Map as MapIcon, Palette as PaletteIcon, Check } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { X, Map as MapIcon, Palette as PaletteIcon, Check, ChevronUp, Settings2 } from 'lucide-react';
 import { useMapStore } from '../../stores/mapStore';
 import type { HeatmapMetric, HeatmapResponse } from '../../api/heatmap';
 import { gradientCss, paletteById, valueToFraction, PALETTES } from '../../utils/heatmapColors';
 
-const METRICS: { value: HeatmapMetric; label: string }[] = [
-  { value: 'population_density', label: 'Population density' },
-  { value: 'population', label: 'Population' },
-  { value: 'median_income', label: 'Median household income' },
-  { value: 'median_home_value', label: 'Median home value' },
-  { value: 'unemployment_rate', label: 'Unemployment rate' },
-  { value: 'housing_units', label: 'Housing units' },
+const METRICS: { value: HeatmapMetric; label: string; short: string }[] = [
+  { value: 'population_density', label: 'Population density', short: 'Pop. density' },
+  { value: 'population',         label: 'Population',         short: 'Population' },
+  { value: 'median_income',      label: 'Median household income', short: 'Income' },
+  { value: 'median_home_value',  label: 'Median home value',   short: 'Home value' },
+  { value: 'unemployment_rate',  label: 'Unemployment rate',   short: 'Unemployment' },
+  { value: 'housing_units',      label: 'Housing units',       short: 'Housing units' },
 ];
-
-// #19 — heatmap diff view. When two metrics are picked, the heatmap shades
-// by the SIGNED z-score difference: tracts where A is higher than B trend
-// blue, where B is higher trend red. v1 surfaces the option in the UI;
-// computation runs client-side by fetching both metric layers and combining.
 
 const formatValue = (n: number | null | undefined, metric: HeatmapMetric): string => {
   if (n === null || n === undefined || Number.isNaN(n)) return '—';
@@ -28,6 +24,19 @@ const formatValue = (n: number | null | undefined, metric: HeatmapMetric): strin
 
 interface Props { meta: HeatmapResponse['meta'] | null }
 
+/**
+ * Bottom-center heatmap legend. Compact horizontal bar that never collides
+ * with the vertical panels (LeftPanel, AreaCreator, RightPanel) — bottom-
+ * center is the only zone no other floating UI claims. The old top-right
+ * vertical card overlapped whatever was already open on the right.
+ *
+ * Two visual states:
+ *   • Bar    — gradient legend + active metric, always visible while
+ *              the heatmap layer is on.
+ *   • Tray   — opens upward from the bar when the user clicks Settings,
+ *              for metric / boundary level / palette tweaks. Closes on
+ *              click-outside or Esc.
+ */
 export default function HeatmapPanel({ meta }: Props) {
   const {
     heatmapMetric, setHeatmapMetric,
@@ -38,9 +47,10 @@ export default function HeatmapPanel({ meta }: Props) {
     hoveredHeatmapValue, hoveredHeatmapName,
   } = useMapStore();
 
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [trayOpen, setTrayOpen] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
 
-  const labelFor = (m: HeatmapMetric) => METRICS.find((x) => x.value === m)?.label ?? m;
+  const activeMetric = METRICS.find((m) => m.value === heatmapMetric) ?? METRICS[0];
   const hasData = meta && (meta.count ?? 0) > 0;
   const breaks = meta?.breaks ?? [];
   const activePalette = paletteById(heatmapPaletteId);
@@ -49,169 +59,234 @@ export default function HeatmapPanel({ meta }: Props) {
     ? valueToFraction(hoveredHeatmapValue, meta!.min, meta!.max, breaks)
     : null;
 
+  // Esc closes the tray (parity with the area-detail right panel).
+  useEffect(() => {
+    if (!trayOpen) return;
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setTrayOpen(false); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [trayOpen]);
+
   return (
-    <div
-      // Lives in the bottom-right corner, clear of the LeftPanel column
-      // (left-4) — used to stack on top of the area list, which the user
-      // flagged as "covering the sidebar" on laptop-class viewports.
-      // right-20 leaves the floating RightToolbar (right-4, w-12) alone.
-      className="absolute bottom-4 right-20 bg-white rounded-xl shadow-float p-4 w-[320px] max-w-[calc(100vw-280px)] z-30 border border-slate-200 transition-all duration-200"
-    >
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2 font-bold text-base" style={{ color: '#1A1A2E' }}>
-          <MapIcon size={18} style={{ color: '#7848BB' }} /> Heatmap
+    <>
+      {/* Always-visible compact bar at bottom-center. left-1/2 + translate
+          centers it within the WHOLE viewport (parent is the map area, which
+          already excludes the AppNav). The basemap selector sits at bottom
+          left-4 ~280px wide and the RightToolbar at right-4 w-12 — between
+          them, the center is dead space. */}
+      <div
+        ref={barRef}
+        className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 bg-white rounded-full shadow-float border border-slate-200 px-2 py-1.5 flex items-center gap-2 max-w-[calc(100vw-32px)]"
+        style={{ minWidth: 340 }}
+      >
+        <span className="inline-flex items-center gap-1 px-1 text-violet-700">
+          <MapIcon size={14} />
           {heatmapLoading && (
             <span
-              className="inline-block w-3.5 h-3.5 border-2 border-slate-300 border-t-violet-600 rounded-full animate-spin ml-1"
+              className="inline-block w-3 h-3 border-2 border-slate-300 border-t-violet-600 rounded-full animate-spin"
               title="Loading polygons…"
             />
           )}
+        </span>
+
+        {/* Active metric — clickable to open the tray for metric switching. */}
+        <button
+          type="button"
+          onClick={() => setTrayOpen((v) => !v)}
+          className="text-xs font-bold tabular-nums text-slate-800 hover:text-violet-700 truncate max-w-[140px]"
+          title={activeMetric.label}
+        >
+          {activeMetric.short}
+        </button>
+
+        {/* Gradient strip with hovered-tract marker. The marker still slides
+            smoothly so users can read the value as they move the mouse. */}
+        <div className="relative flex-1 h-3 rounded-full min-w-[120px]" style={{ background: gradientCss(activePalette) }}>
+          <div
+            className="absolute -top-0.5 -bottom-0.5 w-0.5 -translate-x-1/2 bg-white pointer-events-none"
+            style={{
+              left: `${(markerT ?? 0) * 100}%`,
+              boxShadow: '0 0 0 1px #1A1A2E',
+              opacity: markerT !== null ? 1 : 0,
+              transition: 'left 180ms cubic-bezier(0.16, 1, 0.3, 1), opacity 120ms',
+            }}
+          />
         </div>
-        <button onClick={toggleHeatmap} className="text-slate-400 hover:text-slate-700" title="Close heatmap">
-          <X size={16} />
+
+        {/* Range labels — switch to the hovered tract's name+value when one
+            exists so the operator gets immediate context without expanding. */}
+        <div className="text-[11px] font-semibold tabular-nums text-slate-600 whitespace-nowrap min-w-[120px] text-right">
+          {markerT !== null && hoveredHeatmapName ? (
+            <span title={hoveredHeatmapName}>
+              <span className="text-slate-500 truncate inline-block max-w-[80px] align-middle">{hoveredHeatmapName}</span>
+              <span className="ml-1 font-bold text-slate-900">{formatValue(hoveredHeatmapValue, heatmapMetric)}</span>
+            </span>
+          ) : hasData ? (
+            <>
+              <span>{formatValue(meta!.min, heatmapMetric)}</span>
+              <span className="mx-1 text-slate-300">→</span>
+              <span>{formatValue(meta!.max, heatmapMetric)}</span>
+            </>
+          ) : (
+            <span className="text-slate-400">No data in view</span>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setTrayOpen((v) => !v)}
+          className={`p-1.5 rounded-full transition-colors ${trayOpen ? 'bg-violet-100 text-violet-700' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}
+          title="Heatmap settings"
+        >
+          <Settings2 size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={toggleHeatmap}
+          className="p-1.5 rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          title="Turn heatmap off"
+        >
+          <X size={14} />
         </button>
       </div>
 
-      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Data to display</div>
+      {trayOpen && <HeatmapTray
+        anchor={barRef.current}
+        metric={heatmapMetric}
+        setMetric={setHeatmapMetric}
+        level={heatmapLevel}
+        setLevel={setHeatmapLevel}
+        paletteId={heatmapPaletteId}
+        setPaletteId={setHeatmapPaletteId}
+        meta={meta}
+        onClose={() => setTrayOpen(false)}
+      />}
+    </>
+  );
+}
+
+/**
+ * Settings tray — opens upward from the bottom-center bar. Rendered into
+ * document.body via portal so it isn't clipped by the map container, and
+ * positioned with the anchor's bounding rect so it sits exactly above the
+ * gear button. Closes on outside click.
+ */
+function HeatmapTray({
+  anchor, metric, setMetric, level, setLevel, paletteId, setPaletteId, meta, onClose,
+}: {
+  anchor: HTMLElement | null;
+  metric: HeatmapMetric;
+  setMetric: (m: HeatmapMetric) => void;
+  level: any;
+  setLevel: (l: any) => void;
+  paletteId: string;
+  setPaletteId: (id: string) => void;
+  meta: HeatmapResponse['meta'] | null;
+  onClose: () => void;
+}) {
+  const trayRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; bottom: number; width: number }>({ left: 0, bottom: 0, width: 360 });
+
+  useEffect(() => {
+    if (!anchor) return;
+    function place() {
+      const r = anchor!.getBoundingClientRect();
+      const W = 380;
+      const centerX = r.left + r.width / 2;
+      const left = Math.max(16, Math.min(window.innerWidth - W - 16, centerX - W / 2));
+      const bottom = window.innerHeight - r.top + 8;
+      setPos({ left, bottom, width: W });
+    }
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [anchor]);
+
+  // Click-outside closes — mousedown so it fires before any inner button click.
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (trayRef.current?.contains(e.target as Node)) return;
+      if (anchor?.contains(e.target as Node)) return;
+      onClose();
+    }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [anchor, onClose]);
+
+  return createPortal(
+    <div
+      ref={trayRef}
+      className="fixed bg-white rounded-xl shadow-float border border-slate-200 p-3 z-40 max-h-[60vh] overflow-y-auto"
+      style={{ left: pos.left, bottom: pos.bottom, width: pos.width }}
+    >
+      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Metric</div>
       <select
-        className="w-full h-10 px-3 text-sm border border-slate-300 rounded-lg bg-white mb-3 focus:outline-none focus:border-violet-600"
-        value={heatmapMetric}
-        onChange={(e) => setHeatmapMetric(e.target.value as HeatmapMetric)}
+        className="w-full h-9 px-2 text-sm border border-slate-300 rounded-md bg-white mb-3 focus:outline-none focus:border-violet-600"
+        value={metric}
+        onChange={(e) => setMetric(e.target.value as HeatmapMetric)}
       >
         {METRICS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
       </select>
 
       <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Boundary level</div>
-      <div className="flex gap-2 items-stretch mb-1">
-        <select
-          className="flex-1 h-10 px-3 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-violet-600"
-          value={heatmapLevel}
-          onChange={(e) => setHeatmapLevel(e.target.value as any)}
-        >
-          <option value="auto">Auto (zoom-based)</option>
-          <option value="state">State</option>
-          <option value="county">County</option>
-          <option value="tract">Census tract</option>
-        </select>
-        {meta?.cached && (
-          <span className="self-center text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded">cached</span>
-        )}
-      </div>
+      <select
+        className="w-full h-9 px-2 text-sm border border-slate-300 rounded-md bg-white mb-1 focus:outline-none focus:border-violet-600"
+        value={level}
+        onChange={(e) => setLevel(e.target.value)}
+      >
+        <option value="auto">Auto (zoom-based)</option>
+        <option value="state">State</option>
+        <option value="county">County</option>
+        <option value="tract">Census tract</option>
+      </select>
       <div className="text-[10px] text-slate-400 mb-3">
         Showing <b className="text-slate-600">{meta?.level ?? '—'}</b>
-        {heatmapLevel === 'auto' && ' · auto-switches as you zoom'}
+        {level === 'auto' && ' · auto-switches as you zoom'}
         {meta?.count !== undefined && ` · ${meta.count.toLocaleString()} polygons`}
       </div>
 
-      {/* Color palette picker */}
       <div className="flex items-center justify-between mb-1">
-        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Color palette</div>
-        <button
-          onClick={() => setPaletteOpen(!paletteOpen)}
-          className="text-[11px] font-semibold text-violet-700 hover:bg-violet-50 px-2 py-0.5 rounded inline-flex items-center gap-1"
-        >
-          <PaletteIcon size={11} /> {paletteOpen ? 'Hide' : 'Browse'}
-        </button>
+        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 inline-flex items-center gap-1">
+          <PaletteIcon size={11} /> Palette
+        </div>
       </div>
-      <div
-        className="h-9 w-full rounded-lg border border-slate-300 px-2 flex items-center gap-2 cursor-pointer mb-2 hover:border-violet-400 transition"
-        onClick={() => setPaletteOpen(!paletteOpen)}
-        title="Click to change palette"
+      <div className="grid grid-cols-1 gap-1 max-h-[180px] overflow-y-auto border border-slate-200 rounded-md p-1 bg-slate-50">
+        {PALETTES.map((p) => (
+          <button
+            key={p.id}
+            className={`flex items-center gap-2 px-2 py-1.5 rounded text-left transition ${
+              p.id === paletteId ? 'bg-violet-100 ring-1 ring-violet-300' : 'hover:bg-white'
+            }`}
+            onClick={() => setPaletteId(p.id)}
+            title={p.description}
+          >
+            <div className="h-2.5 w-14 shrink-0 rounded-full" style={{ background: gradientCss(p) }} />
+            <span className="text-xs font-semibold flex-1 truncate" style={{ color: '#1A1A2E' }}>
+              {p.name}
+            </span>
+            {p.id === paletteId && <Check size={11} className="text-violet-700 shrink-0" />}
+          </button>
+        ))}
+      </div>
+
+      {meta?.note && (
+        <div className="mt-3 text-xs p-2 rounded bg-amber-50 text-amber-800 border border-amber-200">
+          {meta.note}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={onClose}
+        className="mt-3 w-full text-center text-xs font-semibold text-slate-500 hover:text-slate-800 inline-flex items-center justify-center gap-1"
       >
-        <span className="text-xs font-semibold flex-1 truncate" style={{ color: '#1A1A2E' }}>
-          {activePalette.name}
-        </span>
-        <div className="h-3 w-24 rounded-full" style={{ background: gradientCss(activePalette) }} />
-      </div>
-      {paletteOpen && (
-        <div className="mb-3 max-h-[210px] overflow-y-auto border border-slate-200 rounded-lg p-1.5 bg-slate-50 grid grid-cols-1 gap-1">
-          {PALETTES.map((p) => (
-            <button
-              key={p.id}
-              className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition ${
-                p.id === heatmapPaletteId
-                  ? 'bg-violet-100 ring-1 ring-violet-300'
-                  : 'hover:bg-white'
-              }`}
-              onClick={() => { setHeatmapPaletteId(p.id); setPaletteOpen(false); }}
-              title={p.description}
-            >
-              <div className="h-3 w-16 shrink-0 rounded-full" style={{ background: gradientCss(p) }} />
-              <span className="text-xs font-semibold flex-1 truncate" style={{ color: '#1A1A2E' }}>
-                {p.name}
-              </span>
-              {p.id === heatmapPaletteId && <Check size={12} className="text-violet-700 shrink-0" />}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="text-xs font-semibold mb-2" style={{ color: '#1A1A2E' }}>
-        {labelFor(heatmapMetric)} {meta?.unit ? <span className="text-slate-500 font-normal">({meta.unit})</span> : null}
-      </div>
-
-      {/* Continuous gradient bar — matches the polygon coloring exactly.
-          Marker slides smoothly (180ms ease-out) instead of snapping between
-          tracts as the user hovers — addresses the "jumpy" feedback. */}
-      <div className="relative h-3 w-full rounded-full" style={{ background: gradientCss(activePalette) }}>
-        <div
-          className="absolute -top-3 w-0 h-0 -translate-x-1/2 pointer-events-none"
-          style={{
-            left: `${(markerT ?? 0) * 100}%`,
-            borderLeft: '5px solid transparent',
-            borderRight: '5px solid transparent',
-            borderTop: '7px solid #1A1A2E',
-            opacity: markerT !== null ? 1 : 0,
-            transition: 'left 180ms cubic-bezier(0.16, 1, 0.3, 1), opacity 120ms',
-          }}
-        />
-        <div
-          className="absolute -top-0.5 -bottom-0.5 w-0.5 -translate-x-1/2 bg-white pointer-events-none"
-          style={{
-            left: `${(markerT ?? 0) * 100}%`,
-            boxShadow: '0 0 0 1px #1A1A2E',
-            opacity: markerT !== null ? 1 : 0,
-            transition: 'left 180ms cubic-bezier(0.16, 1, 0.3, 1), opacity 120ms',
-          }}
-        />
-      </div>
-
-      <div className="flex justify-between text-[11px] text-slate-600 mt-1.5 font-medium">
-        <span>{hasData ? formatValue(meta!.min, heatmapMetric) : '—'}</span>
-        <span>{hasData ? formatValue(meta!.max, heatmapMetric) : '—'}</span>
-      </div>
-
-      {markerT !== null && (
-        <div className="mt-2 text-xs flex items-center justify-between bg-slate-50 border border-slate-200 rounded px-2 py-1.5">
-          <span className="text-slate-600 truncate" title={hoveredHeatmapName ?? ''}>
-            {hoveredHeatmapName ?? 'hovered'}
-          </span>
-          <span className="font-bold" style={{ color: '#1A1A2E' }}>
-            {formatValue(hoveredHeatmapValue, heatmapMetric)}
-          </span>
-        </div>
-      )}
-
-      {hasData && breaks.length >= 9 && markerT === null && (
-        <div className="flex justify-between text-[10px] text-slate-500 mt-1.5">
-          <span>p25 · {formatValue(breaks[1], heatmapMetric)}</span>
-          <span>median · {formatValue(breaks[4], heatmapMetric)}</span>
-          <span>p75 · {formatValue(breaks[7], heatmapMetric)}</span>
-        </div>
-      )}
-
-      {!hasData && (
-        <div className="mt-3 text-xs p-2 rounded bg-amber-50 text-amber-800 border border-amber-200">
-          {meta?.note ?? 'No data in this view. Pan to a covered area (DC / MD / VA / WV).'}
-        </div>
-      )}
-
-      {hasData && meta?.truncated && (
-        <div className="mt-3 text-xs p-2 rounded bg-amber-50 text-amber-800 border border-amber-200">
-          Showing {meta.count.toLocaleString()} polygons (cap reached). Some tracts hidden —
-          zoom in or pick a coarser <b>boundary level</b> to see full coverage.
-        </div>
-      )}
-    </div>
+        <ChevronUp size={12} className="rotate-180" /> Close
+      </button>
+    </div>,
+    document.body
   );
 }
