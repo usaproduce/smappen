@@ -66,6 +66,16 @@ export default function GooglePlaceAutocomplete({
   const acRef = useRef<google.maps.places.Autocomplete | null>(null);
   const [internal, setInternal] = useState(controlledValue ?? '');
 
+  // Stash callbacks in refs so the Autocomplete is built ONCE. Listing
+  // onPlace/onChange in useEffect deps means a new function ref from the
+  // parent (which happens on every keystroke, since typing setState's the
+  // name) tears down the widget and its pac-container dropdown — which is
+  // why the suggestions never had a chance to render.
+  const onPlaceRef = useRef(onPlace);
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onPlaceRef.current = onPlace; }, [onPlace]);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+
   // Sync controlled value into the input — but only when it differs, so
   // typing doesn't fight the parent.
   useEffect(() => {
@@ -75,7 +85,9 @@ export default function GooglePlaceAutocomplete({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controlledValue]);
 
-  // Wire the Autocomplete once the SDK is loaded.
+  // Wire the Autocomplete once the SDK is loaded. Intentionally NOT
+  // depending on types/countries/callbacks — those would force the widget
+  // to be rebuilt and kill the live dropdown.
   useEffect(() => {
     if (!isLoaded || !inputRef.current) return;
     if (typeof google === 'undefined' || !google.maps?.places?.Autocomplete) return;
@@ -106,7 +118,7 @@ export default function GooglePlaceAutocomplete({
         website:  place.website ?? null,
       };
       setInternal(result.name || result.address);
-      onPlace(result);
+      onPlaceRef.current(result);
     });
 
     return () => {
@@ -116,7 +128,8 @@ export default function GooglePlaceAutocomplete({
       google.maps.event.removeListener(listener);
       document.querySelectorAll('.pac-container').forEach((el) => el.remove());
     };
-  }, [isLoaded, types, countries, onPlace]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded]);
 
   if (loadError) {
     return (

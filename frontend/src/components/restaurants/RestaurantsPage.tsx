@@ -120,10 +120,9 @@ function CreateRestaurantCard({
   onCreated: (r: Restaurant) => void;
   onCancel: () => void;
 }) {
-  const [mode, setMode] = useState<'search' | 'manual'>('search');
+  const [manual, setManual] = useState(false);
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
-  const [region, setRegion] = useState('US');
   // Populated by Google autocomplete OR left null on manual entry.
   const [placeId, setPlaceId] = useState<string | null>(null);
   const [lat, setLat] = useState<number | null>(null);
@@ -142,7 +141,6 @@ function CreateRestaurantCard({
       const result = await restaurantsApi.create({
         name: name.trim(),
         address:         address.trim() || undefined,
-        region:          region.trim() || undefined,
         lat:             lat ?? undefined,
         lng:             lng ?? undefined,
         google_place_id: placeId ?? undefined,
@@ -161,45 +159,53 @@ function CreateRestaurantCard({
     }
   }
 
-  return (
-    <div className="bg-slate-50 rounded-xl p-4 mt-6">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="font-bold text-base" style={{ color: '#1A1A2E' }}>New restaurant</h2>
-        {/* Mode toggle */}
-        <div className="bg-white rounded-md p-0.5 flex items-center text-xs font-semibold border border-slate-200">
-          <button
-            type="button"
-            className={`px-3 py-1 rounded ${mode === 'search' ? 'bg-violet-100 text-violet-800' : 'text-slate-500 hover:text-slate-800'}`}
-            onClick={() => setMode('search')}
-          >
-            Search Google
-          </button>
-          <button
-            type="button"
-            className={`px-3 py-1 rounded ${mode === 'manual' ? 'bg-violet-100 text-violet-800' : 'text-slate-500 hover:text-slate-800'}`}
-            onClick={() => setMode('manual')}
-          >
-            Manual
-          </button>
-        </div>
-      </div>
+  function reset() {
+    setPlaceId(null); setLat(null); setLng(null);
+    setPhone(null); setWebsite(null);
+    setName(''); setAddress('');
+  }
 
-      {mode === 'search' ? (
+  if (manual) {
+    return (
+      <div className="mt-4 flex flex-wrap items-end gap-2">
+        <input
+          className="h-10 text-sm flex-1 min-w-[200px] px-3 rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-violet-400"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Restaurant name"
+          autoFocus
+        />
+        <input
+          className="h-10 text-sm flex-[2] min-w-[240px] px-3 rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-violet-400"
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          placeholder="Address (optional)"
+        />
+        <button
+          className="btn btn-primary h-10 px-4 text-sm"
+          disabled={busy || !name.trim()}
+          onClick={submit}
+        >
+          Add
+        </button>
+        <button className="h-10 px-3 text-sm text-slate-500 hover:text-slate-800" onClick={() => setManual(false)} disabled={busy}>
+          Back to search
+        </button>
+        <button className="h-10 px-3 text-sm text-slate-400 hover:text-slate-700" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4">
+      {!placeId ? (
         <>
           <GooglePlaceAutocomplete
-            placeholder="Search restaurants — name or address"
+            placeholder="Start typing your restaurant — name or address"
             autoFocus
-            onChange={(raw) => {
-              // User is editing — clear any previously-picked place so the
-              // submit doesn't write stale lat/lng for a different name.
-              if (placeId !== null) {
-                setPlaceId(null);
-                setLat(null); setLng(null);
-                setPhone(null); setWebsite(null);
-                setAddress('');
-              }
-              setName(raw);
-            }}
+            onChange={(raw) => setName(raw)}
             onPlace={(p) => {
               setName(p.name || p.address);
               setAddress(p.address);
@@ -210,84 +216,47 @@ function CreateRestaurantCard({
               setWebsite(p.website);
             }}
           />
-
-          {/* Selected-place preview — only shows after the user picks a suggestion. */}
-          {placeId && (
-            <div className="mt-3 bg-white border border-violet-200 rounded-md p-3 text-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-bold truncate" style={{ color: '#1A1A2E' }}>{name}</div>
-                  <div className="text-xs text-slate-500 truncate">{address}</div>
-                  <div className="text-[11px] text-slate-500 mt-1 flex gap-3 flex-wrap">
-                    {lat !== null && lng !== null && <span>{lat.toFixed(4)}, {lng.toFixed(4)}</span>}
-                    {phone && <span>{phone}</span>}
-                    {website && <a href={website} target="_blank" rel="noreferrer" className="text-violet-700 hover:underline truncate max-w-[200px] inline-block">{website.replace(/^https?:\/\//, '')}</a>}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="text-[11px] text-slate-500 hover:text-rose-700 flex-shrink-0"
-                  onClick={() => { setPlaceId(null); setLat(null); setLng(null); setAddress(''); setPhone(null); setWebsite(null); setName(''); }}
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-          )}
-
-          <label className="block mt-3">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Region (for COGS lookup)</span>
-            <input
-              className="h-10 text-sm w-full px-3 rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-violet-400"
-              value={region}
-              onChange={(e) => setRegion(e.target.value)}
-              placeholder="US"
-            />
-          </label>
+          <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+            <button type="button" className="hover:text-violet-700" onClick={() => setManual(true)}>
+              Can't find it? Add manually →
+            </button>
+            <button type="button" className="hover:text-slate-700" onClick={onCancel}>
+              Cancel
+            </button>
+          </div>
         </>
       ) : (
-        <div className="grid md:grid-cols-3 gap-2">
-          <label className="block">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Name</span>
-            <input
-              className="h-10 text-sm w-full px-3 rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-violet-400"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Trattoria Verde"
-              autoFocus
-            />
-          </label>
-          <label className="block">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Address</span>
-            <input
-              className="h-10 text-sm w-full px-3 rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-violet-400"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              placeholder="1234 W Division, Chicago IL"
-            />
-          </label>
-          <label className="block">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Region</span>
-            <input
-              className="h-10 text-sm w-full px-3 rounded-md border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-violet-400"
-              value={region}
-              onChange={(e) => setRegion(e.target.value)}
-              placeholder="US"
-            />
-          </label>
+        <div className="flex items-center gap-3 bg-white border border-violet-200 rounded-md p-3">
+          <div className="flex-1 min-w-0">
+            <div className="font-bold truncate" style={{ color: '#1A1A2E' }}>{name}</div>
+            <div className="text-xs text-slate-500 truncate">{address}</div>
+            {(phone || website) && (
+              <div className="text-[11px] text-slate-500 mt-0.5 flex gap-3 flex-wrap">
+                {phone && <span>{phone}</span>}
+                {website && (
+                  <a href={website} target="_blank" rel="noreferrer" className="text-violet-700 hover:underline truncate max-w-[200px] inline-block">
+                    {website.replace(/^https?:\/\//, '')}
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+          <button
+            className="btn btn-primary h-9 px-3 text-sm flex-shrink-0"
+            disabled={busy}
+            onClick={submit}
+          >
+            Add
+          </button>
+          <button
+            className="text-xs text-slate-400 hover:text-slate-700 flex-shrink-0"
+            onClick={reset}
+            disabled={busy}
+          >
+            Clear
+          </button>
         </div>
       )}
-
-      <div className="flex gap-2 mt-4">
-        <button
-          className="btn btn-primary h-10 px-4 text-sm"
-          disabled={busy || !name.trim()}
-          onClick={submit}
-        >
-          {placeId ? 'Add from Google' : 'Create'}
-        </button>
-        <button className="btn h-10 px-4 text-sm" onClick={onCancel} disabled={busy}>Cancel</button>
-      </div>
     </div>
   );
 }
