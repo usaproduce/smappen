@@ -347,9 +347,40 @@ export default function AreaCreator({ onClose, editing }: Props) {
     } finally { setSaving(false); }
   }
 
+  // Close on Escape + click-outside. Drawing mode (pin pick, polygon draw)
+  // is exempt from outside-close — otherwise the very next click on the
+  // map (to drop the pin) would dismiss the panel before the drawing tool
+  // received the click. Toasts and react-portal popovers are also exempt
+  // so quick UI feedback doesn't kill the panel.
+  const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
+    function onDown(e: MouseEvent) {
+      if (useMapStore.getState().drawingType) return;
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (panelRef.current?.contains(target)) return;
+      // Tray/popovers Google Places injects (pac-container) and react-hot-
+      // toast notifications live outside the panel but should NOT count as
+      // outside clicks.
+      const el = target as HTMLElement;
+      if (el.closest && (el.closest('.pac-container') || el.closest('[data-react-hot-toast]'))) return;
+      onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onDown);
+    };
+  }, [onClose]);
+
   return (
     <aside
-      className="absolute top-4 max-h-[calc(100%-2rem)] w-[380px] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20 panel-slide-in-l"
+      ref={panelRef}
+      // top-6 leaves a real 24px gap below the AppNav so the panel no
+      // longer reads as visually fused to the navbar — top-4 was too tight.
+      className="absolute top-6 max-h-[calc(100%-3rem)] w-[380px] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20 panel-slide-in-l"
       style={{ left: 'calc(360px + 1rem + 8px)' }}
       onClick={(e) => e.stopPropagation()}
     >
@@ -367,8 +398,12 @@ export default function AreaCreator({ onClose, editing }: Props) {
           {editing ? <Pencil size={14} style={{ color: '#7848BB' }} /> : <Sparkles size={14} style={{ color: '#7848BB' }} />}
           {editing ? 'Edit area' : 'Create area'}
         </div>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-700" title="Close">
-          <X size={16} />
+        <button
+          onClick={onClose}
+          className="-mr-1 p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+          title="Close (Esc)"
+        >
+          <X size={18} />
         </button>
       </header>
 
