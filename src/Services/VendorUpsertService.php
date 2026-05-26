@@ -352,18 +352,33 @@ class VendorUpsertService
      * Add to a group rather than appending a new line of unknown intent.
      */
     private const DENY_PATTERNS = [
-        // ─ Restaurant + cafe + food-service-to-consumer ──────────────
-        '/\b(cafe|café|coffee\s?shop|restaurant|grill|diner|bistro|pizzeria|pizza\s?hut|trattoria|brasserie|tavern|gastropub|brewpub|brewery|brewing\s?co|beer\s?garden|wine\s?bar|cocktail\s?bar|taproom|tea\s?house|teahouse|pastry\s?shop|ice\s?cream|gelato|smoothie|juicery|donut|doughnut|bagel\s?shop|sandwich\s?shop|takeout|take[-\s]out|carry[-\s]?out|sushi\s?bar|hibachi|ramen|noodle\s?house|food\s?truck|food\s?court)\b/i',
-        // ─ Major consumer-retail food chains ─────────────────────────
-        '/\b(7[-\s]?eleven|safeway|aldi\b|wegmans|whole\s?foods|trader\s?joe|harris\s?teeter|balducci|wal[-\s]?mart|target\b|food\s?lion|giant\s?food|publix|kroger|albertsons|stop\s?&?\s?shop|shoprite|sam.s\s?club|bj.s\s?wholesale|dollar\s?(tree|general)|family\s?dollar|fresh\s?market|sprouts\s?farmers|h[-\s]?e[-\s]?b|meijer|piggly\s?wiggly|ingles|winn[-\s]?dixie|costco\s?wholesale|fresh\s?direct)\b/i',
-        // ─ QSR / coffee + bakery chains ─────────────────────────────
-        '/\b(starbucks|dunkin|panera|chick[-\s]?fil[-\s]?a|chipotle|mcdonald|burger\s?king|wendy|taco\s?bell|subway\b|domino|kfc|popeyes|baskin[-\s]?robbins|jamba|tim\s?hortons|cold\s?stone|krispy\s?kreme|five\s?guys|in[-\s]?n[-\s]?out|shake\s?shack|sweetgreen|cava\b|pret\s?a\s?manger|le\s?pain|chopt|chopt\b|jersey\s?mike|jimmy\s?john|capital\s?one\s?café|capital\s?one\s?cafe)\b/i',
-        // ─ Gas + convenience + pharmacy ─────────────────────────────
-        '/\b(shell\b|exxon|mobil\b|chevron|sunoco|valero|wawa|sheetz|circle\s?k|^bp\s|^bp$|cvs\b|walgreens|rite\s?aid|duane\s?reade|liquor\s?store)\b/i',
-        // ─ Non-food businesses ───────────────────────────────────────
-        '/\b(christmas\s?tree|car\s?park|parking|hair\s?salon|nail\s?salon|gym\b|fitness|spa\b|battery|florist|jewelry|laundry|dry\s?clean|barber|tobacco|smoke\s?shop|vape|cigar|hardware|auto\s?parts|tire\s?shop)\b/i',
-        // ─ Hotels + lodging + government ─────────────────────────────
-        '/\b(hotel\b|motel\b|inn\b|hostel|resort|commissary|exchange\s?store|naval\s?station|air\s?force|fort\s+\w+)\b/i',
+        // /u flag — needed so \b works around accented chars like 'café'.
+        // Restaurant / cafe / direct-to-consumer food. Plurals allowed via 's?'.
+        '/(?:^|[\s\-])(cafes?|cafés?|coffee\s?shop|restaurants?|grill|diner|bistro|pizzeria|trattoria|brasserie|tavern|gastropub|brewpub|brewery|brewing\s?co|beer\s?garden|wine\s?bar|cocktail\s?bar|taproom|tea\s?house|teahouse|pastry\s?shop|ice\s?cream|gelato|smoothies?|juicery|donuts?|doughnuts?|bagel\s?shop|sandwich\s?shop|takeout|take[-\s]out|carry[-\s]?out|sushi\s?bar|hibachi|ramen|noodle\s?house|food\s?truck|food\s?court|cocktails?)\b/iu',
+        '/(?:^|[\s\-])(crab|seafood)\s?(house|bar|garden|cabana|shack)\b/iu',  // "Boom Boom Crab ... Bar"
+        // Major consumer-retail food chains
+        '/\b(7[-\s]?eleven|safeway|aldi|wegmans|whole\s?foods|trader\s?joe|harris\s?teeter|balducci|wal[-\s]?mart|target|food\s?lion|giant\s?food|publix|kroger|albertsons|stop\s?&?\s?shop|shoprite|sam.s\s?club|bj.s\s?wholesale|dollar\s?(tree|general)|family\s?dollar|fresh\s?market|sprouts\s?farmers|h[-\s]?e[-\s]?b|meijer|piggly\s?wiggly|ingles|winn[-\s]?dixie|costco\s?wholesale|fresh\s?direct)\b/iu',
+        // QSR / coffee + bakery chains
+        '/\b(starbucks|dunkin|panera|chick[-\s]?fil[-\s]?a|chipotle|mcdonald|burger\s?king|wendy|taco\s?bell|subway|domino|kfc|popeyes|baskin[-\s]?robbins|jamba|tim\s?hortons|cold\s?stone|krispy\s?kreme|five\s?guys|in[-\s]?n[-\s]?out|shake\s?shack|sweetgreen|cava|pret\s?a\s?manger|le\s?pain|chopt|jersey\s?mike|jimmy\s?john|capital\s?one)\b/iu',
+        // Gas + convenience + pharmacy + retail liquor
+        '/\b(shell\s?(gas|station)?|exxon|mobil\s?(gas|station)?|chevron|sunoco|valero|wawa|sheetz|circle\s?k|^bp\s|^bp$|cvs|walgreens|rite\s?aid|duane\s?reade|liquor\s?store)\b/iu',
+        // Non-food businesses (plurals allowed: trees, salons, etc)
+        '/\b(christmas|holiday)\s?trees?\b/iu',
+        '/\b(car\s?park|parking|hair\s?salons?|nail\s?salons?|gyms?|fitness|spa|spas|batter(?:y|ies)|florists?|jeweler(?:y|s)|laundry|dry\s?clean|barber|tobacco|smoke\s?shop|vape|cigars?|hardware|auto\s?parts|tire\s?shop|instruments?|nursery|nurser(?:y|ies)|copier|copy\s?center|copy\s?shop)\b/iu',
+        // Personal care / beauty (catches "Bellacara", "CrystalzBeauty4YU")
+        '/(?:^|\W)(beauty|cosmetics|makeup|skincare)/iu',
+        // Hotels + lodging + government / military commissaries
+        '/\b(hotels?|motels?|inn\b|hostel|resort|commissary|naval\s?station|air\s?force|fort\s+\w+)\b/iu',
+        // Trailing "Supermarket" — almost always retail (B2B uses "Market" rarely too, but the "Super" prefix is consumer)
+        '/\bsupermarket\b/iu',
+        // Generic small-mart indicators (catches "DC Mini Super Market", "Discount Market", "Circle 7 Food & Grocery Market")
+        '/\b(mini\s?(super\s?)?market|discount\s?market|food\s?(&|and)\s?grocery|grocery\s?market|grocery\s?shop|food\s?store)\b/iu',
+        // Tobacco + crab houses + carry-outs that slipped through
+        '/\b(carry\s?out|crab\s?cake|crab\s?house|tobacco\s?(&|and)\s?grocery|chicken\s?(&|and)\s?waffles|deli\b)\b/iu',
+        // Catering / consulting / consultancy
+        '/\b(catering|caterer|consulting|consultanc(?:y|ies)|copy)\b/iu',
+        // Bottled-water / beer-wine retailers
+        '/\b(beer\s?(&|and)\s?wine|wine\s?(&|and)\s?spirits|water\s?delivery)\b/iu',
     ];
 
     /**
