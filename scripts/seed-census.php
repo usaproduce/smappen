@@ -60,6 +60,18 @@ function seed_state(string $stateFips): void {
                 'age_35_to_54' => sum_ranges($r, ['B01001_013E','B01001_014E','B01001_015E','B01001_016E','B01001_037E','B01001_038E','B01001_039E','B01001_040E']),
                 'age_55_to_64' => sum_ranges($r, ['B01001_017E','B01001_018E','B01001_019E','B01001_041E','B01001_042E','B01001_043E']),
                 'age_65_plus' => sum_ranges($r, ['B01001_020E','B01001_021E','B01001_022E','B01001_023E','B01001_024E','B01001_025E','B01001_044E','B01001_045E','B01001_046E','B01001_047E','B01001_048E','B01001_049E']),
+                // Income brackets — these columns existed in the schema but
+                // were never written, so every area's DemographicsPanel
+                // showed a flat 0-bar chart even when median income was
+                // positive. Each bucket sums the full range of ACS sub-
+                // brackets (B19001_002..017) instead of picking a single
+                // one. Re-run `php scripts/seed-census.php state <FIPS>`
+                // for any state whose areas need the chart populated.
+                'income_under_25k'  => sum_ranges($r, ['B19001_002E','B19001_003E','B19001_004E','B19001_005E']),
+                'income_25k_to_50k' => sum_ranges($r, ['B19001_006E','B19001_007E','B19001_008E','B19001_009E','B19001_010E']),
+                'income_50k_to_75k' => sum_ranges($r, ['B19001_011E','B19001_012E']),
+                'income_75k_to_100k' => sum_ranges($r, ['B19001_013E']),
+                'income_100k_plus'  => sum_ranges($r, ['B19001_014E','B19001_015E','B19001_016E','B19001_017E']),
                 'data_year' => 2023,
                 'updated_at' => date('Y-m-d H:i:s'),
             ];

@@ -64,12 +64,31 @@ class CensusService
         'age_65_plus_f4' => 'B01001_047E',
         'age_65_plus_f5' => 'B01001_048E',
         'age_65_plus_f6' => 'B01001_049E',
-        // Income brackets
-        'income_under_25k' => 'B19001_002E',
-        'income_25k_to_50k' => 'B19001_006E',
-        'income_50k_to_75k' => 'B19001_011E',
-        'income_75k_to_100k' => 'B19001_013E',
-        'income_100k_plus' => 'B19001_014E',
+        // Income brackets — ACS table B19001 has 16 sub-brackets (002–017).
+        // We pull them all here; the five buckets the rest of the app uses
+        // are summed in fetchDemographicsForState() so each one represents
+        // its full income range, not just the first sub-bracket.
+        // 002 <$10K, 003 $10-15K, 004 $15-20K, 005 $20-25K
+        'income_b19001_002' => 'B19001_002E',
+        'income_b19001_003' => 'B19001_003E',
+        'income_b19001_004' => 'B19001_004E',
+        'income_b19001_005' => 'B19001_005E',
+        // 006 $25-30K, 007 $30-35K, 008 $35-40K, 009 $40-45K, 010 $45-50K
+        'income_b19001_006' => 'B19001_006E',
+        'income_b19001_007' => 'B19001_007E',
+        'income_b19001_008' => 'B19001_008E',
+        'income_b19001_009' => 'B19001_009E',
+        'income_b19001_010' => 'B19001_010E',
+        // 011 $50-60K, 012 $60-75K
+        'income_b19001_011' => 'B19001_011E',
+        'income_b19001_012' => 'B19001_012E',
+        // 013 $75-100K
+        'income_b19001_013' => 'B19001_013E',
+        // 014 $100-125K, 015 $125-150K, 016 $150-200K, 017 $200K+
+        'income_b19001_014' => 'B19001_014E',
+        'income_b19001_015' => 'B19001_015E',
+        'income_b19001_016' => 'B19001_016E',
+        'income_b19001_017' => 'B19001_017E',
     ];
 
     public function __construct()

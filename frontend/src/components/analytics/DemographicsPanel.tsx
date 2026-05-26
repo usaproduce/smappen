@@ -50,15 +50,28 @@ export default function DemographicsPanel({ areaId }: { areaId: string }) {
   ];
   const ageTotal = ageData.reduce((s, x) => s + x.value, 0) || 1;
 
+  // Bracket data is suspect if the buckets sum to ~zero households but the
+  // median income reads as positive — that's the symptom of the underlying
+  // census ingestion mapping each bucket to a single ACS sub-bracket
+  // instead of summing all sub-brackets in the range (see CensusService
+  // VARIABLES). Until a re-ingest lands, drop the chart in that case
+  // rather than rendering a misleading flat bar at $100K+.
+  const bracketSum = (data.income.brackets.under_25k ?? 0)
+    + (data.income.brackets['25k_to_50k'] ?? 0)
+    + (data.income.brackets['50k_to_75k'] ?? 0)
+    + (data.income.brackets['75k_to_100k'] ?? 0)
+    + (data.income.brackets['100k_plus'] ?? 0);
+  const bracketsOk = bracketSum > 0 && totalPop > 0 && bracketSum >= totalPop * 0.05;
+
   return (
     <div className="p-4 space-y-4">
       {/* Hero: 42px population number + density caption + age-bar. */}
       <div>
-        <div className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Population</div>
+        <SectionLabel>Population</SectionLabel>
         <div className="font-extrabold leading-none mt-1" style={{ color: '#1e3a5f', fontSize: 42 }}>
           {formatNumber(totalPop)}
         </div>
-        <div className="text-xs text-slate-500 mt-1 font-medium">
+        <div className="text-xs text-slate-700 mt-1 font-semibold">
           {formatNumber(data.population.density_per_sq_km)} per km² · {malePct.toFixed(0)}% M / {femalePct.toFixed(0)}% F
         </div>
         <div className="flex h-2 rounded-full overflow-hidden mt-3" title="Male / female split">
@@ -66,7 +79,7 @@ export default function DemographicsPanel({ areaId }: { areaId: string }) {
           <div style={{ width: `${femalePct}%`, background: '#ec4899' }} />
         </div>
         <div className="mt-3">
-          <div className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Age distribution</div>
+          <SectionLabel className="mb-1">Age distribution</SectionLabel>
           <div className="flex h-3 rounded-full overflow-hidden" role="img" aria-label="Age distribution">
             {ageData.map((seg) => (
               <div
@@ -76,7 +89,7 @@ export default function DemographicsPanel({ areaId }: { areaId: string }) {
               />
             ))}
           </div>
-          <div className="flex justify-between mt-1 text-[10px] text-slate-500 font-semibold">
+          <div className="flex justify-between mt-1 text-[10px] text-slate-700 font-bold">
             {ageData.map((seg) => (
               <span key={seg.label} className="flex items-center gap-0.5">
                 <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: seg.color }} />
@@ -88,32 +101,36 @@ export default function DemographicsPanel({ areaId }: { areaId: string }) {
       </div>
 
       <div className="card">
-        <div className="text-xs text-slate-500 uppercase font-semibold">Median household income</div>
-        <div className="text-2xl font-bold text-emerald-700">{formatCurrency(data.income.median_household)}</div>
-        <div className="mt-2 text-xs text-slate-500 mb-1">Bracket distribution</div>
-        <ChartWidgets.HorizontalBarChart
-          data={[
-            { name: '<$25K', value: data.income.brackets.under_25k },
-            { name: '$25–50K', value: data.income.brackets['25k_to_50k'] },
-            { name: '$50–75K', value: data.income.brackets['50k_to_75k'] },
-            { name: '$75–100K', value: data.income.brackets['75k_to_100k'] },
-            { name: '$100K+', value: data.income.brackets['100k_plus'] },
-          ]}
-        />
+        <CardHeading>Median household income</CardHeading>
+        <div className="text-2xl font-extrabold text-emerald-700 tabular-nums">{formatCurrency(data.income.median_household)}</div>
+        {bracketsOk ? (
+          <>
+            <SectionLabel className="mt-3 mb-1">Bracket distribution</SectionLabel>
+            <ChartWidgets.HorizontalBarChart
+              data={[
+                { name: '<$25K',    value: data.income.brackets.under_25k },
+                { name: '$25–50K',  value: data.income.brackets['25k_to_50k'] },
+                { name: '$50–75K',  value: data.income.brackets['50k_to_75k'] },
+                { name: '$75–100K', value: data.income.brackets['75k_to_100k'] },
+                { name: '$100K+',   value: data.income.brackets['100k_plus'] },
+              ]}
+            />
+          </>
+        ) : null}
       </div>
 
       <div className="card">
-        <div className="font-semibold text-sm mb-1" style={{ color: '#1e3a5f' }}>Employment</div>
-        <div className="text-sm">Labor force: <b>{formatNumber(data.employment.labor_force)}</b></div>
-        <div className="text-sm">
-          Unemployment: <b style={{ color: unempColor }}>{unemp}%</b>
+        <CardHeading>Employment</CardHeading>
+        <div className="text-sm text-slate-800">Labor force: <b className="font-extrabold">{formatNumber(data.employment.labor_force)}</b></div>
+        <div className="text-sm text-slate-800">
+          Unemployment: <b className="font-extrabold" style={{ color: unempColor }}>{unemp}%</b>
         </div>
       </div>
 
       <div className="card">
-        <div className="font-semibold text-sm mb-1" style={{ color: '#1e3a5f' }}>Housing</div>
-        <div className="text-sm">Units: <b>{formatNumber(data.housing.total_units)}</b></div>
-        <div className="text-sm">Median value: <b>{formatCurrency(data.housing.median_value)}</b></div>
+        <CardHeading>Housing</CardHeading>
+        <div className="text-sm text-slate-800">Units: <b className="font-extrabold">{formatNumber(data.housing.total_units)}</b></div>
+        <div className="text-sm text-slate-800">Median value: <b className="font-extrabold">{formatCurrency(data.housing.median_value)}</b></div>
       </div>
 
       {data.meta?.note && <div className="text-xs text-amber-700 bg-amber-50 p-2 rounded">{data.meta.note}</div>}
@@ -122,6 +139,29 @@ export default function DemographicsPanel({ areaId }: { areaId: string }) {
           data_year field comes from census_demographics; we treat anything
           older than 18 months as "stale" with an amber pill, otherwise quiet. */}
       <DataFreshnessFooter dataYear={data.meta?.data_year ?? (data as any).data_year} />
+    </div>
+  );
+}
+
+/**
+ * Section label — small uppercase header inside a card. Previously these
+ * were rendered at text-slate-500 / font-medium across the panel and read
+ * as faded background labels. Bumped to slate-700 + font-bold so they
+ * actually function as headings.
+ */
+function SectionLabel({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`text-[10px] uppercase tracking-wider font-bold text-slate-700 ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+/** Larger card headline — used for "Employment", "Housing", "Median household income". */
+function CardHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-xs font-extrabold uppercase tracking-wider mb-1.5" style={{ color: '#1e3a5f' }}>
+      {children}
     </div>
   );
 }
