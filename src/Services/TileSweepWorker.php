@@ -96,6 +96,7 @@ class TileSweepWorker
         $errorMessage   = null;
         $budgetHalted   = false;
 
+        $callFailures = [];
         try {
             foreach ($vendorTypes as $vt) {
                 $cfg = $typeMap[$vt] ?? null;
@@ -103,25 +104,43 @@ class TileSweepWorker
 
                 foreach (($cfg['places_types'] ?? []) as $placesType) {
                     $this->rateLimiter->acquire(PlacesRateLimiter::BUCKET_SEARCH);
-                    [$results, $cost, $saturated] = $this->searchNearbyTile($tile, $placesType);
-                    $callsMade++;
-                    $costTotal += $cost;
-                    if ($saturated) $saturatedAny = true;
-                    foreach ($results as $place) {
-                        $pid = $place['id'] ?? null;
-                        if ($pid && !isset($collected[$pid])) $collected[$pid] = $place;
+                    try {
+                        [$results, $cost, $saturated] = $this->searchNearbyTile($tile, $placesType);
+                        $callsMade++;
+                        $costTotal += $cost;
+                        if ($saturated) $saturatedAny = true;
+                        foreach ($results as $place) {
+                            $pid = $place['id'] ?? null;
+                            if ($pid && !isset($collected[$pid])) $collected[$pid] = $place;
+                        }
+                    } catch (BudgetCapExceededException $e) {
+                        throw $e; // budget halts the whole tile, don't swallow
+                    } catch (\Throwable $e) {
+                        // Per-call failure (bad type, transient Places 5xx, etc.) —
+                        // log + continue. Killing the whole tile on one bad type
+                        // would be a regression for vendor_types with mixed valid
+                        // and invalid Places types.
+                        $callFailures[] = "nearby[$placesType]: " . $e->getMessage();
+                        error_log("[seed-tile-worker] {$tile['id']} nearby[$placesType]: " . $e->getMessage());
                     }
                 }
 
                 foreach (($cfg['text_queries'] ?? []) as $query) {
                     $this->rateLimiter->acquire(PlacesRateLimiter::BUCKET_SEARCH);
-                    [$results, $cost, $saturated] = $this->searchTextTile($tile, $query);
-                    $callsMade++;
-                    $costTotal += $cost;
-                    if ($saturated) $saturatedAny = true;
-                    foreach ($results as $place) {
-                        $pid = $place['id'] ?? null;
-                        if ($pid && !isset($collected[$pid])) $collected[$pid] = $place;
+                    try {
+                        [$results, $cost, $saturated] = $this->searchTextTile($tile, $query);
+                        $callsMade++;
+                        $costTotal += $cost;
+                        if ($saturated) $saturatedAny = true;
+                        foreach ($results as $place) {
+                            $pid = $place['id'] ?? null;
+                            if ($pid && !isset($collected[$pid])) $collected[$pid] = $place;
+                        }
+                    } catch (BudgetCapExceededException $e) {
+                        throw $e;
+                    } catch (\Throwable $e) {
+                        $callFailures[] = "text[$query]: " . $e->getMessage();
+                        error_log("[seed-tile-worker] {$tile['id']} text[$query]: " . $e->getMessage());
                     }
                 }
             }
@@ -132,6 +151,12 @@ class TileSweepWorker
             $errorMessage = $e->getMessage();
         } finally {
             $this->places->clearCampaignContext();
+        }
+        // If every single call failed (e.g. API key is bad), surface that
+        // so the tile goes to 'failed' instead of silently 'done with 0
+        // results' — looks-like-it-worked-but-didn't is worse than failed.
+        if ($errorMessage === null && !$budgetHalted && $callsMade === 0 && !empty($callFailures)) {
+            $errorMessage = 'all calls failed: ' . implode(' | ', array_slice($callFailures, 0, 3));
         }
 
         $placeIds = array_fill_keys(array_keys($collected), true);

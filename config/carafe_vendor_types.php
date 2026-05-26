@@ -42,7 +42,10 @@ return [
     ],
 
     'produce' => [
-        'places_types'    => ['produce_market', 'wholesaler'],
+        // 'produce_market' is NOT a valid Places (New) includedType — Google
+        // returns HTTP 400. Stick with 'wholesaler' + the text queries which
+        // catch the actual produce houses.
+        'places_types'    => ['wholesaler', 'farm'],
         'text_queries'    => ['produce wholesale', 'produce distributor'],
         'category'        => 'produce',
         'priority_enrich' => true,
@@ -56,8 +59,10 @@ return [
     ],
 
     'seafood' => [
-        'places_types'    => ['wholesaler', 'seafood_market'],
-        'text_queries'    => ['seafood wholesale', 'seafood distributor'],
+        // 'seafood_market' and 'fish_market' both return HTTP 400 from
+        // Places (New). Text queries do the work for this type.
+        'places_types'    => ['wholesaler'],
+        'text_queries'    => ['seafood wholesale', 'seafood distributor', 'fish market wholesale'],
         'category'        => 'seafood',
         'priority_enrich' => true,
     ],
@@ -70,7 +75,8 @@ return [
     ],
 
     'specialty_ethnic' => [
-        'places_types'    => ['wholesaler', 'asian_grocery_store', 'market'],
+        // 'market' is NOT a valid Places (New) includedType.
+        'places_types'    => ['wholesaler', 'asian_grocery_store'],
         'text_queries'    => ['Asian wholesale', 'Latino wholesale', 'specialty importer'],
         'category'        => 'specialty',
         'priority_enrich' => false,
