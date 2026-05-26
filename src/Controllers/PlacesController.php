@@ -193,6 +193,17 @@ class PlacesController
             Response::error('Access denied', 403);
         }
 
+        // Cache the full benchmark payload per (area, type, keyword, userCount).
+        // Per-reference Places results are already 90-day-cached inside the
+        // service — this layer skips even the 10× iteration + summarize step
+        // so a re-click is genuinely instant and bills zero. user_count is
+        // in the key because the percentile shifts when it changes.
+        $benchKey = 'places_benchmark_v1:' . md5("$areaId|$type|$keyword|$userCount");
+        $cached = \App\Services\CacheService::getJson($benchKey);
+        if ($cached !== null) {
+            Response::success($cached);
+        }
+
         $geom = is_string($area['geometry']) ? json_decode($area['geometry'], true) : $area['geometry'];
         if (!is_array($geom) || !isset($geom['type'])) {
             Response::error('Area has no geometry to benchmark against', 422);
@@ -258,7 +269,7 @@ class PlacesController
 
         $summary = PlacesBenchmarkService::summarize($userCount, $referenceResults, $tier);
 
-        Response::success([
+        $payload = [
             'user_area' => [
                 'name' => $area['name'],
                 'count' => $userCount,
@@ -278,7 +289,13 @@ class PlacesController
                     max(1, $svc->lastCallCount ?? 1)
                 ),
             ],
-        ]);
+        ];
+
+        // 90-day permanent cache. Categories + counts in US metros barely
+        // move on shorter horizons; refreshing every 3 months is fine.
+        \App\Services\CacheService::set($benchKey, $payload, 86400 * 90);
+
+        Response::success($payload);
     }
 
     /**

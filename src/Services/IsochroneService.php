@@ -90,7 +90,11 @@ class IsochroneService
             'time_minutes' => $timeMinutes,
             'center' => ['lat' => $lat, 'lng' => $lng],
         ];
-        CacheService::set($cacheKey, $result, 86400);
+        // 30-day cache — road networks change slowly and the routing
+        // provider's drive-time polygons for the same (lat, lng, mode, time)
+        // are effectively stable. Keeps repeat "build trade area" / "study
+        // your area" clicks free.
+        CacheService::set($cacheKey, $result, 86400 * 30);
         return $result;
     }
 

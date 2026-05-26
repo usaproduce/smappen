@@ -149,7 +149,7 @@ class GoogleMapsService
             return $da <=> $db;
         });
 
-        CacheService::set($cacheKey, $places, 172800); // 48h
+        CacheService::set($cacheKey, $places, 86400 * 90); // 90 days
         return $places;
     }
 
@@ -279,7 +279,7 @@ class GoogleMapsService
             });
         }
 
-        CacheService::set($cacheKey, $places, 172800);
+        CacheService::set($cacheKey, $places, 86400 * 90); // 90 days
         return $places;
     }
 

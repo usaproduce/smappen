@@ -35,15 +35,49 @@ interface SearchMeta {
   density_label?: DensityLabel | null;
 }
 
+// Frontend cache: when the user switches tabs (Demographics → People →
+// Businesses) or reloads the page, the panel remounts and local state
+// resets. Stash the last search + benchmark per area in localStorage so
+// they don't have to re-run the query just because they navigated away.
+function storageKey(areaId: string) { return `poi_search:${areaId}`; }
+interface PoiSnapshot {
+  type: string;
+  keyword: string;
+  results: Place[];
+  meta: SearchMeta | null;
+  benchmark: PlacesBenchmark | null;
+}
+function readSnapshot(areaId: string): PoiSnapshot | null {
+  try { const s = localStorage.getItem(storageKey(areaId)); return s ? JSON.parse(s) : null; }
+  catch { return null; }
+}
+function writeSnapshot(areaId: string, snap: Partial<PoiSnapshot>) {
+  try {
+    const prev = readSnapshot(areaId) ?? { type: '', keyword: '', results: [], meta: null, benchmark: null };
+    localStorage.setItem(storageKey(areaId), JSON.stringify({ ...prev, ...snap }));
+  } catch { /* quota / SecurityError — non-fatal */ }
+}
+
 export default function POISearchPanel({ area }: { area: Area }) {
-  const [type, setType] = useState('');
-  const [keyword, setKeyword] = useState('');
+  // Initial-render hydrate from localStorage so the user lands on their
+  // last search, not a blank input. useState lazy initializer keeps this
+  // cheap (runs once per mount per area, never on re-render).
+  const initial = () => readSnapshot(area.id);
+  const [type, setType] = useState(() => initial()?.type ?? '');
+  const [keyword, setKeyword] = useState(() => initial()?.keyword ?? '');
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<Place[]>([]);
-  const [meta, setMeta] = useState<SearchMeta | null>(null);
-  const [benchmark, setBenchmark] = useState<PlacesBenchmark | null>(null);
+  const [results, setResults] = useState<Place[]>(() => initial()?.results ?? []);
+  const [meta, setMeta] = useState<SearchMeta | null>(() => initial()?.meta ?? null);
+  const [benchmark, setBenchmark] = useState<PlacesBenchmark | null>(() => initial()?.benchmark ?? null);
   const [benchmarking, setBenchmarking] = useState(false);
   const { setPoiResults } = useMapStore();
+
+  // Re-push restored markers to the map when remounting with cached results
+  // — otherwise the list shows pins but the map shows none.
+  useEffect(() => {
+    if (results.length > 0) setPoiResults(results);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function search() {
     if (!area.center_lat || !area.center_lng) return toast.error('Area has no center');
@@ -58,17 +92,20 @@ export default function POISearchPanel({ area }: { area: Area }) {
         area_id: area.id,
       });
       setResults(r.places);
-      setMeta({
+      const nextMeta: SearchMeta = {
         count: r.count,
         area_sq_km: r.area_sq_km,
         area_population: r.area_population,
         density_per_sq_km: r.density_per_sq_km,
         density_per_1k_people: r.density_per_1k_people,
         density_label: r.density_label,
-      });
+      };
+      setMeta(nextMeta);
       // A new search invalidates any prior benchmark (different params).
       setBenchmark(null);
       setPoiResults(r.places);
+      // Persist so a tab-switch or reload restores results without re-billing.
+      writeSnapshot(area.id, { type, keyword, results: r.places, meta: nextMeta, benchmark: null });
       toast.success(`${r.count} results`);
     } catch (e: any) {
       const err = e?.response?.data?.error ?? 'Search failed';
@@ -110,6 +147,7 @@ export default function POISearchPanel({ area }: { area: Area }) {
         keyword: keyword || undefined,
       });
       setBenchmark(b);
+      writeSnapshot(area.id, { benchmark: b });
     } catch (e: any) {
       toast.error(e?.response?.data?.error ?? 'Benchmark failed');
     } finally { setBenchmarking(false); }
@@ -188,7 +226,7 @@ export default function POISearchPanel({ area }: { area: Area }) {
               <Loader2 size={13} className="animate-spin" /> Running the same search on 10 reference US areas…
             </div>
           )}
-          {benchmark && <BenchmarkPanel data={benchmark} onClose={() => setBenchmark(null)} />}
+          {benchmark && <BenchmarkPanel data={benchmark} onClose={() => { setBenchmark(null); writeSnapshot(area.id, { benchmark: null }); }} />}
           <div className="space-y-2">
             {results.map((p) => (
               <div key={p.id} className="card">
