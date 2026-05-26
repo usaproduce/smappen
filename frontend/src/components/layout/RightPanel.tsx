@@ -64,7 +64,7 @@ export default function RightPanel() {
   const ModeIcon = modeIcon[area.travel_mode ?? ''] ?? MapPin;
 
   return (
-    <aside className="absolute top-4 right-20 w-[300px] md:w-[340px] lg:w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20 panel-slide-right">
+    <aside className="absolute top-4 right-20 w-[300px] md:w-[340px] lg:w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20 panel-blob-open">
       {/* Header */}
       <div className="px-4 pt-3 pb-3 border-b border-slate-100">
         {/* VT13 — breadcrumb so context is always visible. Truncates the
@@ -162,8 +162,11 @@ export default function RightPanel() {
         </div>
       </div>
 
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Body — keyed by tab so React remounts on every tile click and the
+          panel-body-blob-morph animation replays. The 2-second clip-path
+          + border-radius interpolation makes each tab look like it's blobbing
+          out of the toolbar tile that triggered it. */}
+      <div key={tab} className="flex-1 overflow-y-auto panel-body-blob-morph">
         {tab === 'overview' && (
           <div className="p-4 space-y-3">
             {/* Tweak #11 — four colored stat tiles instead of two plain cards.
