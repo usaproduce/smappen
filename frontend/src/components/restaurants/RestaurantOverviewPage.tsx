@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
-  Sparkles, ChefHat, ChevronRight, Check, X, TrendingUp,
+  Sparkles, ChefHat, ChevronRight, Check, X, TrendingUp, MapPin, Loader2,
 } from 'lucide-react';
 import {
   menuApi, recommendationsApi, roiApi, posApi,
@@ -10,6 +10,7 @@ import {
 } from '../../api/restaurants';
 import RestaurantWorkspaceLayout from './RestaurantWorkspaceLayout';
 import type { MenuItem, Recommendation } from '../../stores/restaurantStore';
+import { studyTradeAreaForRestaurant } from '../../utils/studyTradeArea';
 
 /**
  * War-room dashboard — spec §9.
@@ -33,6 +34,19 @@ export default function RestaurantOverviewPage() {
   const [recs, setRecs] = useState<Recommendation[]>([]);
   const [roi, setRoi] = useState<RoiMonthly | null>(null);
   const [posIntegrations, setPosIntegrations] = useState<Array<{ provider: string; last_synced_at: string | null }>>([]);
+  const [studying, setStudying] = useState(false);
+  const navigate = useNavigate();
+
+  async function studyArea() {
+    if (studying) return;
+    setStudying(true);
+    try {
+      const ok = await studyTradeAreaForRestaurant(restaurantId);
+      if (ok) navigate('/app');
+    } finally {
+      setStudying(false);
+    }
+  }
 
   useEffect(() => {
     if (!restaurantId) return;
@@ -178,6 +192,30 @@ export default function RestaurantOverviewPage() {
           <QuickLink to={`/app/restaurants/${restaurantId}/menu`}    icon={ChefHat}    title="Menu"    hint="items + recommendations" />
           <QuickLink to={`/app/restaurants/${restaurantId}/costs`}   icon={TrendingUp} title="Costs"   hint="theoretical food cost" />
           <QuickLink to={`/app/restaurants/${restaurantId}/goals`}   icon={Sparkles}   title="Goals"   hint="scorecard + trends" />
+        </section>
+
+        {/* Trade-area entry — drops the user on the map with a 15-min drive
+            isochrone already built around the restaurant's pin. */}
+        <section>
+          <button
+            type="button"
+            onClick={studyArea}
+            disabled={studying}
+            className="w-full text-left flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 hover:border-violet-300 hover:shadow-sm transition disabled:opacity-60 disabled:cursor-wait"
+          >
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-violet-50" style={{ color: '#7848BB' }}>
+                <MapPin size={18} />
+              </span>
+              <div>
+                <div className="font-bold text-sm" style={{ color: '#1A1A2E' }}>Study your trade area</div>
+                <div className="text-xs text-slate-500">15-min drive around this restaurant — demographics, foot traffic, competitors.</div>
+              </div>
+            </div>
+            {studying
+              ? <Loader2 size={14} className="text-slate-400 animate-spin" />
+              : <ChevronRight size={14} className="text-slate-400" />}
+          </button>
         </section>
       </div>
     </RestaurantWorkspaceLayout>

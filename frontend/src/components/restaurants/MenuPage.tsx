@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
-  RefreshCw, Sparkles, Check, X, ExternalLink, AlertCircle, MapPin,
+  RefreshCw, Sparkles, Check, X, ExternalLink, AlertCircle, MapPin, Loader2,
 } from 'lucide-react';
 import {
   posApi, menuApi, recommendationsApi, roiApi, type RoiMonthly,
 } from '../../api/restaurants';
 import { useRestaurantStore, type MenuItem, type Recommendation } from '../../stores/restaurantStore';
 import RestaurantWorkspaceLayout from './RestaurantWorkspaceLayout';
+import { studyTradeAreaForRestaurant } from '../../utils/studyTradeArea';
 
 /**
  * Carafe menu workspace — the entire Phase 1 vertical slice lives here.
@@ -33,6 +34,19 @@ export default function MenuPage() {
   const [syncing, setSyncing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [roi, setRoi] = useState<RoiMonthly | null>(null);
+  const [studying, setStudying] = useState(false);
+  const navigate = useNavigate();
+
+  async function studyArea() {
+    if (studying) return;
+    setStudying(true);
+    try {
+      const ok = await studyTradeAreaForRestaurant(restaurantId);
+      if (ok) navigate('/app');
+    } finally {
+      setStudying(false);
+    }
+  }
 
   useEffect(() => {
     if (!restaurantId) return;
@@ -213,9 +227,16 @@ export default function MenuPage() {
           </section>
         )}
 
-        {/* Market intel entry point — repurposes the existing /app map stack */}
+        {/* Market intel entry point — repurposes the existing /app map stack.
+            Pre-builds a 15-min drive isochrone on the restaurant's pin so the
+            user lands on a useful map, not an empty one. */}
         <section className="mb-6">
-          <Link to="/app" className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 hover:border-violet-300 hover:shadow-sm transition">
+          <button
+            type="button"
+            onClick={studyArea}
+            disabled={studying}
+            className="w-full text-left flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 hover:border-violet-300 hover:shadow-sm transition disabled:opacity-60 disabled:cursor-wait"
+          >
             <div className="flex items-center gap-3">
               <span className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-violet-50" style={{ color: '#7848BB' }}>
                 <MapPin size={18} />
@@ -225,8 +246,10 @@ export default function MenuPage() {
                 <div className="text-xs text-slate-500">Who lives in your delivery radius, how busy this block is, where competitors are.</div>
               </div>
             </div>
-            <ExternalLink size={14} className="text-slate-400" />
-          </Link>
+            {studying
+              ? <Loader2 size={14} className="text-slate-400 animate-spin" />
+              : <ExternalLink size={14} className="text-slate-400" />}
+          </button>
         </section>
 
         {/* Menu items */}
