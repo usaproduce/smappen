@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   X, MapPin, Users, Clock, Circle, PenSquare, FileText,
-  Search, Folder as FolderIcon, ChevronDown, Sparkles, Loader2,
+  Search, Folder as FolderIcon, ChevronDown, Sparkles, Loader2, Pencil,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { isochroneApi } from '../../api/isochrone';
@@ -14,6 +14,28 @@ import { useUiPrefsStore } from '../../stores/uiPrefsStore';
 import { AREA_PALETTE_NAMED, contrastInk } from '../../utils/colors';
 import { formatNumber } from '../../utils/format';
 import type { Area } from '../../types';
+
+function deriveInitial(area?: Area) {
+  if (!area) return null;
+  const mode: Mode =
+    area.area_type === 'radius' ? 'radius'
+    : (area.area_type === 'isochrone' || area.area_type === 'isodistance') ? 'travel'
+    : 'travel'; // 'manual' (drawn) — meta-only edit; mode picker hidden anyway
+  return {
+    mode,
+    address:    area.center_address ?? '',
+    lat:        (area.center_lat ?? null) as number | null,
+    lng:        (area.center_lng ?? null) as number | null,
+    travelMode: (area.travel_mode as any) ?? 'driving-car',
+    time:       area.travel_time_minutes ?? 15,
+    radiusKm:   area.travel_distance_km ?? 5,
+    name:       area.name,
+    color:      area.fill_color ?? AREA_PALETTE_NAMED[12].hex,
+    opacity:    typeof area.fill_opacity === 'number' ? area.fill_opacity : 0.3,
+    folderId:   (area.folder_id ?? null) as string | null,
+    notes:      area.notes ?? '',
+  };
+}
 
 /**
  * Sidebar-expanding area creator (replaces the full-screen modal).
@@ -53,26 +75,44 @@ const TIME_PRESETS = [5, 10, 15, 20, 30, 45, 60];
 const POP_PRESETS = [5000, 10000, 25000, 50000, 100000, 250000, 500000];
 const RADIUS_KM_PRESETS = [1, 2, 5, 10, 25, 50, 100];
 
-export default function AreaCreator({ onClose }: { onClose: () => void }) {
-  const { currentProject, addArea, folders } = useProjectStore() as any;
+interface Props {
+  onClose: () => void;
+  /** When set, the panel acts as an editor for this area instead of a
+   *  creator: fields prefill from the area, mode picker is hidden (the
+   *  shape type is locked), Save → PUT /api/areas/:id with the updated
+   *  geometry (if recomputed) plus all meta (color, opacity, name…). */
+  editing?: Area;
+}
+
+export default function AreaCreator({ onClose, editing }: Props) {
+  const { currentProject, addArea, updateArea, folders } = useProjectStore() as any;
   const { startDrawing, placePinFor, pendingIsochrone, setPendingIsochrone, fitBoundsToArea } = useMapStore();
   const { recentColors, pushRecentColor } = useUiPrefsStore();
 
-  const [mode, setMode] = useState<Mode>('travel');
-  const [address, setAddress] = useState('');
-  const [lat, setLat] = useState<number | null>(null);
-  const [lng, setLng] = useState<number | null>(null);
+  // Initial values are derived once from the area being edited so we can
+  // diff against them later to know whether the geometry needs a recalc
+  // before Save. Plain object captured by ref so it survives re-renders
+  // without re-deriving (and never changes mid-edit, even if the props
+  // briefly do).
+  const initialRef = useRef(deriveInitial(editing));
+  const initial = initialRef.current;
 
-  const [travelMode, setTravelMode] = useState<'driving-car' | 'cycling-regular' | 'foot-walking'>('driving-car');
-  const [time, setTime] = useState(15);
+  const [mode, setMode] = useState<Mode>(initial?.mode ?? 'travel');
+  const [address, setAddress] = useState(initial?.address ?? '');
+  const [lat, setLat] = useState<number | null>(initial?.lat ?? null);
+  const [lng, setLng] = useState<number | null>(initial?.lng ?? null);
+
+  const [travelMode, setTravelMode] = useState<'driving-car' | 'cycling-regular' | 'foot-walking'>(initial?.travelMode ?? 'driving-car');
+  const [time, setTime] = useState(initial?.time ?? 15);
   const [targetPop, setTargetPop] = useState(25000);
-  const [radiusKm, setRadiusKm] = useState(5);
+  const [radiusKm, setRadiusKm] = useState(initial?.radiusKm ?? 5);
   const [units, setUnits] = useState<'km' | 'mi'>('km');
 
-  const [name, setName] = useState('');
-  const [color, setColor] = useState(AREA_PALETTE_NAMED[12].hex);
-  const [folderId, setFolderId] = useState<string | null>(null);
-  const [notes, setNotes] = useState('');
+  const [name, setName] = useState(initial?.name ?? '');
+  const [color, setColor] = useState(initial?.color ?? AREA_PALETTE_NAMED[12].hex);
+  const [opacity, setOpacity] = useState(initial?.opacity ?? 0.3);
+  const [folderId, setFolderId] = useState<string | null>(initial?.folderId ?? null);
+  const [notes, setNotes] = useState(initial?.notes ?? '');
 
   const [calculating, setCalculating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -80,6 +120,18 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
   // (or discarded on cancel / mode change). Live preview removed.
   const [pending, setPending] = useState<any | null>(null);
   const addressRef = useRef<HTMLInputElement>(null);
+
+  // In edit mode: which geometry-inputs has the user touched? If anything
+  // dirty AND no `pending`, Save is blocked until Recalculate runs so we
+  // don't persist a 30-min label on a 15-min polygon.
+  const dirtyGeo = useMemo(() => {
+    if (!editing || !initial) return false;
+    if (mode !== initial.mode) return true;
+    const moved = lat !== initial.lat || lng !== initial.lng;
+    if (mode === 'travel')  return moved || travelMode !== initial.travelMode || time !== initial.time;
+    if (mode === 'radius')  return moved || radiusKm !== initial.radiusKm;
+    return false;
+  }, [editing, initial, mode, travelMode, time, radiusKm, lat, lng]);
 
   // Google Places autocomplete.
   useEffect(() => {
@@ -122,16 +174,27 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
     if (mode === 'radius') return head ? `${head} – ${radiusKm} ${units} radius` : `${radiusKm} ${units} radius`;
     return head ? `${head} – drawn` : 'Drawn area';
   }, [address, mode, travelMode, time, targetPop, radiusKm, units]);
-  useEffect(() => { setName(defaultName); }, [defaultName]);
-
-  // Draw mode closes the panel and arms the drawing tool.
   useEffect(() => {
-    if (mode === 'draw') {
+    // In edit mode, keep the area's original name unless the user manually
+    // edited it — otherwise changing the time slider would silently rewrite
+    // "Acme HQ – 15 min" to "Acme HQ – 20 min Car" before they hit Save.
+    if (editing) return;
+    setName(defaultName);
+  }, [defaultName, editing]);
+
+  // Draw mode closes the panel and arms the drawing tool — but only when
+  // the user actively picks it. In edit mode, the panel can OPEN with a
+  // 'manual' (drawn) area and we don't want to immediately re-arm the
+  // drawing tool. So gate on the prior mode actually being non-draw.
+  const prevMode = useRef(mode);
+  useEffect(() => {
+    if (mode === 'draw' && prevMode.current !== 'draw' && !editing) {
       startDrawing('polygon');
       toast('Draw your polygon on the map — double-click to finish', { icon: '✏️' });
       onClose();
     }
-  }, [mode]);
+    prevMode.current = mode;
+  }, [mode, editing]);
 
   async function resolveCenter(): Promise<{ lat: number; lng: number } | null> {
     let useLat = lat, useLng = lng;
@@ -199,6 +262,51 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
   }
 
   async function save() {
+    // Edit path — PATCH the existing area. Meta (color/opacity/name/notes/
+    // folder) always goes; geometry + travel fields only when the user
+    // actually recomputed (pending set).
+    if (editing) {
+      setSaving(true);
+      try {
+        const patch: any = {
+          name: name.trim() || editing.name,
+          fill_color: color,
+          stroke_color: color,
+          fill_opacity: opacity,
+          notes: notes.trim() || null,
+          folder_id: folderId,
+        };
+        if (pending && lat != null && lng != null) {
+          patch.geometry = pending.geojson;
+          patch.center_lat = lat;
+          patch.center_lng = lng;
+          patch.center_address = address || null;
+          if (pending.type === 'isochrone') {
+            patch.travel_mode = travelMode;
+            patch.travel_time_minutes = time;
+            patch.travel_distance_km = null;
+          } else {
+            patch.travel_mode = null;
+            patch.travel_time_minutes = null;
+            patch.travel_distance_km = pending.radius_km ?? null;
+          }
+        }
+        const a = await areasApi.update(editing.id, patch);
+        // Re-apply geometry locally so the map updates without a refetch —
+        // server returns the updated row but the store wants geometry
+        // alongside it, and `a` may not include it depending on the endpoint.
+        updateArea({ ...editing, ...a, geometry: pending?.geojson ?? editing.geometry } as Area);
+        pushRecentColor(color);
+        if (pending) fitBoundsToArea(pending.geojson);
+        toast.success('Area updated');
+        onClose();
+      } catch (e: any) {
+        toast.error(e?.response?.data?.error ?? 'Update failed');
+      } finally { setSaving(false); }
+      return;
+    }
+
+    // Create path — original behavior.
     if (!pending || !currentProject || lat == null || lng == null) return;
     setSaving(true);
     try {
@@ -209,7 +317,7 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
         travel_mode: pending.type === 'isochrone' ? travelMode : null,
         travel_time_minutes: pending.type === 'isochrone' ? time : null,
         travel_distance_km: pending.type === 'radius' ? pending.radius_km : null,
-        fill_color: color, stroke_color: color,
+        fill_color: color, stroke_color: color, fill_opacity: opacity,
         geometry: pending.geojson,
         folder_id: folderId,
         notes: notes || null,
@@ -243,13 +351,17 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
         style={{ background: 'linear-gradient(135deg, #F57C00 0%, #E53935 50%, #7848BB 100%)' }}
       >
         <div className="flex items-center gap-2 text-white font-extrabold text-[15px]">
-          <Sparkles size={15} /> Create area
+          {editing ? <Pencil size={15} /> : <Sparkles size={15} />}
+          {editing ? 'Edit area' : 'Create area'}
         </div>
         <button onClick={onClose} className="text-white/85 hover:text-white"><X size={15} /></button>
       </header>
 
       <div className="overflow-y-auto flex-1 p-3 space-y-3">
-        {/* Mode picker */}
+        {/* Mode picker — hidden in edit mode. Converting an isochrone into a
+            radius (or vice versa) would orphan the original geometry; the
+            cleaner path is delete + recreate. */}
+        {!editing && (
         <div className="grid grid-cols-2 gap-1.5">
           {MODES.map((m) => {
             const Active = mode === m.key;
@@ -273,6 +385,7 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
             );
           })}
         </div>
+        )}
 
         {/* Address */}
         <div>
@@ -455,6 +568,21 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
+        {/* Opacity — easy to overlook in the create flow but the most-asked
+            edit on saved areas (operator wants the underlying basemap to
+            show through more or less). */}
+        <div>
+          <label className="label flex items-center justify-between">
+            <span>Fill opacity</span>
+            <span className="text-violet-700 font-extrabold text-xs tabular-nums">{Math.round(opacity * 100)}%</span>
+          </label>
+          <input
+            type="range" min={0.05} max={1} step={0.05}
+            value={opacity} onChange={(e) => setOpacity(+e.target.value)}
+            className="w-full accent-violet-600"
+          />
+        </div>
+
         {/* Folder + notes */}
         {folders && folders.length > 0 && (
           <div>
@@ -490,9 +618,36 @@ export default function AreaCreator({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      {/* Action bar — Calculate / Save / Cancel */}
+      {/* Action bar — Calculate / Save / Cancel (creator) or
+                       Recalculate / Update (editor). */}
       <div className="px-3 py-2.5 border-t border-slate-100 flex gap-2 shrink-0">
-        {!pending ? (
+        {editing ? (
+          <>
+            {dirtyGeo && !pending && (
+              <button
+                className="btn btn-secondary h-9 px-3"
+                onClick={calculate}
+                disabled={calculating || (!address && (lat == null || lng == null))}
+                title="Recalculate the polygon for the new drive time / radius"
+              >
+                {calculating ? <><Loader2 size={13} className="animate-spin" /> Recalc…</> : 'Recalculate'}
+              </button>
+            )}
+            {pending && (
+              <button className="btn btn-secondary h-9 px-3" onClick={() => setPending(null)} title="Discard the new shape and keep the saved one">
+                Reset shape
+              </button>
+            )}
+            <button
+              className="btn btn-primary flex-1 justify-center h-9"
+              disabled={saving || (dirtyGeo && !pending)}
+              onClick={save}
+              title={dirtyGeo && !pending ? 'Click Recalculate first to update the polygon' : undefined}
+            >
+              {saving ? <><Loader2 size={13} className="animate-spin" /> Saving…</> : 'Update area'}
+            </button>
+          </>
+        ) : !pending ? (
           <button
             className="btn btn-primary flex-1 justify-center h-9"
             onClick={calculate}

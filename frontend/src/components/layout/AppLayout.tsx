@@ -32,13 +32,14 @@ import { GOOGLE_MAPS_LIBRARIES } from '../../utils/mapsLoader';
 const LIBRARIES = GOOGLE_MAPS_LIBRARIES;
 
 export default function AppLayout() {
-  const { selectedAreaId, mapInstance, timeMachineRequest, closeTimeMachine } = useMapStore();
-  const { currentProject } = useProjectStore();
+  const { selectedAreaId, mapInstance, timeMachineRequest, closeTimeMachine, editingAreaId, closeAreaEditor } = useMapStore();
+  const { currentProject, areas } = useProjectStore();
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [stuckLoading, setStuckLoading] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const editingArea = editingAreaId ? areas.find((a) => a.id === editingAreaId) ?? null : null;
 
   // Check onboarding state once on mount — open the wizard only if the user
   // hasn't completed/skipped it AND has no areas in their current project.
@@ -184,9 +185,20 @@ export default function AppLayout() {
         )}
       </div>
 
-      {creatorOpen && isLoaded && (
-        <ErrorBoundary scope="Area creator" inline onReset={() => setCreatorOpen(false)}>
-          <AreaCreator onClose={() => setCreatorOpen(false)} />
+      {(creatorOpen || editingArea) && isLoaded && (
+        <ErrorBoundary
+          scope={editingArea ? 'Area editor' : 'Area creator'}
+          inline
+          onReset={() => { setCreatorOpen(false); closeAreaEditor(); }}
+        >
+          <AreaCreator
+            // `key` so swapping target areas remounts the panel with fresh
+            // state — otherwise opening Edit on a second area while the
+            // first is still mounted would keep the previous initial values.
+            key={editingArea?.id ?? 'create'}
+            editing={editingArea ?? undefined}
+            onClose={() => { setCreatorOpen(false); closeAreaEditor(); }}
+          />
         </ErrorBoundary>
       )}
       {importOpen && (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, MapPin, Car, Bike, Footprints, Clock, Info, Users, Building2, Database, Columns2, Camera } from 'lucide-react';
+import { X, MapPin, Car, Bike, Footprints, Clock, Info, Users, Building2, Database, Columns2, Camera, Pencil } from 'lucide-react';
 import StreetViewModal from '../map/StreetViewModal';
 import { useMapStore } from '../../stores/mapStore';
 import { useProjectStore } from '../../stores/projectStore';
@@ -34,7 +34,7 @@ const modeLabel: Record<string, string> = {
 };
 
 export default function RightPanel() {
-  const { selectedAreaId, selectArea, openTimeMachine, rightPanelTab, setRightPanelTab } = useMapStore();
+  const { selectedAreaId, selectArea, openTimeMachine, rightPanelTab, setRightPanelTab, openAreaEditor } = useMapStore();
   const { areas } = useProjectStore();
   // Tab state lives in mapStore so the right-toolbar Demographics/Businesses
   // buttons can deep-link into a specific tab when an area is selected.
@@ -95,6 +95,13 @@ export default function RightPanel() {
             )}
           </div>
           <div className="flex items-center gap-0.5">
+            <button
+              className="text-slate-500 hover:text-violet-700 p-1 rounded hover:bg-slate-50 transition-colors"
+              onClick={() => openAreaEditor(area.id)}
+              title="Edit drive time, travel mode, radius, color, opacity, notes"
+            >
+              <Pencil size={16} />
+            </button>
             {/* BF2 — open a small picker, then ComparisonView modal. Previous
                 version navigated to a hash route that didn't exist. */}
             <button

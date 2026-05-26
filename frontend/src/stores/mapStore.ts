@@ -83,6 +83,12 @@ interface MapState {
    *  deleted — CustomLayerMarkers watches this to know when to refetch. */
   customLayersVersion: number;
   bumpCustomLayers: () => void;
+  /** When set, AppLayout opens the AreaCreator panel in edit mode bound to
+   *  this area. Lets any surface (AreaCard menu, RightPanel) open the same
+   *  editor without re-mounting state in each caller. */
+  editingAreaId: string | null;
+  openAreaEditor: (id: string) => void;
+  closeAreaEditor: () => void;
 }
 
 export const useMapStore = create<MapState>((set, get) => ({
@@ -159,6 +165,9 @@ export const useMapStore = create<MapState>((set, get) => ({
   setHeatmapFeatures: (heatmapFeatures) => set({ heatmapFeatures }),
   customLayersVersion: 0,
   bumpCustomLayers: () => set((s) => ({ customLayersVersion: s.customLayersVersion + 1 })),
+  editingAreaId: null,
+  openAreaEditor: (editingAreaId) => set({ editingAreaId }),
+  closeAreaEditor: () => set({ editingAreaId: null }),
   fitBoundsToArea: (geometry) => {
     const map = get().mapInstance;
     if (!map || !geometry?.coordinates?.[0]) return;

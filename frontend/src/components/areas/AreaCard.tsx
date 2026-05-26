@@ -102,7 +102,7 @@ const modeIcon: Record<string, any> = {
 };
 
 export default function AreaCard({ area }: { area: Area }) {
-  const { selectedAreaId, selectArea, fitBoundsToArea, hiddenAreaIds, toggleAreaVisibility } = useMapStore();
+  const { selectedAreaId, selectArea, fitBoundsToArea, hiddenAreaIds, toggleAreaVisibility, openAreaEditor } = useMapStore();
   const isHidden = hiddenAreaIds.has(area.id);
   const { removeArea, addArea, updateArea } = useProjectStore();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -382,8 +382,16 @@ export default function AreaCard({ area }: { area: Area }) {
             anchor={menuButtonRef.current}
             onClose={() => { setMenuOpen(false); setColorPickerOpen(false); }}
           >
+            <button
+              className="w-full text-left px-3 py-1.5 text-sm hover:bg-violet-50 flex items-center gap-2 font-semibold"
+              style={{ color: '#7848BB' }}
+              onClick={() => { setMenuOpen(false); openAreaEditor(area.id); }}
+              title="Change drive time, travel mode, radius, color, opacity, notes — anything about this area"
+            >
+              <Edit3 size={13} /> Edit area…
+            </button>
             <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); setRenaming(true); }}>
-              <Edit3 size={13} /> Rename
+              <Edit3 size={13} /> Quick rename
             </button>
             <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 flex items-center gap-2" onClick={() => setColorPickerOpen(!colorPickerOpen)}>
               <Palette size={13} /> Change color
