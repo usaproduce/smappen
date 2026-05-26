@@ -490,75 +490,76 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
 
    prefers-reduced-motion fallback at the bottom of styles.css disables
    these alongside the slide-in family. */
+/* The card morphs out of the toolbar by ANIMATING THE CLIP-PATH, not the
+   transform. clip-path:inset() keeps the box, its content, and its text at
+   final size throughout — only the visible region grows from a small rounded
+   strip on the right edge into the full panel. Apple-style cubic-bezier
+   (easeOutQuint, no overshoot) for the glass feel; the asymmetric `round`
+   values on the inset interpolate organically so the outline ripples
+   instead of growing as a rigid rectangle.
+
+   The end-state inset rounds ONLY the LEFT corners (the right side is flat
+   because it shares a seam with the rounded-l-none toolbar — see RightPanel
+   + RightToolbar classes). That's how the panel and toolbar read as a
+   single shape with no border-radius cutting them apart. */
 .panel-blob-open {
-  animation: panelBlobOpen 2s cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  /* Right-center origin so scaleX grows leftward (out of the toolbar
-     that sits at the right edge) rather than centered. The panel must
-     also be positioned flush against the toolbar — see right-16 on the
-     aside — otherwise the blob "emerges" with a visible gap and the
-     connected-to-sidebar feel is lost. */
-  transform-origin: 100% 50%;
-  backface-visibility: hidden;
-  will-change: transform, border-radius, opacity;
+  animation: panelBlobOpen 2s cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: clip-path;
+}
+
+/* Drop-shadow for the panel that omits the right side, so when the panel
+   sits flush against the toolbar there's no shadow streak running down
+   the seam — the two surfaces read as one continuous shape. Approximates
+   shadow-float (the project-wide token) on the top / left / bottom only. */
+.panel-flush-toolbar {
+  box-shadow:
+    -2px 0 12px -2px rgba(15, 23, 42, 0.08),
+    0 8px 24px -4px rgba(15, 23, 42, 0.08),
+    0 2px 4px -1px rgba(15, 23, 42, 0.04);
 }
 @keyframes panelBlobOpen {
-  /* The card literally grows out of the toolbar tile. Start as a tiny
-     vertical sliver at scale(0.02, 0.06) — basically a dot at the right
-     edge — then morph outward + downward. Border-radius interpolates
-     through asymmetric blob values before settling on rounded-xl so the
-     outline ripples organically instead of inflating as a rigid box. */
   0% {
-    transform: scale(0.02, 0.06);
-    border-radius: 50% / 50%;
-    opacity: 0.7;
+    clip-path: inset(46% 0 46% 98% round 50% 0 0 50% / 50% 0 0 50%);
+    opacity: 0;
   }
-  15% {
-    transform: scale(0.08, 0.22);
-    border-radius: 60% 40% 60% 40% / 50% 50% 50% 50%;
-    opacity: 1;
+  8% { opacity: 1; }
+  25% {
+    clip-path: inset(38% 0 38% 82% round 55% 0 0 55% / 50% 0 0 50%);
   }
-  35% {
-    transform: scale(0.32, 0.55);
-    border-radius: 50% 40% 40% 60% / 35% 50% 60% 40%;
+  50% {
+    clip-path: inset(18% 0 18% 50% round 45% 0 0 50% / 40% 0 0 45%);
   }
-  60% {
-    transform: scale(0.72, 0.9);
-    border-radius: 35% 30% 25% 40% / 30% 35% 40% 35%;
-  }
-  85% {
-    transform: scale(0.97, 0.99);
-    border-radius: 20% 22% 18% 22% / 18% 22% 18% 22%;
+  75% {
+    clip-path: inset(4% 0 4% 18% round 22% 0 0 22% / 22% 0 0 22%);
   }
   100% {
-    transform: scale(1, 1);
-    border-radius: 12px;
+    clip-path: inset(0 0 0 0 round 12px 0 0 12px / 12px 0 0 12px);
     opacity: 1;
   }
 }
 
+/* Tab-swap morph inside an already-open panel. Same technique as above but
+   tighter (1.4s) and starting from the top-right corner where the toolbar
+   tile sits — so subsequent tile clicks feel like each new content card
+   blobs out of the corresponding sidebar icon. */
 .panel-body-blob-morph {
-  animation: panelBodyBlobMorph 2s cubic-bezier(0.65, 0, 0.35, 1) both;
+  animation: panelBodyBlobMorph 1.4s cubic-bezier(0.22, 1, 0.36, 1) both;
   will-change: clip-path, opacity;
 }
 @keyframes panelBodyBlobMorph {
   0% {
-    clip-path: circle(0% at 100% 0%);
+    clip-path: inset(0 0 70% 90% round 80% 0 0 80%);
     opacity: 0;
   }
-  10% {
-    opacity: 1;
+  10% { opacity: 1; }
+  40% {
+    clip-path: inset(0 0 40% 55% round 55% 0 0 55%);
   }
-  35% {
-    clip-path: circle(35% at 92% 12%);
-  }
-  60% {
-    clip-path: circle(85% at 75% 30%);
-  }
-  85% {
-    clip-path: circle(140% at 60% 45%);
+  70% {
+    clip-path: inset(0 0 15% 18% round 25% 0 0 25%);
   }
   100% {
-    clip-path: circle(200% at 50% 50%);
+    clip-path: inset(0 0 0 0 round 0);
     opacity: 1;
   }
 }

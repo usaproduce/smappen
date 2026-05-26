@@ -55,8 +55,13 @@ export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, a
   // Tweak #20 — uses data-tooltip (not the bare title attr) so we get styled
   // pill labels via CSS pseudo-elements with a 250ms hover delay. title is
   // dropped here because the OS tooltip would race the CSS one.
+  // rounded-r-xl rounded-l-none + border-l-0 so this strip merges
+  // seamlessly with the RightPanel's flat right edge when an area is
+  // selected. The flat-left look reads fine standalone too — it's a
+  // sidebar against the right edge of the map. z-30 keeps the toolbar
+  // above the panel just in case any sub-pixel rounding edges through.
   return (
-    <aside className="absolute top-4 right-4 w-12 max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col items-center py-2 gap-0.5 z-20">
+    <aside className="absolute top-4 right-4 w-12 max-h-[calc(100%-2rem)] bg-white rounded-r-xl rounded-l-none shadow-float border border-l-0 border-slate-200 flex flex-col items-center py-2 gap-0.5 z-30">
       <button className="toolbar-btn" data-tooltip="Overview" onClick={() => selectArea(null)}>
         <PieChart size={20} />
       </button>

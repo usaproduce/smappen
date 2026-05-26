@@ -65,11 +65,17 @@ export default function RightPanel() {
 
   // right-16 = 64px from edge. RightToolbar sits at right-4 w-12, so its
   // left edge is at vw-64. Setting the panel's right to 64px makes them
-  // share a seam with no gap — the blob morph that scales out from
-  // transform-origin: 100% 50% then visibly grows out of the toolbar
-  // instead of materialising in empty space.
+  // share a seam with no gap.
+  //
+  // Visual seam treatment (so the two cards read as ONE shape):
+  //   - rounded-l-xl rounded-r-none on this panel (flat right side)
+  //   - border-r-0 (no border between panel and toolbar)
+  //   - matching rounded-l-none on the toolbar's left side
+  //   - the panel's right-edge shadow is suppressed below in styles.css
+  //     (.panel-flush-toolbar) so the blob morph reveals a clean continuous
+  //     shape, not two shadowed cards bumping into each other.
   return (
-    <aside className="absolute top-4 right-16 w-[300px] md:w-[340px] lg:w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-xl shadow-float border border-slate-200 flex flex-col overflow-hidden z-20 panel-blob-open">
+    <aside className="absolute top-4 right-16 w-[300px] md:w-[340px] lg:w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-l-xl rounded-r-none border border-r-0 border-slate-200 flex flex-col overflow-hidden z-20 panel-blob-open panel-flush-toolbar">
       {/* Header */}
       <div className="px-4 pt-3 pb-3 border-b border-slate-100">
         {/* VT13 — breadcrumb so context is always visible. Truncates the
