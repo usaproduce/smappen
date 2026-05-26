@@ -241,13 +241,80 @@ class GoogleMapsService
      */
     public function searchPlacesText(string $query, ?float $lat = null, ?float $lng = null, ?int $radiusMeters = null): array
     {
-        $cacheKey = 'places_text_v2:' . md5("$query,$lat,$lng,$radiusMeters");
+        // Bumped to v3: results from v2 saturated at the 60-place pagination
+        // cap (3 pages × pageSize 20) with no geographic tiling, which made
+        // the benchmark comparison meaningless (every reference returned
+        // exactly 60). v3 hard-bounds each tile with a bbox locationRestriction
+        // and recursively splits saturated tiles into quadrants.
+        $cacheKey = 'places_text_v3:' . md5("$query,$lat,$lng,$radiusMeters");
         $cached = CacheService::getJson($cacheKey);
         if ($cached) {
             $this->lastCallCount = 0;
             return $cached;
         }
 
+        $this->lastCallCount = 0;
+        $byId = [];
+
+        if ($lat !== null && $lng !== null && $radiusMeters !== null) {
+            // Bounded search — recursive quadrant tiling. Depth 2 = up to
+            // 1 + 4 + 16 = 21 tiles, each tile up to 3 paginated API calls,
+            // worst-case 63 billable calls = ~$2.00 per query (rare; only
+            // triggered when every tile hits 60 saturation). Cap at 500
+            // unique places.
+            $this->textSearchTile($query, $lat, $lng, $radiusMeters, 0, 2, $byId, 500);
+        } else {
+            // Unbounded search — original 3-page pagination, no tiling
+            // possible without a center.
+            $this->textSearchPage($query, null, null, null, $byId, 500);
+        }
+
+        $places = array_values($byId);
+
+        if ($lat !== null && $lng !== null) {
+            usort($places, function ($a, $b) use ($lat, $lng) {
+                $da = self::haversine($lat, $lng, $a['location']['latitude'] ?? 0, $a['location']['longitude'] ?? 0);
+                $db = self::haversine($lat, $lng, $b['location']['latitude'] ?? 0, $b['location']['longitude'] ?? 0);
+                return $da <=> $db;
+            });
+        }
+
+        CacheService::set($cacheKey, $places, 172800);
+        return $places;
+    }
+
+    /**
+     * Recursive text-search tile. Splits saturated tiles into 4 quadrants
+     * so dense urban searches (think "pizza" in NYC) can exceed the per-
+     * query 60-result cap. Stops at min tile radius 500m or max depth.
+     */
+    private function textSearchTile(string $query, float $lat, float $lng, int $radiusMeters, int $depth, int $maxDepth, array &$byId, int $cap): void
+    {
+        if (count($byId) >= $cap) return;
+        if ($radiusMeters < 500) return;
+
+        $before = count($byId);
+        $this->textSearchPage($query, $lat, $lng, $radiusMeters, $byId, $cap);
+        $added = count($byId) - $before;
+
+        if ($added >= 60 && $depth < $maxDepth) {
+            $subR = (int) round($radiusMeters / sqrt(2));
+            $offsetM = $radiusMeters / 2;
+            foreach ([[1, 1], [-1, 1], [1, -1], [-1, -1]] as [$dx, $dy]) {
+                [$qLat, $qLng] = self::offsetMeters($lat, $lng, $dx * $offsetM, $dy * $offsetM);
+                $this->textSearchTile($query, $qLat, $qLng, $subR, $depth + 1, $maxDepth, $byId, $cap);
+            }
+        }
+    }
+
+    /**
+     * One bounded text search, up to 3 paginated pages, dedupes into $byId.
+     * Uses locationRestriction (rectangle) so tile splits actually return
+     * different result sets — locationBias is a soft preference and would
+     * leak global results across every tile, defeating recursion.
+     */
+    private function textSearchPage(string $query, ?float $lat, ?float $lng, ?int $radiusMeters, array &$byId, int $cap): void
+    {
         $url = 'https://places.googleapis.com/v1/places:searchText';
         $fieldMask = 'places.id,places.displayName,places.formattedAddress,places.location,'
                    . 'places.types,places.businessStatus,places.nationalPhoneNumber,'
@@ -255,42 +322,57 @@ class GoogleMapsService
 
         $payload = ['textQuery' => $query, 'languageCode' => 'en', 'pageSize' => 20];
         if ($lat !== null && $lng !== null && $radiusMeters !== null) {
-            $payload['locationBias'] = [
-                'circle' => [
-                    'center' => ['latitude' => $lat, 'longitude' => $lng],
-                    'radius' => $radiusMeters,
+            [$minLng, $minLat, $maxLng, $maxLat] = self::circleToBbox($lat, $lng, $radiusMeters);
+            $payload['locationRestriction'] = [
+                'rectangle' => [
+                    'low'  => ['latitude' => $minLat, 'longitude' => $minLng],
+                    'high' => ['latitude' => $maxLat, 'longitude' => $maxLng],
                 ],
             ];
         }
 
-        $merged = [];
-        $byId = [];
         $pageToken = null;
-        $this->lastCallCount = 0;
         for ($page = 0; $page < 3; $page++) {
+            if (count($byId) >= $cap) return;
             if ($pageToken) $payload['pageToken'] = $pageToken;
-            $resp = $this->makeRequest($url, 'POST', [
-                'Content-Type: application/json',
-                'X-Goog-Api-Key: ' . $this->apiKey,
-                'X-Goog-FieldMask: ' . $fieldMask,
-            ], json_encode($payload));
+            try {
+                $resp = $this->makeRequest($url, 'POST', [
+                    'Content-Type: application/json',
+                    'X-Goog-Api-Key: ' . $this->apiKey,
+                    'X-Goog-FieldMask: ' . $fieldMask,
+                ], json_encode($payload));
+            } catch (\Throwable $e) {
+                error_log('[places-text] tile failed at ' . ($lat ?? '?') . ',' . ($lng ?? '?') . ' r=' . ($radiusMeters ?? '?') . ': ' . $e->getMessage());
+                return;
+            }
             $this->lastCallCount++;
             $data = json_decode($resp, true);
             foreach ($data['places'] ?? [] as $p) {
                 if (!empty($p['id']) && !isset($byId[$p['id']])) {
-                    $byId[$p['id']] = true;
-                    $merged[] = $p;
+                    $byId[$p['id']] = $p;
                 }
             }
             $pageToken = $data['nextPageToken'] ?? null;
             if (!$pageToken) break;
-            // Google requires a brief delay before the next pageToken is
-            // valid; without it the next call 400s with INVALID_ARGUMENT.
             usleep(200_000);
         }
+    }
 
-        CacheService::set($cacheKey, $merged, 172800);
-        return $merged;
+    /**
+     * Circle (lat, lng, meters) → axis-aligned bbox [minLng, minLat, maxLng, maxLat]
+     * using equirectangular projection. Good enough for the tile sizes we
+     * search (up to ~50km, where the cos(lat) approximation is fine).
+     */
+    private static function circleToBbox(float $lat, float $lng, int $radiusMeters): array
+    {
+        $dLat = $radiusMeters / 111320.0;
+        $dLng = $radiusMeters / (111320.0 * max(0.000001, cos(deg2rad($lat))));
+        return [
+            $lng - $dLng,
+            $lat - $dLat,
+            $lng + $dLng,
+            $lat + $dLat,
+        ];
     }
 
     public function getPlaceDetails(string $placeId): array
