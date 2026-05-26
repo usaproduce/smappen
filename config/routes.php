@@ -462,6 +462,7 @@ return function (Router $r) {
     $r->post('/api/admin/seed-campaigns/{id}/pause',            [SeedCampaignController::class, 'pause'],    $adminAuth);
     $r->post('/api/admin/seed-campaigns/{id}/resume',           [SeedCampaignController::class, 'resume'],   $adminAuth);
     $r->post('/api/admin/seed-campaigns/{id}/cancel',           [SeedCampaignController::class, 'cancel'],   $adminAuth);
+    $r->post('/api/admin/seed-campaigns/{id}/kick',             [SeedCampaignController::class, 'kick'],     $adminAuth);
     $r->post('/api/admin/seed-campaigns/{id}/enrich',           [SeedCampaignController::class, 'enrich'],   $adminAuth);
     $r->post('/api/admin/vendors/{id}/enrich',                  [SeedCampaignController::class, 'enrichVendor'], $adminAuth);
     $r->get('/api/admin/seed-campaigns/{id}/delta',             [SeedCampaignController::class, 'delta'],    $adminAuth);

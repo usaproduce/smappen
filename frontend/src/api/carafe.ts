@@ -164,6 +164,10 @@ export const carafeApi = {
     const { data } = await api.post(`/api/admin/seed-campaigns/${id}/cancel`);
     return data.data;
   },
+  async kickWorker(id: string): Promise<{ worker_spawned: boolean }> {
+    const { data } = await api.post(`/api/admin/seed-campaigns/${id}/kick`);
+    return data.data;
+  },
   async enrichCampaign(id: string, batchSize?: number): Promise<{ result: any }> {
     const { data } = await api.post(`/api/admin/seed-campaigns/${id}/enrich`, { batch_size: batchSize });
     return data.data;

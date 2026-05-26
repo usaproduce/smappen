@@ -115,7 +115,16 @@ class SeedCampaignController
         try {
             $svc = new SeedCampaignService();
             $campaign = $svc->run($id);
-            Response::success(['campaign' => $campaign]);
+            // Clicking Run = the admin manually launching the pipeline.
+            // Spawn the sweep → dedupe → classify chain in the background
+            // so the user sees tile counters move within seconds, no cron
+            // wait. Idempotent — multiple workers cooperate via
+            // FOR UPDATE SKIP LOCKED.
+            self::spawnPipeline();
+            Response::success([
+                'campaign'        => $campaign,
+                'worker_spawned'  => true,
+            ]);
         } catch (\DomainException $e) {
             Response::error($e->getMessage(), 409);
         } catch (\Throwable $e) {
@@ -148,7 +157,12 @@ class SeedCampaignController
         try {
             $svc = new SeedCampaignService();
             $svc->resume($id);
-            Response::success(['campaign' => $svc->findById($id)]);
+            // Same as run() — clicking Resume = kick the worker now.
+            self::spawnPipeline();
+            Response::success([
+                'campaign'        => $svc->findById($id),
+                'worker_spawned'  => true,
+            ]);
         } catch (\DomainException $e) {
             Response::error($e->getMessage(), 409);
         } catch (\Throwable $e) {
@@ -268,6 +282,65 @@ class SeedCampaignController
         $offset = max(0,         (int) $request->getQuery('offset', 0));
         $svc    = new SeedCampaignService();
         Response::success(['campaigns' => $svc->index($limit, $offset)]);
+    }
+
+    /**
+     * POST /api/admin/seed-campaigns/{id}/kick — spawn a worker run
+     * without touching campaign status. Handy when a campaign is already
+     * 'running' but the previous worker exited and you want to drain the
+     * remaining queued tiles right now.
+     */
+    public function kick(Request $request): void
+    {
+        $id = $request->getParam('id');
+        if ($id) {
+            // Optional id is for parity with the other actions — workers
+            // operate globally on queued tiles, but echo back the campaign
+            // state so the UI can update.
+            $svc = new SeedCampaignService();
+            $c = $svc->findById($id);
+            if (!$c) { Response::error('not found', 404); return; }
+        }
+        self::spawnPipeline();
+        Response::success(['worker_spawned' => true]);
+    }
+
+    /**
+     * Spawn the sweep → dedupe → classify chain in the background via
+     * nohup so the HTTP request returns immediately. The polling on the
+     * campaign detail page (5s while status=running) then visibly tracks
+     * tile + vendor counters as the worker drains the queue.
+     *
+     * Concurrent invocations are safe — every worker uses FOR UPDATE
+     * SKIP LOCKED so they cooperate rather than collide.
+     */
+    private static function spawnPipeline(): void
+    {
+        $base   = dirname(__DIR__, 2);
+        $logDir = $base . '/storage/logs';
+        if (!is_dir($logDir)) { @mkdir($logDir, 0775, true); }
+        $log = $logDir . '/seed-pipeline.log';
+        $php = defined('PHP_BINARY') && PHP_BINARY ? PHP_BINARY : '/usr/bin/php';
+
+        $chain = sprintf(
+            '%s %s --max-tiles=100 --max-seconds=540 --quiet && '
+                . '%s %s --quiet && '
+                . '%s %s --quiet',
+            escapeshellarg($php), escapeshellarg($base . '/scripts/seed-tile-worker.php'),
+            escapeshellarg($php), escapeshellarg($base . '/scripts/seed-dedupe.php'),
+            escapeshellarg($php), escapeshellarg($base . '/scripts/seed-classify.php')
+        );
+
+        $cmd = sprintf(
+            'nohup sh -c %s >> %s 2>&1 &',
+            escapeshellarg($chain),
+            escapeshellarg($log)
+        );
+        // Suppress any error from exec — if shell_exec is disabled in
+        // production PHP-FPM config the campaign still works, the user
+        // just needs to wait for cron (or kick manually).
+        @exec($cmd);
+        error_log("[seed-pipeline] spawned: $cmd");
     }
 
     /**

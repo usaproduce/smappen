@@ -1,7 +1,7 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Pause, Play, Square, Sparkles, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Pause, Play, Square, Sparkles, RefreshCw, AlertTriangle, Zap } from 'lucide-react';
 import { carafeApi } from '../../api/carafe';
 import AnimatedNumber from '../common/AnimatedNumber';
 
@@ -62,6 +62,11 @@ export default function SeedCampaignDetailPage() {
     onSuccess: (r) => { toast.success(`Re-queued ${r.requeued} tile(s)`); invalidate(); },
     onError:   (e: any) => toast.error(e?.response?.data?.error ?? 'Re-sweep failed'),
   });
+  const kick = useMutation({
+    mutationFn: () => carafeApi.kickWorker(id),
+    onSuccess: () => { toast.success('Worker spawned — tiles will start draining'); invalidate(); },
+    onError:   (e: any) => toast.error(e?.response?.data?.error ?? 'Kick failed'),
+  });
 
   if (isLoading || !data) {
     return <div className="text-slate-500 text-sm">Loading…</div>;
@@ -93,9 +98,19 @@ export default function SeedCampaignDetailPage() {
             </button>
           )}
           {c.status === 'running' && (
-            <button className="btn h-9 px-3 text-sm bg-amber-500 text-white hover:bg-amber-600" onClick={() => pause.mutate()}>
-              <Pause size={14} /> Pause
-            </button>
+            <>
+              <button
+                className="btn h-9 px-3 text-sm bg-violet-500 text-white hover:bg-violet-600"
+                title="Spawn a fresh worker process to drain queued tiles right now (no cron wait)"
+                disabled={kick.isPending}
+                onClick={() => kick.mutate()}
+              >
+                <Zap size={14} /> Kick worker
+              </button>
+              <button className="btn h-9 px-3 text-sm bg-amber-500 text-white hover:bg-amber-600" onClick={() => pause.mutate()}>
+                <Pause size={14} /> Pause
+              </button>
+            </>
           )}
           {c.status === 'paused' && (
             <button className="btn h-9 px-3 text-sm bg-emerald-500 text-white hover:bg-emerald-600" onClick={() => resume.mutate()}>
