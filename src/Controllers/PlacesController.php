@@ -58,7 +58,12 @@ class PlacesController
                     $radius = min(50000, max(1000, (int) ceil($diag)));
                 }
                 if (!empty($area['demographics_cache'])) {
-                    $cache = json_decode($area['demographics_cache'], true);
+                    // Area::findById decodes JSON columns to arrays on load,
+                    // so demographics_cache is already an array. Older paths
+                    // still hit this code with a raw string, so handle both.
+                    $cache = is_string($area['demographics_cache'])
+                        ? json_decode($area['demographics_cache'], true)
+                        : $area['demographics_cache'];
                     if (is_array($cache)) $areaPop = $cache['population']['total'] ?? null;
                 }
             }
