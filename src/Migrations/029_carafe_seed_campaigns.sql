@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS seed_tiles (
   started_at              DATETIME        NULL,
   finished_at             DATETIME        NULL,
   created_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  -- (campaign_id, status) is what the worker uses to pick its next tile;
+  -- (campaign_id, status) is what the worker uses to pick its next tile,
   -- result_id_hash by itself is the §12.3 dedupe lookup on re-sweep.
   INDEX idx_tiles_camp_status (campaign_id, status),
   INDEX idx_tiles_hash        (result_id_hash)
