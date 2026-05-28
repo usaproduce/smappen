@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Plus, Trash2, BookOpen, ChefHat, ClipboardPaste, Sparkles, Pencil } from 'lucide-react';
+import { Plus, Trash2, BookOpen, ChefHat, ClipboardPaste, Sparkles, Pencil, Copy, Search, X } from 'lucide-react';
 import {
   menuApi,
   type Recipe, type RecipeWithIngredients, type IngredientCatalogItem,
@@ -36,6 +36,13 @@ export default function RecipesPage() {
   const [creating, setCreating] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [suggestOpen, setSuggestOpen] = useState(false);
+  const [query, setQuery] = useState('');
+
+  const filteredRecipes = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return recipes;
+    return recipes.filter((r) => r.name.toLowerCase().includes(q));
+  }, [recipes, query]);
 
   async function refresh() {
     const [rs, mi, cat] = await Promise.all([
@@ -121,6 +128,34 @@ export default function RecipesPage() {
     }
   }
 
+  async function deleteRecipe(recipeId: string, name: string) {
+    if (!window.confirm(`Delete recipe "${name}"? Linked menu items will be unlinked. This can't be undone.`)) return;
+    try {
+      await menuApi.deleteRecipe(recipeId);
+      toast.success(`Deleted "${name}"`);
+      if (selectedId === recipeId) setSelectedId(null);
+      const fresh = await menuApi.listRecipes(restaurantId);
+      setRecipes(fresh);
+      if (selectedId === recipeId && fresh.length > 0) setSelectedId(fresh[0].id);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error ?? 'Delete failed');
+    }
+  }
+
+  async function copyRecipe(recipeId: string, currentName: string) {
+    const newName = window.prompt(`Copy "${currentName}" to a new recipe. New name:`, currentName + ' (copy)');
+    if (!newName || !newName.trim()) return;
+    try {
+      const { id } = await menuApi.copyRecipe(recipeId, newName.trim());
+      toast.success(`Copied "${currentName}" → "${newName.trim()}"`);
+      const fresh = await menuApi.listRecipes(restaurantId);
+      setRecipes(fresh);
+      setSelectedId(id);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error ?? 'Copy failed');
+    }
+  }
+
   const isEmpty = !loading && recipes.length === 0;
 
   return (
@@ -171,27 +206,71 @@ export default function RecipesPage() {
             {/* Recipe list */}
             <aside className="col-span-12 md:col-span-4 bg-white border border-slate-200 rounded-xl p-3">
               <CreateRecipeForm onCreate={createRecipe} disabled={creating} />
-              <ul className="space-y-1 mt-3">
-                {recipes.map((r) => (
-                  <li key={r.id}>
+              {recipes.length > 5 && (
+                <div className="relative mt-2">
+                  <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    className="input h-8 text-xs w-full pl-7 pr-7"
+                    placeholder={`Search ${recipes.length} recipes…`}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                  {query && (
                     <button
-                      onClick={() => setSelectedId(r.id)}
-                      className={`w-full text-left p-2 rounded-md flex items-center gap-2 transition-colors ${
-                        selectedId === r.id ? 'bg-violet-100 text-violet-900' : 'hover:bg-slate-50'
-                      }`}
+                      onClick={() => setQuery('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                      aria-label="Clear search"
                     >
-                      <ChefHat size={14} className="text-slate-400 flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold truncate">{r.name}</div>
-                        <div className="text-[10px] text-slate-500">
-                          {r.ingredient_count} ingredient{r.ingredient_count === 1 ? '' : 's'}
-                          {r.linked_menu_items > 0 && ` · linked to ${r.linked_menu_items} item${r.linked_menu_items === 1 ? '' : 's'}`}
-                        </div>
-                      </div>
+                      <X size={12} />
                     </button>
-                  </li>
-                ))}
-              </ul>
+                  )}
+                </div>
+              )}
+              {filteredRecipes.length === 0 && query ? (
+                <div className="text-center py-6 text-xs text-slate-500">No recipes match "{query}".</div>
+              ) : (
+                <ul className="space-y-1 mt-3 max-h-[60vh] overflow-y-auto">
+                  {filteredRecipes.map((r) => (
+                    <li key={r.id} className="group">
+                      <div
+                        className={`flex items-center gap-1 rounded-md transition-colors ${
+                          selectedId === r.id ? 'bg-violet-100' : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        <button
+                          onClick={() => setSelectedId(r.id)}
+                          className={`flex-1 min-w-0 text-left p-2 flex items-center gap-2 ${
+                            selectedId === r.id ? 'text-violet-900' : ''
+                          }`}
+                        >
+                          <ChefHat size={14} className="text-slate-400 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold truncate">{r.name}</div>
+                            <div className="text-[10px] text-slate-500">
+                              {r.ingredient_count} ingredient{r.ingredient_count === 1 ? '' : 's'}
+                              {r.linked_menu_items > 0 && ` · linked to ${r.linked_menu_items} item${r.linked_menu_items === 1 ? '' : 's'}`}
+                            </div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => copyRecipe(r.id, r.name)}
+                          className="p-1.5 text-slate-400 hover:text-violet-700 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                          title="Copy recipe"
+                        >
+                          <Copy size={12} />
+                        </button>
+                        <button
+                          onClick={() => deleteRecipe(r.id, r.name)}
+                          className="p-1.5 mr-1 text-slate-400 hover:text-rose-700 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                          title="Delete recipe"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </aside>
 
             {/* Ingredient builder */}
@@ -430,6 +509,12 @@ function RecipeEditor({
               restaurantId={restaurantId}
               value={key}
               onChange={setKey}
+              onPick={(s) => {
+                // Pre-fill unit from cogs_benchmark when picking via dropdown
+                // — fewer keystrokes per ingredient, fewer unit mismatches
+                // (oz vs lb) that silently break plate-cost coverage.
+                if (s.unit) setUnit(s.unit);
+              }}
             />
           </div>
           <input

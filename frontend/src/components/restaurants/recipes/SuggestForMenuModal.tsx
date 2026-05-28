@@ -54,18 +54,24 @@ export default function SuggestForMenuModal({
       const out: Record<string, SuggestedRecipe | null> = {};
       const edits: Record<string, SuggestedRecipeIngredient[]> = {};
       const accept: Record<string, boolean> = {};
-      // Sequential to avoid hammering the API; the dictionary lookup is
-      // cheap so this stays well under 2s for typical 40-item menus.
-      for (const mi of candidates) {
-        if (cancelled) return;
-        try {
-          const draft = await menuApi.suggestRecipe(restaurantId, mi.name, mi.category ?? undefined);
-          out[mi.id] = draft;
-          edits[mi.id] = draft.ingredients.map((i) => ({ ...i }));
-          accept[mi.id] = draft.matched && draft.ingredients.length > 0;
-        } catch {
-          out[mi.id] = null;
-        }
+      // One round-trip for the whole menu instead of N. Server returns
+      // drafts in the same order we sent them in, but we still index by
+      // menu_item id (not input_name) since two items could share a name.
+      try {
+        const drafts = await menuApi.suggestRecipeBulk(
+          restaurantId,
+          candidates.map((mi) => ({ name: mi.name, category: mi.category ?? undefined }))
+        );
+        candidates.forEach((mi, idx) => {
+          const d = drafts[idx]?.draft ?? null;
+          out[mi.id] = d;
+          edits[mi.id] = d ? d.ingredients.map((i) => ({ ...i })) : [];
+          accept[mi.id] = !!d && d.matched && d.ingredients.length > 0;
+        });
+      } catch {
+        // Whole-batch failure — leave drafts empty so the UI shows
+        // "no template match" for everything (graceful degrade).
+        for (const mi of candidates) out[mi.id] = null;
       }
       if (cancelled) return;
       setDrafts(out);

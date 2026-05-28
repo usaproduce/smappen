@@ -59,6 +59,10 @@ export interface PastePreviewGroup {
   ok_count: number;
   warning_count: number;
   error_count: number;
+  existing_recipe_id: string | null;
+  est_plate_cost_cents: number;
+  ingredients_coverable: number;
+  ingredients_not_coverable: number;
 }
 
 export interface PastePreviewResult {
@@ -69,8 +73,15 @@ export interface PastePreviewResult {
     warnings: number;
     errors: number;
     recipes: number;
+    est_total_plate_cost_cents: number;
+    ingredients_coverable: number;
+    ingredients_not_coverable: number;
+    scale: number;
+    duplicate_groups: number;
   };
 }
+
+export type PasteDuplicateAction = 'skip' | 'replace' | 'create_new';
 
 export interface PasteCommitResult {
   created: Array<{
@@ -78,11 +89,20 @@ export interface PasteCommitResult {
     name: string;
     ingredient_count: number;
     linked_menu_item_id: string | null;
+    was_replaced: boolean;
   }>;
   created_count: number;
   linked_count: number;
+  replaced: Array<{ recipe_id: string; name: string }>;
+  replaced_count: number;
   skipped: Array<{ item_name: string; reason: string }>;
   plate_costs_recomputed: number | null;
+}
+
+/** Edited group payload accepted by commitPaste (preferred over re-parsing $text). */
+export interface PasteEditedGroup {
+  item_name: string;
+  rows: Array<{ ingredient_key: string; qty: number; unit: string }>;
 }
 
 export interface SuggestedRecipeIngredient {
@@ -204,14 +224,26 @@ export const menuApi = {
     const { data } = await api.post(`/api/restaurants/${restaurantId}/plate-costs/recompute`);
     return data.data;
   },
-  async previewPaste(restaurantId: string, text: string): Promise<PastePreviewResult> {
-    const { data } = await api.post(`/api/restaurants/${restaurantId}/recipes/paste/preview`, { text });
+  async previewPaste(restaurantId: string, text: string, scale = 1): Promise<PastePreviewResult> {
+    const { data } = await api.post(`/api/restaurants/${restaurantId}/recipes/paste/preview`, { text, scale });
     return data.data;
   },
-  async commitPaste(restaurantId: string, text: string, includeWarnings = true): Promise<PasteCommitResult> {
+  async commitPaste(
+    restaurantId: string,
+    opts: {
+      text?: string;
+      groups?: PasteEditedGroup[];
+      includeWarnings?: boolean;
+      scale?: number;
+      duplicateAction?: PasteDuplicateAction;
+    }
+  ): Promise<PasteCommitResult> {
     const { data } = await api.post(`/api/restaurants/${restaurantId}/recipes/paste/commit`, {
-      text,
-      include_warnings: includeWarnings,
+      text: opts.text,
+      groups: opts.groups,
+      include_warnings: opts.includeWarnings ?? true,
+      scale: opts.scale ?? 1,
+      duplicate_action: opts.duplicateAction ?? 'skip',
     });
     return data.data;
   },
@@ -222,11 +254,27 @@ export const menuApi = {
     });
     return data.data.draft;
   },
+  async suggestRecipeBulk(
+    restaurantId: string,
+    items: Array<{ name: string; category?: string | null }>
+  ): Promise<Array<{ input_name: string; draft: SuggestedRecipe }>> {
+    const { data } = await api.post(`/api/restaurants/${restaurantId}/recipes/suggest/bulk`, {
+      items: items.map((i) => ({ name: i.name, category: i.category ?? undefined })),
+    });
+    return data.data.drafts ?? [];
+  },
   async ingredientAutocomplete(restaurantId: string, q: string, limit = 30): Promise<IngredientSuggestion[]> {
     const { data } = await api.get(`/api/restaurants/${restaurantId}/ingredient-autocomplete`, {
       params: { q, limit },
     });
     return data.data.suggestions ?? [];
+  },
+  async deleteRecipe(recipeId: string): Promise<void> {
+    await api.delete(`/api/recipes/${recipeId}`);
+  },
+  async copyRecipe(recipeId: string, newName: string): Promise<{ id: string }> {
+    const { data } = await api.post(`/api/recipes/${recipeId}/copy`, { new_name: newName });
+    return data.data;
   },
 };
 

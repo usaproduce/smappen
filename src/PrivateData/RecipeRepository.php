@@ -75,4 +75,55 @@ class RecipeRepository
         Database::getInstance()->query('DELETE FROM recipe_ingredients WHERE id = ?', [$ingredientId]);
         return true;
     }
+
+    /**
+     * Map LOWER(TRIM(name)) → id for every recipe in a restaurant. Used by
+     * commitPaste to detect duplicate names so the operator can choose
+     * skip / replace / create_new instead of silently double-creating.
+     */
+    public function nameMapByRestaurant(string $restaurantId): array
+    {
+        $rows = Database::getInstance()->fetchAll(
+            'SELECT id, LOWER(TRIM(name)) AS norm_name FROM recipes WHERE restaurant_id = ?',
+            [$restaurantId]
+        );
+        $out = [];
+        foreach ($rows as $r) $out[(string) $r['norm_name']] = (string) $r['id'];
+        return $out;
+    }
+
+    /** Wipe every ingredient on a recipe — used by the "replace" duplicate path. */
+    public function clearIngredients(string $recipeId): void
+    {
+        Database::getInstance()->query(
+            'DELETE FROM recipe_ingredients WHERE recipe_id = ?',
+            [$recipeId]
+        );
+    }
+
+    /**
+     * Delete a recipe and its ingredients. Returns false if the recipe
+     * doesn't exist or doesn't belong to the caller's org. Any menu_items
+     * pointing at it have their recipe_id nulled by FK ON DELETE SET NULL
+     * (if configured) — otherwise we null them explicitly to avoid orphaned
+     * pointers.
+     */
+    public function destroy(string $id, string $organizationId): bool
+    {
+        $db = Database::getInstance();
+        $row = $db->fetch('SELECT id FROM recipes WHERE id = ? AND organization_id = ?', [$id, $organizationId]);
+        if (!$row) return false;
+        $db->beginTransaction();
+        try {
+            $db->query('UPDATE menu_items SET recipe_id = NULL, updated_at = NOW() WHERE recipe_id = ?', [$id]);
+            $db->query('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [$id]);
+            $db->query('DELETE FROM plate_costs WHERE menu_item_id IN (SELECT id FROM menu_items WHERE recipe_id = ?)', [$id]);
+            $db->query('DELETE FROM recipes WHERE id = ?', [$id]);
+            $db->commit();
+        } catch (\Throwable $e) {
+            $db->rollback();
+            throw $e;
+        }
+        return true;
+    }
 }

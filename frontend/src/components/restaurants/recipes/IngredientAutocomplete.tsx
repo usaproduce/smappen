@@ -16,12 +16,19 @@ export default function IngredientAutocomplete({
   restaurantId,
   value,
   onChange,
+  onPick,
   placeholder = 'ingredient_key (e.g. tomato_roma)',
   autoFocus = false,
 }: {
   restaurantId: string;
   value: string;
   onChange: (val: string) => void;
+  /**
+   * Called when the user explicitly picks a suggestion (click or Enter).
+   * Lets the parent pre-fill a unit field from the benchmark, so the
+   * operator doesn't have to retype it.
+   */
+  onPick?: (suggestion: IngredientSuggestion) => void;
   placeholder?: string;
   autoFocus?: boolean;
 }) {
@@ -55,6 +62,7 @@ export default function IngredientAutocomplete({
 
   function pick(s: IngredientSuggestion) {
     onChange(s.key);
+    onPick?.(s);
     setOpen(false);
   }
 

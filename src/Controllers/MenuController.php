@@ -216,12 +216,59 @@ class MenuController
      */
     public function previewPaste(Request $request): void
     {
-        $this->verifyOwnedRestaurant($request);
+        $r = $this->verifyOwnedRestaurant($request);
         $b = $request->getBody() ?? [];
         $text = (string) ($b['text'] ?? '');
+        $scale = isset($b['scale']) ? (float) $b['scale'] : 1.0;
+        if ($scale <= 0) $scale = 1.0;
         if (trim($text) === '') Response::error('text is required', 422);
-        $parser = new RecipePasteParser();
-        Response::success($parser->parse($text));
+        $parsed = (new RecipePasteParser())->parse($text);
+
+        // Decorate the preview with:
+        //  - per-group `existing_recipe_id` (so the operator sees duplicates)
+        //  - per-group estimated plate cost in cents using cogs_benchmark
+        //  - applies `scale` so a yield-10 batch can be previewed as per-plate
+        $existingMap = $this->recipes->nameMapByRestaurant($r['id']);
+        $benchRepo = new CogsBenchmarkRepository();
+        $region = $r['region'] ?? null;
+        $totalEstCents = 0;
+        $totalCoverable = 0; $totalNotCoverable = 0;
+        foreach ($parsed['groups'] as &$g) {
+            $g['existing_recipe_id'] = $existingMap[$g['normalized_name']] ?? null;
+            $est = 0;
+            $coverable = 0; $notCoverable = 0;
+            foreach ($g['rows'] as &$row) {
+                if ($scale !== 1.0) $row['qty'] = round((float) $row['qty'] / $scale, 4);
+                if ($row['status'] === 'error') continue;
+                $bench = $benchRepo->lookup($row['ingredient_key'], $region);
+                $contrib = $bench ? $this->estCentsForLine(
+                    (int) $bench['market_price_cents'],
+                    (string) $bench['unit'],
+                    (float) $row['qty'],
+                    (string) $row['unit']
+                ) : null;
+                if ($contrib !== null) {
+                    $est += $contrib;
+                    $coverable++;
+                } else {
+                    $notCoverable++;
+                }
+            }
+            $g['est_plate_cost_cents'] = $est;
+            $g['ingredients_coverable']     = $coverable;
+            $g['ingredients_not_coverable'] = $notCoverable;
+            $totalEstCents += $est;
+            $totalCoverable += $coverable;
+            $totalNotCoverable += $notCoverable;
+        }
+        $parsed['summary']['est_total_plate_cost_cents'] = $totalEstCents;
+        $parsed['summary']['ingredients_coverable']      = $totalCoverable;
+        $parsed['summary']['ingredients_not_coverable']  = $totalNotCoverable;
+        $parsed['summary']['scale']                      = $scale;
+        $parsed['summary']['duplicate_groups']           = count(array_filter(
+            $parsed['groups'], fn($g) => $g['existing_recipe_id'] !== null
+        ));
+        Response::success($parsed);
     }
 
     /**
@@ -233,7 +280,20 @@ class MenuController
      * Also auto-links each created recipe to a menu item with the same
      * (case-insensitive) name when one exists and isn't already recipe'd.
      *
-     * Body: { "text": "…", "include_warnings": bool? (default true) }
+     * Body: {
+     *   "text": "…",
+     *   "include_warnings": bool? (default true),
+     *   "scale":   number? (default 1.0; per-row qty divided by this),
+     *   "duplicate_action": "skip" | "replace" | "create_new" (default "skip"),
+     *   "groups":  optional array of edited groups (frontend-edited rows) to
+     *              use instead of re-parsing $text. Each: {
+     *                normalized_name, item_name,
+     *                rows: [{ingredient_key, qty, unit, status?}…]
+     *              }
+     * }
+     *
+     * Hard cap: 2,000 rows per commit. Larger pastes get a clear error
+     * instead of starving the database.
      */
     public function commitPaste(Request $request): void
     {
@@ -241,19 +301,42 @@ class MenuController
         $b = $request->getBody() ?? [];
         $text = (string) ($b['text'] ?? '');
         $includeWarnings = !isset($b['include_warnings']) || (bool) $b['include_warnings'];
-        if (trim($text) === '') Response::error('text is required', 422);
+        $scale = isset($b['scale']) ? (float) $b['scale'] : 1.0;
+        if ($scale <= 0) $scale = 1.0;
+        $duplicateAction = (string) ($b['duplicate_action'] ?? 'skip');
+        if (!in_array($duplicateAction, ['skip', 'replace', 'create_new'], true)) {
+            Response::error("duplicate_action must be one of skip|replace|create_new", 422);
+        }
 
-        $parsed = (new RecipePasteParser())->parse($text);
-        $groups = $parsed['groups'];
+        // Source the groups: prefer frontend-edited array when provided,
+        // otherwise re-parse the text (defends against frontend bugs and
+        // keeps the API usable without the modal).
+        if (isset($b['groups']) && is_array($b['groups'])) {
+            $groups = $this->normalizeEditedGroups($b['groups'], $scale);
+        } else {
+            if (trim($text) === '') Response::error('text or groups required', 422);
+            $parsed = (new RecipePasteParser())->parse($text);
+            $groups = $parsed['groups'];
+            if ($scale !== 1.0) {
+                foreach ($groups as &$g) foreach ($g['rows'] as &$row) {
+                    $row['qty'] = round((float) $row['qty'] / $scale, 4);
+                }
+                unset($g, $row);
+            }
+        }
         if (empty($groups)) Response::error('No usable rows in paste', 422);
+        $totalRows = array_sum(array_map(fn($g) => count($g['rows']), $groups));
+        if ($totalRows > 2000) Response::error("Too many rows ({$totalRows}); cap is 2,000 per commit", 422);
 
         $db = Database::getInstance();
         $orgId = $request->user['organization_id'];
         $restaurantId = $r['id'];
+        $existingRecipeMap = $this->recipes->nameMapByRestaurant($restaurantId);
 
         $created = [];
         $linkedCount = 0;
         $skipped = [];
+        $replaced = [];
 
         // Pre-pull menu items so we can auto-link by name without N queries.
         $menuItems = $db->fetchAll(
@@ -268,15 +351,47 @@ class MenuController
         try {
             foreach ($groups as $g) {
                 $usableRows = array_filter($g['rows'], function ($row) use ($includeWarnings) {
-                    if ($row['status'] === 'error') return false;
-                    if ($row['status'] === 'warning' && !$includeWarnings) return false;
+                    $status = $row['status'] ?? 'ok';
+                    if ($status === 'error') return false;
+                    if ($status === 'warning' && !$includeWarnings) return false;
+                    if (($row['ingredient_key'] ?? '') === '' || ((float)($row['qty'] ?? 0)) <= 0 || ($row['unit'] ?? '') === '') {
+                        return false;
+                    }
                     return true;
                 });
                 if (empty($usableRows)) {
-                    $skipped[] = ['item_name' => $g['item_name'], 'reason' => 'all rows had errors'];
+                    $skipped[] = ['item_name' => $g['item_name'], 'reason' => 'all rows had errors or were empty'];
                     continue;
                 }
-                $recipeId = $this->recipes->create($orgId, $restaurantId, $g['item_name']);
+                $existingId = $existingRecipeMap[$g['normalized_name']] ?? null;
+
+                if ($existingId !== null && $duplicateAction === 'skip') {
+                    $skipped[] = ['item_name' => $g['item_name'], 'reason' => 'recipe with this name already exists (skipped)'];
+                    continue;
+                }
+
+                $name = $g['item_name'];
+                $recipeId = null;
+                if ($existingId !== null && $duplicateAction === 'replace') {
+                    $this->recipes->clearIngredients($existingId);
+                    $recipeId = $existingId;
+                    $replaced[] = ['recipe_id' => $existingId, 'name' => $name];
+                } else {
+                    if ($existingId !== null && $duplicateAction === 'create_new') {
+                        // Suffix with " (2)" / " (3)" until unique within the restaurant.
+                        $i = 2;
+                        do {
+                            $candidate = $name . " ({$i})";
+                            $candidateNorm = strtolower(trim($candidate));
+                            $i++;
+                        } while (isset($existingRecipeMap[$candidateNorm]));
+                        $name = $candidate;
+                        $existingRecipeMap[$candidateNorm] = 'pending';
+                    }
+                    $recipeId = $this->recipes->create($orgId, $restaurantId, $name);
+                    $existingRecipeMap[strtolower(trim($name))] = $recipeId;
+                }
+
                 foreach ($usableRows as $row) {
                     $this->recipes->addIngredient(
                         $recipeId,
@@ -294,9 +409,10 @@ class MenuController
                 }
                 $created[] = [
                     'recipe_id' => $recipeId,
-                    'name' => $g['item_name'],
+                    'name' => $name,
                     'ingredient_count' => count($usableRows),
                     'linked_menu_item_id' => $linkedItemId,
+                    'was_replaced' => $existingId !== null && $duplicateAction === 'replace',
                 ];
             }
             $db->commit();
@@ -324,6 +440,8 @@ class MenuController
             'created'           => $created,
             'created_count'     => count($created),
             'linked_count'      => $linkedCount,
+            'replaced'          => $replaced,
+            'replaced_count'    => count($replaced),
             'skipped'           => $skipped,
             'plate_costs_recomputed' => $recomputed,
         ], 'Paste committed', 201);
@@ -359,6 +477,149 @@ class MenuController
             ] : null;
         }
         Response::success(['draft' => $draft]);
+    }
+
+    /**
+     * Bulk variant of suggestRecipe — one round-trip for all of a
+     * restaurant's menu items instead of N. The "Suggestions for my menu"
+     * modal calls this on open so a 40-item menu's drafts arrive together.
+     *
+     * Body: { "items": [{"name": "Spaghetti Carbonara", "category": "pasta"}…] }
+     * Returns: { "drafts": [{name, draft}…] }
+     */
+    public function suggestRecipeBulk(Request $request): void
+    {
+        $r = $this->verifyOwnedRestaurant($request);
+        $b = $request->getBody() ?? [];
+        $items = $b['items'] ?? [];
+        if (!is_array($items) || empty($items)) Response::error('items array required', 422);
+        if (count($items) > 200) Response::error('Too many items (cap 200)', 422);
+
+        $matcher = new RecipeSeedMatcher();
+        $benchRepo = new CogsBenchmarkRepository();
+        $region = $r['region'] ?? null;
+
+        // Collect every ingredient_key used by ANY draft, then look prices up in one batch.
+        $drafts = [];
+        $allKeys = [];
+        foreach ($items as $it) {
+            $name = trim((string) ($it['name'] ?? ''));
+            if ($name === '') continue;
+            $cat = isset($it['category']) ? (string) $it['category'] : null;
+            $d = $matcher->suggest($name, $cat);
+            foreach ($d['ingredients'] as $ing) $allKeys[] = $ing['ingredient_key'];
+            $drafts[] = ['input_name' => $name, 'draft' => $d];
+        }
+        $benchMap = $benchRepo->lookupMany($allKeys, $region);
+
+        foreach ($drafts as &$entry) {
+            foreach ($entry['draft']['ingredients'] as &$ing) {
+                $row = $benchMap[$ing['ingredient_key']] ?? null;
+                $ing['benchmark'] = $row ? [
+                    'market_price_cents' => (int) $row['market_price_cents'],
+                    'unit'   => $row['unit'],
+                    'source' => $row['source'],
+                ] : null;
+            }
+            unset($ing);
+        }
+        unset($entry);
+
+        Response::success(['drafts' => $drafts]);
+    }
+
+    /**
+     * Delete a recipe (and its ingredients, plate_costs). Any menu_items
+     * pointing at it are unlinked. Returns 404 if not found in the
+     * caller's org.
+     */
+    public function destroyRecipe(Request $request): void
+    {
+        $id = (string) $request->getParam('id');
+        $ok = $this->recipes->destroy($id, $request->user['organization_id']);
+        if (!$ok) Response::error('Recipe not found', 404);
+        Response::success(['id' => $id], 'Recipe deleted');
+    }
+
+    /**
+     * Copy a recipe — useful for menu-item variants like
+     * "Cheeseburger" → "Bacon Cheeseburger" where 80% of the ingredients
+     * carry over. Creates a new recipe with the same ingredients but a
+     * new name and no linked menu_items.
+     *
+     * Body: { "new_name": "Bacon Cheeseburger" }
+     */
+    public function copyRecipe(Request $request): void
+    {
+        $id = (string) $request->getParam('id');
+        $orgId = $request->user['organization_id'];
+        $source = $this->recipes->findById($id, $orgId);
+        if (!$source) Response::error('Recipe not found', 404);
+        $b = $request->getBody() ?? [];
+        $newName = trim((string) ($b['new_name'] ?? ''));
+        if ($newName === '') Response::error('new_name required', 422);
+        $ingredients = $this->recipes->ingredientsFor($id);
+        $db = Database::getInstance();
+        $newId = null;
+        $db->beginTransaction();
+        try {
+            $newId = $this->recipes->create($orgId, $source['restaurant_id'], $newName, $source['notes']);
+            foreach ($ingredients as $ing) {
+                $this->recipes->addIngredient(
+                    $newId,
+                    (string) $ing['ingredient_key'],
+                    (float)  $ing['qty'],
+                    (string) $ing['unit'],
+                    isset($ing['notes']) ? (string) $ing['notes'] : null
+                );
+            }
+            $db->commit();
+        } catch (\Throwable $e) {
+            $db->rollback();
+            error_log('[recipes/copy] failed: ' . $e->getMessage());
+            Response::error('Failed to copy recipe: ' . $e->getMessage(), 500);
+        }
+        Response::success(['id' => $newId], 'Recipe copied', 201);
+    }
+
+    /**
+     * Normalize frontend-edited groups for commitPaste. We rebuild the
+     * normalized_name on the server (frontend can't be trusted to do it
+     * the same way the parser does) and re-stamp rows with status='ok'
+     * for any row that wasn't explicitly marked. Applies `scale` if !=1.
+     */
+    private function normalizeEditedGroups(array $groups, float $scale): array
+    {
+        $parser = new RecipePasteParser();
+        $out = [];
+        foreach ($groups as $g) {
+            if (!is_array($g)) continue;
+            $itemName = trim((string) ($g['item_name'] ?? ''));
+            if ($itemName === '') continue;
+            $rows = is_array($g['rows'] ?? null) ? $g['rows'] : [];
+            $cleanRows = [];
+            foreach ($rows as $row) {
+                if (!is_array($row)) continue;
+                $key = $parser->normalizeIngredientKey((string) ($row['ingredient_key'] ?? ''));
+                $qty = (float) ($row['qty'] ?? 0);
+                if ($scale !== 1.0) $qty = $qty / $scale;
+                $unit = strtolower(trim((string) ($row['unit'] ?? '')));
+                if ($key === '' || $qty <= 0 || $unit === '') continue;
+                $cleanRows[] = [
+                    'ingredient_key' => $key,
+                    'qty'            => round($qty, 4),
+                    'unit'           => $unit,
+                    'status'         => 'ok',
+                ];
+            }
+            if (empty($cleanRows)) continue;
+            $out[] = [
+                'item_name'       => $itemName,
+                'normalized_name' => $parser->normalizeItemName($itemName),
+                'rows'            => $cleanRows,
+            ];
+        }
+        return $out;
     }
 
     /**
@@ -463,6 +724,33 @@ class MenuController
         $candidates = array_slice($candidates, 0, $limit);
 
         Response::success(['suggestions' => $candidates]);
+    }
+
+    /**
+     * Approximate cents-contribution for a single recipe line using a
+     * cogs_benchmark row. Handles the two unit conversions that come up
+     * constantly in real data — oz↔lb and g↔kg — so the paste preview's
+     * estimated plate cost isn't silently zero just because the benchmark
+     * stores lb while operators write recipes in oz. Returns null when
+     * the units are incompatible (e.g. lb vs each); caller treats that as
+     * "not coverable" and the real PlateCostService handles the full
+     * conversion table.
+     */
+    private function estCentsForLine(int $benchCents, string $benchUnit, float $recipeQty, string $recipeUnit): ?int
+    {
+        $bu = strtolower($benchUnit);
+        $ru = strtolower($recipeUnit);
+        if ($bu === $ru) return (int) round($benchCents * $recipeQty);
+        // oz↔lb
+        if ($bu === 'lb' && $ru === 'oz') return (int) round(($benchCents / 16) * $recipeQty);
+        if ($bu === 'oz' && $ru === 'lb') return (int) round(($benchCents * 16) * $recipeQty);
+        // g↔kg
+        if ($bu === 'kg' && $ru === 'g')  return (int) round(($benchCents / 1000) * $recipeQty);
+        if ($bu === 'g'  && $ru === 'kg') return (int) round(($benchCents * 1000) * $recipeQty);
+        // ml↔l
+        if ($bu === 'l'  && $ru === 'ml') return (int) round(($benchCents / 1000) * $recipeQty);
+        if ($bu === 'ml' && $ru === 'l')  return (int) round(($benchCents * 1000) * $recipeQty);
+        return null;
     }
 
     private function verifyOwnedRestaurant(Request $request): array

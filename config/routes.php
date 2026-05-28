@@ -384,6 +384,9 @@ return function (Router $r) {
     $r->post('/api/restaurants/{id}/recipes/paste/preview',     [MenuController::class, 'previewPaste'],          $auth);
     $r->post('/api/restaurants/{id}/recipes/paste/commit',      [MenuController::class, 'commitPaste'],           $auth);
     $r->post('/api/restaurants/{id}/recipes/suggest',           [MenuController::class, 'suggestRecipe'],         $auth);
+    $r->post('/api/restaurants/{id}/recipes/suggest/bulk',      [MenuController::class, 'suggestRecipeBulk'],     $auth);
+    $r->delete('/api/recipes/{id}',                             [MenuController::class, 'destroyRecipe'],         $auth);
+    $r->post('/api/recipes/{id}/copy',                          [MenuController::class, 'copyRecipe'],            $auth);
     $r->get('/api/restaurants/{id}/ingredient-autocomplete',    [MenuController::class, 'ingredientAutocomplete'],$auth);
 
     // Menu engineering — recommendations + accept/dismiss ledger.
