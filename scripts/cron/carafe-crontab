@@ -1,0 +1,57 @@
+# Carafe Vendor Network — production cron lines.
+# Source of truth for root@smappen droplet (143.244.144.7).
+#
+# Installed by scripts/install-cron.sh (idempotent — re-runnable). To
+# update the live crontab after editing this file:
+#
+#     bash /var/www/smappen/scripts/install-cron.sh
+#
+# Cadences match WorkerHeartbeat::CADENCE_SECONDS so the
+# /api/admin/carafe/cron-health endpoint can flag a stale worker as
+# red/yellow/green correctly. If you change a schedule here, update
+# the constant too.
+#
+# Conventions:
+#   - PHP_BIN/SMAPPEN markers below let install-cron.sh prepend/append
+#     PATH + working-dir setup without re-templating the cron lines.
+#   - Every line is wrapped in flock so a slow run can never stack a
+#     second concurrent process on top of itself.
+#   - All output appended to per-worker logs under storage/logs/cron/;
+#     cleanup-cron.php already truncates anything older than 30d.
+#
+# Carafe markers (do not remove) — install-cron.sh uses these to
+# replace JUST the Carafe block on re-runs, leaving any operator-added
+# lines (Smappen cleanup, mysqldump, etc.) untouched.
+# === BEGIN CARAFE CRON (managed by install-cron.sh) ===
+
+# seed-tile-worker — sweep queued tiles every 5 minutes.
+*/5 * * * * /usr/bin/flock -n /tmp/carafe-seed-tile.lock /usr/bin/php /var/www/smappen/scripts/seed-tile-worker.php --max-tiles=50 --max-seconds=240 --quiet >> /var/www/smappen/storage/logs/cron/seed-tile.log 2>&1
+
+# seed-dedupe — block-key + Jaro-Winkler scan every 10 minutes.
+*/10 * * * * /usr/bin/flock -n /tmp/carafe-seed-dedupe.lock /usr/bin/php /var/www/smappen/scripts/seed-dedupe.php --batch-size=5000 --quiet >> /var/www/smappen/storage/logs/cron/seed-dedupe.log 2>&1
+
+# seed-classify — cascade classifier on new survivors every 10 minutes.
+*/10 * * * * /usr/bin/flock -n /tmp/carafe-seed-classify.lock /usr/bin/php /var/www/smappen/scripts/seed-classify.php --batch-size=5000 --quiet >> /var/www/smappen/storage/logs/cron/seed-classify.log 2>&1
+
+# seed-resweep — recover stuck tiles + nightly re-sweep every 5 minutes.
+*/5 * * * * /usr/bin/flock -n /tmp/carafe-seed-resweep.lock /usr/bin/php /var/www/smappen/scripts/seed-resweep.php --all-campaigns --max-age-days=30 --stuck-after=1800 --quiet >> /var/www/smappen/storage/logs/cron/seed-resweep.log 2>&1
+
+# seed-coverage — ORS isochrone / radius fallback every 15 minutes.
+*/15 * * * * /usr/bin/flock -n /tmp/carafe-seed-coverage.lock /usr/bin/php /var/www/smappen/scripts/seed-coverage.php --batch-size=200 --simplify-only --quiet >> /var/www/smappen/storage/logs/cron/seed-coverage.log 2>&1
+
+# seed-enrich — nightly enrich pass for every running campaign at 02:30 UTC.
+30 2 * * * /usr/bin/flock -n /tmp/carafe-seed-enrich-all.lock /usr/bin/php /var/www/smappen/scripts/seed-enrich.php --all-campaigns --batch-size=100 --quiet >> /var/www/smappen/storage/logs/cron/seed-enrich.log 2>&1
+
+# seed-enrich — hot-tier refresh at 03:00 UTC.
+0 3 * * * /usr/bin/flock -n /tmp/carafe-seed-enrich-hot.lock /usr/bin/php /var/www/smappen/scripts/seed-enrich.php --refresh-tier=hot --batch-size=200 --quiet >> /var/www/smappen/storage/logs/cron/seed-enrich.log 2>&1
+
+# seed-enrich — warm-tier refresh at 03:30 UTC.
+30 3 * * * /usr/bin/flock -n /tmp/carafe-seed-enrich-warm.lock /usr/bin/php /var/www/smappen/scripts/seed-enrich.php --refresh-tier=warm --batch-size=200 --quiet >> /var/www/smappen/storage/logs/cron/seed-enrich.log 2>&1
+
+# measure-roi — ROI ledger nightly at 04:00 UTC (already lived here pre-cron).
+0 4 * * * /usr/bin/flock -n /tmp/carafe-measure-roi.lock /usr/bin/php /var/www/smappen/scripts/measure-roi.php >> /var/www/smappen/storage/logs/cron/measure-roi.log 2>&1
+
+# send-weekly-digest — weekly Monday 13:00 UTC (= 9:00 AM US-East, 6:00 AM US-West).
+0 13 * * 1 /usr/bin/flock -n /tmp/carafe-weekly-digest.lock /usr/bin/php /var/www/smappen/scripts/send-weekly-digest.php >> /var/www/smappen/storage/logs/cron/digest.log 2>&1
+
+# === END CARAFE CRON ===

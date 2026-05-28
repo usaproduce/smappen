@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, MapPin, ListChecks, ShieldCheck, AlertTriangle } from 'lucide-react';
-import { carafeApi } from '../../api/carafe';
+import { ArrowRight, MapPin, ListChecks, ShieldCheck, AlertTriangle, Activity } from 'lucide-react';
+import { carafeApi, type CronWorker } from '../../api/carafe';
 import { useAuthStore } from '../../stores/authStore';
 
 /**
@@ -26,6 +26,13 @@ export default function CarafeAdminHome() {
     queryFn: () => carafeApi.listCampaigns(10, 0),
   });
 
+  const { data: cron } = useQuery({
+    queryKey: ['carafe', 'cron-health'],
+    queryFn: () => carafeApi.cronHealth(),
+    refetchInterval: 60_000,
+  });
+  const staleWorkers = (cron?.workers ?? []).filter((w) => w.status === 'red');
+
   return (
     <div>
       <div className="flex items-end justify-between mb-6">
@@ -40,6 +47,8 @@ export default function CarafeAdminHome() {
           <MapPin size={14} /> New campaign
         </Link>
       </div>
+
+      {staleWorkers.length > 0 && <StaleWorkerBanner workers={staleWorkers} />}
 
       <GrantBanner />
 
@@ -99,11 +108,51 @@ export default function CarafeAdminHome() {
       </section>
 
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-        <PipelineCard />
+        <PipelineCard workers={cron?.workers ?? []} />
         <SafetyCard />
       </div>
     </div>
   );
+}
+
+function StaleWorkerBanner({ workers }: { workers: CronWorker[] }) {
+  return (
+    <div className="bg-red-50 border border-red-300 rounded-lg p-4 mb-6 flex items-start gap-3">
+      <AlertTriangle size={18} className="text-red-600 mt-0.5 flex-shrink-0" />
+      <div className="flex-1">
+        <div className="font-bold text-red-900 text-sm">
+          {workers.length === 1 ? '1 worker is stale' : `${workers.length} workers are stale`}
+        </div>
+        <p className="text-xs text-red-800 mt-1">
+          The following Carafe worker(s) haven't sent a heartbeat in more than 2× their expected cadence.
+          Check cron with <code className="px-1 py-0.5 bg-red-100 rounded">crontab -l</code> on the droplet and tail the matching log under
+          <code className="px-1 py-0.5 bg-red-100 rounded ml-1">storage/logs/cron/</code>.
+        </p>
+        <ul className="mt-2 space-y-0.5 text-xs text-red-900 font-mono">
+          {workers.map((w) => (
+            <li key={w.name}>
+              <span className="font-bold">{w.name}</span>{' '}
+              — {w.last_beat_at ? `last beat ${formatAge(w.last_beat_age_seconds)} ago` : 'never beat'}
+              {' '}(expected every {formatCadence(w.cadence_seconds)})
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function formatAge(seconds: number | null): string {
+  if (seconds === null) return '?';
+  if (seconds < 60)    return `${seconds}s`;
+  if (seconds < 3600)  return `${Math.round(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
+  return `${Math.round(seconds / 86400)}d`;
+}
+function formatCadence(seconds: number): string {
+  if (seconds < 3600)  return `${Math.round(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
+  return `${Math.round(seconds / 86400)}d`;
 }
 
 function QueueTile({ label, count, to, color }: { label: string; count: number; to: string; color: 'amber' | 'violet' | 'slate' }) {
@@ -143,21 +192,53 @@ function GrantBanner() {
   );
 }
 
-function PipelineCard() {
+function PipelineCard({ workers }: { workers: CronWorker[] }) {
+  const byName = Object.fromEntries(workers.map((w) => [w.name, w]));
+  const order: { key: string; label: string }[] = [
+    { key: 'seed-tile-worker',   label: 'seed-tile-worker — sweep queued tiles' },
+    { key: 'seed-dedupe',        label: 'seed-dedupe — block + Jaro-Winkler + cluster' },
+    { key: 'seed-classify',      label: 'seed-classify — type/category cascade' },
+    { key: 'seed-coverage',      label: 'seed-coverage — ORS isochrone + radius' },
+    { key: 'seed-resweep',       label: 'seed-resweep — stuck-tile + nightly delta' },
+    { key: 'seed-enrich',        label: 'seed-enrich — nightly + tier refresh' },
+    { key: 'measure-roi',        label: 'measure-roi — nightly ledger' },
+    { key: 'send-weekly-digest', label: 'send-weekly-digest — Mon 13:00 UTC' },
+  ];
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4">
-      <h3 className="font-bold text-slate-900 text-sm mb-3">Worker pipeline</h3>
-      <ol className="text-xs text-slate-600 space-y-1.5 list-decimal pl-5">
-        <li><code>seed-tile-worker.php</code> — sweeps tiles, upserts vendors</li>
-        <li><code>seed-dedupe.php</code> — block → match → cluster + Placekey</li>
-        <li><code>seed-classify.php</code> — type/category cascade</li>
-        <li><code>seed-enrich.php --all-campaigns</code> — Place Details</li>
-        <li><code>seed-enrich.php --refresh-tier=hot</code> — 30-day refresh</li>
-        <li><code>seed-coverage.php</code> — ORS isochrone + radius fallback</li>
-        <li><code>seed-resweep.php --all-campaigns</code> — nightly delta</li>
-        <li><code>seed-osm.php</code> / <code>seed-foursquare.php</code> — long-tail</li>
-      </ol>
+      <h3 className="font-bold text-slate-900 text-sm mb-3 flex items-center gap-2">
+        <Activity size={14} className="text-emerald-600" />
+        Worker pipeline
+      </h3>
+      <ul className="text-xs space-y-1.5">
+        {order.map(({ key, label }) => {
+          const w = byName[key];
+          return (
+            <li key={key} className="flex items-center justify-between gap-2">
+              <span className="text-slate-700 truncate"><code>{label}</code></span>
+              <StatusDot worker={w} />
+            </li>
+          );
+        })}
+      </ul>
     </div>
+  );
+}
+
+function StatusDot({ worker }: { worker: CronWorker | undefined }) {
+  if (!worker) {
+    return <span className="text-[10px] text-slate-400 font-semibold">no data</span>;
+  }
+  const dot =
+    worker.status === 'green'  ? 'bg-emerald-500' :
+    worker.status === 'yellow' ? 'bg-amber-400'   :
+                                 'bg-red-500';
+  const age = worker.last_beat_at ? formatAge(worker.last_beat_age_seconds) : 'never';
+  return (
+    <span className="flex items-center gap-1.5 flex-shrink-0">
+      <span className={`inline-block w-2 h-2 rounded-full ${dot}`} />
+      <span className="text-[11px] text-slate-600 tabular-nums">{age}</span>
+    </span>
   );
 }
 

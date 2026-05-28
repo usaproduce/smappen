@@ -5,6 +5,7 @@ require __DIR__ . '/../vendor/autoload.php';
 use App\Core\Config;
 use App\Services\PlacesEnrichService;
 use App\Services\SeedCampaignService;
+use App\Services\WorkerHeartbeat;
 
 /**
  * Carafe enrich worker. Spec v3 §4.4 + §9 step 7.
@@ -47,6 +48,10 @@ if ($campaignId === null && $refreshTier === null && !$allCampaigns) {
 }
 
 $svc = new PlacesEnrichService();
+
+$argsNote = ($refreshTier !== null ? "refresh-tier=$refreshTier" :
+             ($allCampaigns ? 'all-campaigns' : "campaign=$campaignId"));
+WorkerHeartbeat::beat('seed-enrich', 'start', $argsNote);
 
 if ($refreshTier !== null) {
     $started = microtime(true);

@@ -4,6 +4,7 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use App\Core\Config;
 use App\Services\VendorClassifierService;
+use App\Services\WorkerHeartbeat;
 
 /**
  * Carafe vendor classification pass. Spec v3 §4.3 + §9 step 6.
@@ -31,6 +32,7 @@ $batchSize  = max(1, (int) ($opts['batch-size'] ?? 5000));
 $quiet      = array_key_exists('quiet', $opts);
 
 $svc     = new VendorClassifierService();
+WorkerHeartbeat::beat('seed-classify', "start", "batch-size=$batchSize");
 $started = microtime(true);
 $counts  = $svc->classifyPending($batchSize);
 $elapsed = round(microtime(true) - $started, 1);

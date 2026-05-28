@@ -4,6 +4,7 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use App\Core\Config;
 use App\Services\TileSweepWorker;
+use App\Services\WorkerHeartbeat;
 
 /**
  * Carafe seed-tile sweep worker. Spec v3 §4.1 + §9 step 4.
@@ -39,6 +40,7 @@ $processed = 0;
 $idleSleeps = 0;
 
 while ($processed < $maxTiles && (microtime(true) - $started) < $maxSeconds) {
+    WorkerHeartbeat::beat('seed-tile-worker', "processed=$processed", "max-tiles=$maxTiles max-seconds=$maxSeconds");
     try {
         $r = $worker->runOne();
     } catch (\Throwable $e) {

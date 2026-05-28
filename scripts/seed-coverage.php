@@ -7,6 +7,7 @@ use App\Core\Database;
 use App\MarketData\VendorCoverageRepository;
 use App\MarketData\VendorLocationRepository;
 use App\Services\VendorGeometryService;
+use App\Services\WorkerHeartbeat;
 
 /**
  * Carafe coverage-geometry worker. Spec v3 §4.5 + §9 step 9.
@@ -43,6 +44,9 @@ $svc = new VendorGeometryService(
     new VendorLocationRepository(),
     new VendorCoverageRepository(),
 );
+
+WorkerHeartbeat::beat('seed-coverage', 'start',
+    "batch-size=$batchSize" . ($simplifyOnly ? ' --simplify-only' : ''));
 
 $started = microtime(true);
 

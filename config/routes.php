@@ -59,6 +59,7 @@ use App\Controllers\VendorReviewController;
 use App\Controllers\SavedVendorController;
 use App\Controllers\ReviewQueueController;
 use App\Controllers\SeedCampaignController;
+use App\Controllers\CarafeAdminController;
 use App\Controllers\ComparisonController;
 use App\Controllers\ConsolidationController;
 use App\Controllers\LeadController;
@@ -467,6 +468,11 @@ return function (Router $r) {
     $r->post('/api/admin/vendors/{id}/enrich',                  [SeedCampaignController::class, 'enrichVendor'], $adminAuth);
     $r->get('/api/admin/seed-campaigns/{id}/delta',             [SeedCampaignController::class, 'delta'],    $adminAuth);
     $r->post('/api/admin/seed-campaigns/{id}/resweep',          [SeedCampaignController::class, 'resweep'],  $adminAuth);
+
+    // Carafe pipeline observability — cron-schedule + worker liveness.
+    // Read-only summary derived from worker_heartbeats (mig 038). Powers
+    // the /admin/carafe stale-worker banner.
+    $r->get('/api/admin/carafe/cron-health',                    [CarafeAdminController::class, 'cronHealth'], $adminAuth);
 
     // Review queue (spec v3 §8) — admin surface for ambiguous dedupe matches
     // and low-confidence classifications. Two action namespaces under one

@@ -202,7 +202,32 @@ export const carafeApi = {
     const { data } = await api.post(`/api/admin/review-queue/classify/${id}/update`, { type, category });
     return data.data;
   },
+
+  // ─── Cron / worker liveness ─────────────────────────────────────
+  async cronHealth(): Promise<CronHealthResponse> {
+    const { data } = await api.get('/api/admin/carafe/cron-health');
+    return data.data;
+  },
 };
+
+export interface CronWorker {
+  name: string;
+  status: 'green' | 'yellow' | 'red';
+  cadence_seconds: number;
+  last_beat_at: string | null;
+  last_beat_age_seconds: number | null;
+  ticks_total: number;
+  last_args: string | null;
+  last_note: string | null;
+  pid: number | null;
+  host: string | null;
+}
+
+export interface CronHealthResponse {
+  workers: CronWorker[];
+  summary: { green: number; yellow: number; red: number; unknown: number };
+  server_time: string;
+}
 
 /** Spec §2 vendor-type catalog as static metadata for the builder UI. */
 export const VENDOR_TYPES: { key: string; label: string; description: string }[] = [

@@ -4,6 +4,7 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use App\Core\Config;
 use App\Services\VendorDedupeService;
+use App\Services\WorkerHeartbeat;
 
 /**
  * Carafe seed-dedupe + geocode pass. Spec v3 §9 step 5.
@@ -42,6 +43,8 @@ $skipMerges = array_key_exists('skip-merges', $opts);
 $quiet      = array_key_exists('quiet', $opts);
 
 $svc = new VendorDedupeService();
+
+WorkerHeartbeat::beat('seed-dedupe', "start", "batch-size=$batchSize" . ($skipMerges ? ' --skip-merges' : ''));
 
 $started = microtime(true);
 $counts  = $svc->dedupeNewLocations($batchSize);

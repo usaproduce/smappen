@@ -5,6 +5,7 @@ require __DIR__ . '/../vendor/autoload.php';
 use App\Core\Config;
 use App\Services\SeedCampaignService;
 use App\Services\SeedDeltaService;
+use App\Services\WorkerHeartbeat;
 
 /**
  * Carafe re-sweep scheduler + stuck-tile janitor. Spec v3 §12.3.
@@ -50,6 +51,10 @@ if ($campaignId === null && !$allCampaigns && $skipRecovery) {
 }
 
 $svc = new SeedDeltaService();
+
+WorkerHeartbeat::beat('seed-resweep', 'start',
+    ($campaignId ? "campaign=$campaignId " : ($allCampaigns ? 'all-campaigns ' : '')) .
+    "max-age-days=$maxAgeDays stuck-after=$stuckAfter");
 
 if (!$skipRecovery) {
     $recovered = $svc->recoverStuckTiles($stuckAfter);

@@ -20,11 +20,14 @@ require __DIR__ . '/../vendor/autoload.php';
 use App\Core\Config;
 use App\Core\Database;
 use App\Services\MailService;
+use App\Services\WorkerHeartbeat;
 
 Config::load(dirname(__DIR__));
 $db = Database::getInstance();
 
 $dry = in_array('--dry', $argv ?? [], true);
+
+WorkerHeartbeat::beat('send-weekly-digest', 'start', $dry ? '--dry' : '');
 
 // Idempotency ledger — lightweight inline migration so this script is
 // self-contained. Removes the operator-step of "did you run the migration?"

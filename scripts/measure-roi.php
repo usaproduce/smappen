@@ -17,8 +17,11 @@ use App\Core\Config;
 use App\PrivateData\PosSalesRepository;
 use App\PrivateData\RecommendationRepository;
 use App\Services\RoiService;
+use App\Services\WorkerHeartbeat;
 
 Config::load(dirname(__DIR__));
+
+WorkerHeartbeat::beat('measure-roi', 'start');
 
 $startedAt = date('c');
 echo "[$startedAt] measure-roi start\n";
