@@ -1,130 +1,96 @@
 <?php
 /**
- * USDA AMS MyMarketNews — terminal-market wholesale report mapping.
+ * USDA AMS MyMarketNews — terminal-market wholesale F&V report mapping.
  *
- * Each entry is one MARS API report slug. Slugs are stable per report
- * series but the report content rotates daily. Look up active slugs at:
- *   https://mymarketnews.ams.usda.gov/mymarketnews-api/reports
+ * Real slug IDs verified against the MARS API report catalog at
+ *   GET https://marsapi.ams.usda.gov/services/v1.2/reports
+ * on 2026-05-27. Each terminal city splits across three reports:
+ *   FV010 = Fruit, FV020 = Vegetables, FV030 = Onions & Potatoes.
+ *
+ * Discontinued markets (Dallas, San Francisco, Saint Louis) are omitted.
+ * The MARS API responds with section data only when the URL includes
+ * "/Report Details" (handled by the adapter).
  *
  * Fields:
- *   slug       — MARS API slug (numeric string in URL: /reports/{slug})
- *   region     — Carafe region key written into cogs_benchmark.region
- *   label      — human label for logs / freshness footer ("USDA AMS Boston")
- *   ingredients — map of (commodity, variety) keyword to ingredient_key.
- *                 Match is case-insensitive substring on both fields. The
- *                 *first* matching entry wins, so list the most specific
- *                 (e.g. tomato_roma) ahead of the generic (tomato).
- *                 Empty variety = any variety for that commodity.
+ *   slug       — MARS API slug
+ *   region     — Carafe region key written to cogs_benchmark.region
+ *   label      — used in source_ref + freshness footer
+ *   commodities — list of (commodity_substring, variety_substring,
+ *                 ingredient_key) tuples. Match is case-insensitive
+ *                 substring on `commodity` AND `variety` fields
+ *                 returned by AMS (which look like "Tomatoes, Roma" /
+ *                 "ROMA"). First match wins, so list the most specific
+ *                 ahead of the generic. Empty variety = any variety.
  *
- * The unit AMS reports prices in is the report's "package" field. We
- * normalize it via UsdaAmsAdapter::normalizePackage(). Anything we can't
- * confidently normalize is skipped + logged — better no row than a wrong
- * row, since plate-cost math compounds.
+ * NOTE: prices are reported per *package* (carton, bushel, etc.). The
+ * adapter normalizes via:
+ *   • explicit "N lb cartons" / "N kg cartons"
+ *   • sub-pack arithmetic "cartons 12 3-lb bags"
+ *   • per-commodity bushel weights (the BUSHEL_WEIGHTS table in
+ *     UsdaAmsAdapter::bushelLbsFor)
+ *   • everything else is skipped with a notes_json entry
  */
-return [
-    // Northeast terminal markets
-    [
-        'slug'   => '1830',
-        'region' => 'US-NE',
-        'label'  => 'USDA AMS Boston Terminal',
-        'ingredients' => [
-            ['commodity' => 'TOMATOES', 'variety' => 'ROMA',     'key' => 'tomato_roma'],
-            ['commodity' => 'TOMATOES', 'variety' => 'CHERRY',   'key' => 'tomato_cherry'],
-            ['commodity' => 'ONIONS DRY', 'variety' => 'YELLOW', 'key' => 'onion_yellow'],
-            ['commodity' => 'GARLIC',   'variety' => '',         'key' => 'garlic_fresh'],
-            ['commodity' => 'HERBS',    'variety' => 'BASIL',    'key' => 'basil_fresh'],
-            ['commodity' => 'HERBS',    'variety' => 'PARSLEY',  'key' => 'parsley_fresh'],
-            ['commodity' => 'LEMONS',   'variety' => '',         'key' => 'lemon'],
-            ['commodity' => 'LIMES',    'variety' => '',         'key' => 'lime'],
-            ['commodity' => 'AVOCADOS', 'variety' => '',         'key' => 'avocado'],
-            ['commodity' => 'LETTUCE',  'variety' => 'ROMAINE',  'key' => 'lettuce_romaine'],
-            ['commodity' => 'GREENS',   'variety' => 'SPINACH',  'key' => 'spinach_baby'],
-            ['commodity' => 'MUSHROOMS','variety' => 'BUTTON',   'key' => 'mushroom_button'],
-            ['commodity' => 'POTATOES', 'variety' => 'RUSSET',   'key' => 'potato_russet'],
-            ['commodity' => 'CARROTS',  'variety' => '',         'key' => 'carrot'],
-            ['commodity' => 'CELERY',   'variety' => '',         'key' => 'celery'],
-            ['commodity' => 'CUCUMBERS','variety' => '',         'key' => 'cucumber'],
-            ['commodity' => 'PEPPERS',  'variety' => 'BELL',     'key' => 'pepper_bell'],
-            ['commodity' => 'BROCCOLI', 'variety' => '',         'key' => 'broccoli'],
-            ['commodity' => 'CAULIFLOWER','variety' => '',       'key' => 'cauliflower'],
-            ['commodity' => 'STRAWBERRIES','variety' => '',      'key' => 'strawberry'],
-            ['commodity' => 'BLUEBERRIES','variety' => '',       'key' => 'blueberry'],
-        ],
-    ],
-    [
-        'slug'   => '1831',
-        'region' => 'US-NE',
-        'label'  => 'USDA AMS New York Terminal',
-        'ingredients' => '__share_with__:1830',
-    ],
-    [
-        'slug'   => '1832',
-        'region' => 'US-NE',
-        'label'  => 'USDA AMS Philadelphia Terminal',
-        'ingredients' => '__share_with__:1830',
-    ],
 
-    // Mid-Atlantic (Baltimore terminal)
-    [
-        'slug'   => '1834',
-        'region' => 'US-MID-ATLANTIC',
-        'label'  => 'USDA AMS Baltimore Terminal',
-        'ingredients' => '__share_with__:1830',
-    ],
-
-    // Midwest
-    [
-        'slug'   => '1833',
-        'region' => 'US-MW',
-        'label'  => 'USDA AMS Chicago Terminal',
-        'ingredients' => '__share_with__:1830',
-    ],
-    [
-        'slug'   => '1837',
-        'region' => 'US-MW',
-        'label'  => 'USDA AMS St. Louis Terminal',
-        'ingredients' => '__share_with__:1830',
-    ],
-
-    // Southeast
-    [
-        'slug'   => '1828',
-        'region' => 'US-SE',
-        'label'  => 'USDA AMS Atlanta Terminal',
-        'ingredients' => '__share_with__:1830',
-    ],
-    [
-        'slug'   => '1835',
-        'region' => 'US-SE',
-        'label'  => 'USDA AMS Miami Terminal',
-        'ingredients' => '__share_with__:1830',
-    ],
-
-    // South
-    [
-        'slug'   => '1836',
-        'region' => 'US-S',
-        'label'  => 'USDA AMS Dallas Terminal',
-        'ingredients' => '__share_with__:1830',
-    ],
-
-    // West
-    [
-        'slug'   => '1839',
-        'region' => 'US-W',
-        'label'  => 'USDA AMS Los Angeles Terminal',
-        'ingredients' => '__share_with__:1830',
-    ],
-    [
-        'slug'   => '1840',
-        'region' => 'US-W',
-        'label'  => 'USDA AMS San Francisco Terminal',
-        'ingredients' => '__share_with__:1830',
-    ],
-    [
-        'slug'   => '1841',
-        'region' => 'US-W',
-        'label'  => 'USDA AMS Seattle Terminal',
-        'ingredients' => '__share_with__:1830',
-    ],
+$produce_vegetables = [
+    ['TOMATOES',    'ROMA',         'tomato_roma'],
+    ['TOMATOES',    'CHERRY',       'tomato_cherry'],
+    ['TOMATOES',    '',             'tomato_roma'],          // generic last
+    ['LETTUCE',     'ROMAINE',      'lettuce_romaine'],
+    ['LETTUCE',     'ICEBERG',      'lettuce_romaine'],      // close enough as proxy
+    ['CUCUMBERS',   '',             'cucumber'],
+    ['PEPPERS, BELL', '',           'pepper_bell'],
+    ['BROCCOLI',    '',             'broccoli'],
+    ['CAULIFLOWER', '',             'cauliflower'],
+    ['CARROTS',     '',             'carrot'],
+    ['CELERY',      '',             'celery'],
+    ['GREENS',      'SPINACH',      'spinach_baby'],
+    ['SPINACH',     '',             'spinach_baby'],
+    ['MUSHROOMS',   'WHITE BUTTON', 'mushroom_button'],
+    ['MUSHROOMS',   'BUTTON',       'mushroom_button'],
+    ['MUSHROOMS',   '',             'mushroom_button'],
+    ['GARLIC',      '',             'garlic_fresh'],
+    ['HERBS',       'BASIL',        'basil_fresh'],
+    ['HERBS',       'PARSLEY',      'parsley_fresh'],
 ];
+$produce_fruit = [
+    ['LIMES',       '',             'lime'],
+    ['LEMONS',      '',             'lemon'],
+    ['AVOCADOS',    'HASS',         'avocado'],
+    ['AVOCADOS',    '',             'avocado'],
+    ['STRAWBERRIES','',             'strawberry'],
+    ['BLUEBERRIES', '',             'blueberry'],
+];
+$produce_onions = [
+    ['ONIONS',      'YELLOW',       'onion_yellow'],
+    ['ONIONS DRY',  'YELLOW',       'onion_yellow'],
+    ['POTATOES',    'RUSSET',       'potato_russet'],
+    ['POTATOES, RUSSET', '',        'potato_russet'],
+];
+
+$cities = [
+    // slug_fruit, slug_veg, slug_onions, region, city_label
+    [2285, 2286, 2287, 'US-NE',           'Boston'],
+    [2314, 2315, 2316, 'US-NE',           'New York'],
+    [2318, 2319, 2320, 'US-NE',           'Philadelphia'],
+    [2281, 2282, 2283, 'US-MID-ATLANTIC', 'Baltimore'],
+    [2290, 2291, 2292, 'US-MW',           'Chicago'],
+    [2302, 2303, 2304, 'US-MW',           'Detroit'],
+    [2277, 2278, 2279, 'US-SE',           'Atlanta'],
+    [2310, 2311, 2312, 'US-SE',           'Miami'],
+    [2294, 2295, 2296, 'US-SE',           'Columbia'],
+    [2306, 2307, 2308, 'US-W',            'Los Angeles'],
+];
+
+$out = [];
+foreach ($cities as [$slugFruit, $slugVeg, $slugOnion, $region, $city]) {
+    $out[] = ['slug' => (string) $slugFruit, 'region' => $region,
+              'label' => "USDA AMS $city Terminal — Fruit",
+              'commodities' => $produce_fruit];
+    $out[] = ['slug' => (string) $slugVeg,   'region' => $region,
+              'label' => "USDA AMS $city Terminal — Vegetables",
+              'commodities' => $produce_vegetables];
+    $out[] = ['slug' => (string) $slugOnion, 'region' => $region,
+              'label' => "USDA AMS $city Terminal — Onions & Potatoes",
+              'commodities' => $produce_onions];
+}
+return $out;

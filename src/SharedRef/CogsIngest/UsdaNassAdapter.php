@@ -30,7 +30,24 @@ class UsdaNassAdapter implements CogsIngestAdapter
     public function __construct(?array $queries = null, ?string $apiKey = null)
     {
         $this->queries = $queries ?? require dirname(__DIR__, 3) . '/config/cogs_usda_nass_queries.php';
-        $this->apiKey  = $apiKey  ?? (string) Config::get('USDA_API_KEY', '');
+        // NASS Quick Stats requires its OWN key (separate registration at
+        // https://quickstats.nass.usda.gov/api). AMS keys are rejected with
+        // 401. Look for USDA_NASS_API_KEY first; only fall back to
+        // USDA_API_KEY if the operator explicitly opts in via
+        // USDA_NASS_REUSE_AMS_KEY=1 (used for testing — production should
+        // register the proper key).
+        if ($apiKey !== null) {
+            $this->apiKey = $apiKey;
+        } else {
+            $nass = (string) Config::get('USDA_NASS_API_KEY', '');
+            if ($nass !== '') {
+                $this->apiKey = $nass;
+            } elseif ((string) Config::get('USDA_NASS_REUSE_AMS_KEY', '') === '1') {
+                $this->apiKey = (string) Config::get('USDA_API_KEY', '');
+            } else {
+                $this->apiKey = '';
+            }
+        }
     }
 
     public function key(): string    { return 'usda_nass'; }

@@ -7,24 +7,21 @@ use App\Core\Config;
 
 /**
  * USDA AMS MyMarketNews adapter — public, free wholesale terminal-market
- * prices. Each configured slug is one report (e.g. Boston Terminal Daily
- * Fruits & Vegetables Wholesale). Auth is HTTP Basic with the API key as
+ * prices. Each configured slug is one report split (e.g. Boston Terminal
+ * Vegetables Prices, slug 2286). Auth is HTTP Basic with the API key as
  * username and empty password.
  *
- * One adapter instance handles many slugs. fetchBatch(region) picks the
- * configured slugs for that region (or every slug if region is null) and
- * issues one HTTP call per slug. Each call becomes its own
- * cogs_ingest_batches row via the service loop — we return a batch
- * struct per call.
+ * MARS API call shape (verified against the live API on 2026-05-27):
+ *   GET https://marsapi.ams.usda.gov/services/v1.2/reports/{slug}/Report Details
+ *       ?q=report_begin_date=YYYY-MM-DD
+ *   (the "/Report Details" section is required; the root URL returns
+ *    a header-only section with no commodity rows)
  *
- * NOTE: this class implements CogsIngestAdapter but, unlike a "one call
- * per fetchBatch" adapter, it yields one batch *per slug*. The service
- * driver handles that via fetchBatchesForRegion() instead of fetchBatch().
- * fetchBatch() is kept satisfying the interface (returns the first slug's
- * batch) so type-checking doesn't fight us.
+ * One slug → one IngestBatch. fetchBatchesForRegion yields one batch
+ * per slug touching the requested region. fetchBatch(region) returns
+ * the first.
  *
- * Defensive: never throws. Upstream failure → returns IngestBatch with
- * ok=false. CURLOPT_CONNECTTIMEOUT=3 per audit §5.4.
+ * Defensive: never throws. CURLOPT_CONNECTTIMEOUT=3 per audit §5.4.
  */
 class UsdaAmsAdapter implements CogsIngestAdapter
 {
@@ -33,13 +30,41 @@ class UsdaAmsAdapter implements CogsIngestAdapter
 
     private string $apiKey;
 
-    private const ENDPOINT_FMT = 'https://marsapi.ams.usda.gov/services/v1.2/reports/%s';
+    private const ENDPOINT_FMT = 'https://marsapi.ams.usda.gov/services/v1.2/reports/%s/Report Details';
+
+    /**
+     * Average pounds per single bushel by commodity. USDA AMS reports
+     * prices per "1/2 bushel", "1 1/9 bushel", etc.; multiplying through
+     * the bushel fraction gives us total pounds in the package.
+     *
+     * Source: USDA AMS "Weights, Measures, and Conversion Factors for
+     * Agricultural Commodities and Their Products" (Handbook 697).
+     */
+    private const BUSHEL_LBS = [
+        'TOMATOES'    => 53,
+        'CUCUMBERS'   => 50,
+        'PEPPERS'     => 28,
+        'LETTUCE'     => 24,
+        'BROCCOLI'    => 30,
+        'CAULIFLOWER' => 38,
+        'CARROTS'     => 50,
+        'CELERY'      => 60,
+        'SPINACH'     => 20,
+        'GREENS'      => 20,
+        'MUSHROOMS'   => 18,
+        'GARLIC'      => 30,
+        'ONIONS'      => 50,
+        'POTATOES'    => 60,
+        'APPLES'      => 42,
+        'PEACHES'     => 48,
+        'PEARS'       => 50,
+    ];
+    private const BUSHEL_DEFAULT_LBS = 40;
 
     public function __construct(?array $reports = null, ?string $apiKey = null)
     {
         $this->reports = $reports ?? require dirname(__DIR__, 3) . '/config/cogs_usda_ams_reports.php';
         $this->apiKey  = $apiKey  ?? (string) Config::get('USDA_API_KEY', '');
-        $this->resolveShares();
     }
 
     public function key(): string    { return 'usda_ams'; }
@@ -53,31 +78,20 @@ class UsdaAmsAdapter implements CogsIngestAdapter
         return array_keys($r);
     }
 
-    /**
-     * Interface-satisfying single-batch fetch. The driver normally calls
-     * fetchBatchesForRegion() instead; this method picks the first slug
-     * matching $region (or any slug if $region is null) and returns it.
-     */
     public function fetchBatch(string $asOfDate, ?string $region): IngestBatch
     {
         $batches = $this->fetchBatchesForRegion($asOfDate, $region);
         if (!$batches) {
             return new IngestBatch(
-                adapter: $this->key(),
-                source:  $this->source(),
-                region:  $region,
-                asOf:    $asOfDate,
-                rows:    [],
-                ok:      false,
-                errorMessage: 'no USDA AMS slugs configured for region ' . ($region ?? 'null'),
+                adapter: $this->key(), source: $this->source(),
+                region: $region, asOf: $asOfDate, rows: [],
+                ok: false, errorMessage: 'no USDA AMS slugs configured for region ' . ($region ?? 'null'),
             );
         }
         return $batches[0];
     }
 
-    /**
-     * @return IngestBatch[] one batch per AMS slug touching $region.
-     */
+    /** @return IngestBatch[] one batch per AMS slug touching $region */
     public function fetchBatchesForRegion(string $asOfDate, ?string $region): array
     {
         $slugs = array_values(array_filter(
@@ -85,9 +99,7 @@ class UsdaAmsAdapter implements CogsIngestAdapter
             fn($r) => $region === null || $r['region'] === $region
         ));
         $out = [];
-        foreach ($slugs as $r) {
-            $out[] = $this->fetchOneSlug($asOfDate, (array) $r);
-        }
+        foreach ($slugs as $r) $out[] = $this->fetchOneSlug($asOfDate, (array) $r);
         return $out;
     }
 
@@ -96,171 +108,211 @@ class UsdaAmsAdapter implements CogsIngestAdapter
         $slug   = (string) $report['slug'];
         $region = (string) $report['region'];
         $label  = (string) ($report['label'] ?? "USDA AMS slug $slug");
-        $url    = sprintf(self::ENDPOINT_FMT, $slug) . '?q=published_date=' . rawurlencode($asOfDate) . '..&pageSize=2000';
 
-        [$status, $body, $latencyMs, $err] = $this->httpGet($url);
-
-        if ($err !== null || $body === '') {
-            return new IngestBatch(
-                adapter: $this->key(),
-                source:  $this->source(),
-                region:  $region,
-                asOf:    $asOfDate,
-                rows:    [],
-                endpoint: $url,
-                sourceRef: $label,
-                httpStatus: $status,
-                latencyMs: $latencyMs,
-                ok: false,
-                errorMessage: $err ?? 'empty response',
-            );
+        // AMS publishes daily. If $asOfDate is today and the report hasn't
+        // published yet, we want the previous business day. Try $asOfDate
+        // first, then walk back up to 4 days.
+        for ($offset = 0; $offset <= 4; $offset++) {
+            $tryDate = date('Y-m-d', strtotime("$asOfDate -{$offset} days"));
+            [$status, $body, $latencyMs, $err, $url] = $this->fetchForDate($slug, $tryDate);
+            if ($err === null && $status === 200) {
+                $batch = $this->parseResponse($body, $status, $latencyMs, $url, $region, $label, $tryDate, $report['commodities'] ?? []);
+                if (count($batch->rows) > 0 || $offset === 4) return $batch;
+                continue; // 200 but empty — walk back
+            }
+            if ($offset === 4) {
+                return new IngestBatch(
+                    adapter: $this->key(), source: $this->source(),
+                    region: $region, asOf: $tryDate, rows: [],
+                    endpoint: $url, sourceRef: $label,
+                    httpStatus: $status, latencyMs: $latencyMs,
+                    ok: false, errorMessage: $err ?? "no data after 4-day walkback (HTTP $status)",
+                );
+            }
         }
+        // Unreachable, satisfy static analysis
+        return new IngestBatch(adapter: $this->key(), source: $this->source(),
+            region: $region, asOf: $asOfDate, rows: [], ok: false,
+            errorMessage: 'walkback loop exhausted unexpectedly');
+    }
 
+    /** @return array{0:int,1:string,2:int,3:?string,4:string} */
+    private function fetchForDate(string $slug, string $date): array
+    {
+        $endpoint = sprintf(self::ENDPOINT_FMT, $slug);
+        $url = $endpoint . '?' . http_build_query(['q' => "report_begin_date=$date"]);
+        [$status, $body, $latencyMs, $err] = $this->httpGet($url);
+        return [$status, $body, $latencyMs, $err, $url];
+    }
+
+    private function parseResponse(string $body, int $status, int $latencyMs, string $url, string $region, string $label, string $asOfDate, array $commodityMap): IngestBatch
+    {
         $json = json_decode($body, true);
-        if (!is_array($json)) {
-            return new IngestBatch(
-                adapter: $this->key(), source: $this->source(),
+        if (!is_array($json) || !isset($json['results']) || !is_array($json['results'])) {
+            return new IngestBatch(adapter: $this->key(), source: $this->source(),
                 region: $region, asOf: $asOfDate, rows: [],
                 endpoint: $url, sourceRef: $label,
                 httpStatus: $status, latencyMs: $latencyMs,
-                ok: false, errorMessage: 'non-JSON response',
-            );
+                ok: false, errorMessage: 'non-JSON or missing results[]');
         }
 
-        // MARS API typically returns ['results' => [ {...row}, ... ]]
-        $records = $json['results'] ?? $json['Report'] ?? $json['report'] ?? [];
-        if (!is_array($records)) $records = [];
-
-        $rows    = [];
-        $skipped = 0;
+        $records = $json['results'];
+        $rows = [];
+        $skippedNoMatch = 0;
+        $skippedUnparseable = 0;
         $latestObserved = $asOfDate;
-        $ingredientMap = (array) ($report['ingredients'] ?? []);
 
         foreach ($records as $rec) {
-            $row = $this->normalizeRecord($rec, $ingredientMap, $region, $label);
-            if ($row === null) { $skipped++; continue; }
+            if (!is_array($rec)) { $skippedUnparseable++; continue; }
+            $matched = $this->matchIngredient($rec, $commodityMap);
+            if ($matched === null) { $skippedNoMatch++; continue; }
+            $row = $this->buildRow($rec, $matched, $region, $label);
+            if ($row === null) { $skippedUnparseable++; continue; }
             $rows[] = $row;
             if ($row->asOf > $latestObserved) $latestObserved = $row->asOf;
         }
 
         return new IngestBatch(
-            adapter:  $this->key(),
-            source:   $this->source(),
-            region:   $region,
-            asOf:     $latestObserved,
-            rows:     $rows,
-            endpoint: $url,
-            sourceRef: $label,
-            httpStatus: $status,
-            latencyMs: $latencyMs,
+            adapter: $this->key(), source: $this->source(),
+            region: $region, asOf: $latestObserved, rows: $rows,
+            endpoint: $url, sourceRef: $label,
+            httpStatus: $status, latencyMs: $latencyMs,
             ok: true,
-            notes: ['records_in_response' => count($records), 'records_skipped' => $skipped, 'slug' => $slug],
+            notes: [
+                'records_in_response' => count($records),
+                'no_match'            => $skippedNoMatch,
+                'unparseable'         => $skippedUnparseable,
+            ],
         );
     }
 
-    /**
-     * Map one AMS record → IngestRow, or null if it can't be normalized.
-     *
-     * AMS record shape varies by report but commonly includes:
-     *   commodity, variety, package, low_price, high_price,
-     *   mostly_low, mostly_high, report_begin_date, origin, ...
-     */
-    private function normalizeRecord(mixed $rec, array $ingredientMap, string $region, string $label): ?IngestRow
+    private function matchIngredient(array $rec, array $commodityMap): ?array
     {
-        if (!is_array($rec)) return null;
-        $commodity = strtoupper((string) ($rec['commodity'] ?? $rec['commodity_desc'] ?? ''));
-        $variety   = strtoupper((string) ($rec['variety']   ?? $rec['variety_desc']   ?? ''));
+        $commodity = strtoupper((string) ($rec['commodity'] ?? ''));
+        $variety   = strtoupper((string) ($rec['variety']   ?? ''));
         if ($commodity === '') return null;
 
-        $matched = null;
-        foreach ($ingredientMap as $candidate) {
-            $c = strtoupper((string) ($candidate['commodity'] ?? ''));
-            $v = strtoupper((string) ($candidate['variety']   ?? ''));
+        foreach ($commodityMap as $entry) {
+            [$c, $v, $key] = $entry;
+            $c = strtoupper((string) $c);
+            $v = strtoupper((string) $v);
             if ($c !== '' && !str_contains($commodity, $c)) continue;
             if ($v !== '' && !str_contains($variety, $v))   continue;
-            $matched = $candidate;
-            break;
+            return ['ingredient_key' => $key, 'matched_commodity' => $commodity, 'matched_variety' => $variety];
         }
-        if ($matched === null) return null;
+        return null;
+    }
 
-        // Prefer mostly_high/low midpoint (sheds outliers); fall back to high/low.
-        $low  = $this->parseFloat($rec['mostly_low']  ?? $rec['low_price']  ?? null);
-        $high = $this->parseFloat($rec['mostly_high'] ?? $rec['high_price'] ?? null);
+    private function buildRow(array $rec, array $matched, string $region, string $label): ?IngestRow
+    {
+        $low  = $this->parseFloat($rec['mostly_low_price']  ?? $rec['low_price']  ?? null);
+        $high = $this->parseFloat($rec['mostly_high_price'] ?? $rec['high_price'] ?? null);
         if ($low === null && $high === null) return null;
         if ($low === null)  $low  = $high;
         if ($high === null) $high = $low;
         $midDollars = ($low + $high) / 2.0;
         if ($midDollars <= 0) return null;
 
-        $package = (string) ($rec['package'] ?? $rec['pkg'] ?? '');
-        $norm    = $this->normalizePackage($package);
+        $package = (string) ($rec['package'] ?? '');
+        $itemSize = (string) ($rec['item_size'] ?? '');
+        $commodity = strtoupper((string) ($rec['commodity'] ?? ''));
+
+        $norm = $this->normalizePackage($package, $commodity, $itemSize);
         if ($norm === null) return null;
 
         $perUnitDollars = $midDollars / $norm['quantityInUnit'];
         $cents = (int) round($perUnitDollars * 100);
-        if ($cents <= 0 || $cents > 100_000) return null; // sanity cap: $1000/unit
+        if ($cents <= 0 || $cents > 100_000) return null;
 
         $asOf = $this->parseDate($rec['report_begin_date'] ?? $rec['report_end_date'] ?? $rec['published_date'] ?? null)
               ?? date('Y-m-d');
 
         return new IngestRow(
-            ingredientKey:   (string) $matched['key'],
-            unit:            $norm['unit'],
+            ingredientKey:    (string) $matched['ingredient_key'],
+            unit:             $norm['unit'],
             marketPriceCents: $cents,
-            region:          $region,
-            asOf:            $asOf,
-            sourceRef:       sprintf('%s | %s %s | %s', $label, $commodity, $variety, $package),
+            region:           $region,
+            asOf:             $asOf,
+            sourceRef:        sprintf('%s | %s %s | %s', $label,
+                                 (string) $rec['commodity'],
+                                 (string) ($rec['variety'] ?? ''),
+                                 $package),
         );
     }
 
     /**
-     * Parse the "package" free-text into (quantity, unit) so a $14/25lb-carton
-     * price normalizes to $0.56/lb. Returns null when ambiguous — better no
-     * row than a wrong row.
+     * Parse the AMS "package" string into (quantity, unit). Returns null
+     * when we can't confidently normalize — better no row than a wrong row.
      *
-     * Examples that match:
-     *   "25 lb cartons"       → 25 lb
-     *   "50 lb sacks"         → 50 lb
-     *   "1 1/9 bushel cartons" → 1.11 each (we treat bushel as "each" — too variable)
-     *   "12 ct cartons"       → 12 each
-     *   "flats 8 1-lb cont"   → 8 lb
-     *   "1 pound bag"         → 1 lb
-     *
-     * The unit returned is one of cogs_benchmark's allowed units:
-     * lb | oz | each | cup | tbsp.
+     * Order matters: most-specific patterns first.
      */
-    public function normalizePackage(string $pkg): ?array
+    public function normalizePackage(string $pkg, string $commodity = '', string $itemSize = ''): ?array
     {
         $p = strtolower(trim($pkg));
         if ($p === '') return null;
 
-        if (preg_match('/(\d+(?:\.\d+)?)\s*(lb|pound|pounds)\b/', $p, $m)) {
+        // 1. Sub-pack arithmetic: "cartons 12 3-lb bags" / "cartons 16 1-lb packages"
+        if (preg_match('/(\d+)\s+(\d+(?:\.\d+)?)[- ]\s*lb\b/', $p, $m)) {
+            return ['quantityInUnit' => (float) $m[1] * (float) $m[2], 'unit' => 'lb'];
+        }
+        if (preg_match('/(\d+)\s+(\d+(?:\.\d+)?)[- ]\s*oz\b/', $p, $m)) {
+            return ['quantityInUnit' => (float) $m[1] * (float) $m[2], 'unit' => 'oz'];
+        }
+        // 2. Explicit "N lb" / "N pound" cartons
+        if (preg_match('/(\d+(?:\.\d+)?)(?:[- ])?(?:\s*)(lb|pound|pounds)\b/', $p, $m)) {
             return ['quantityInUnit' => (float) $m[1], 'unit' => 'lb'];
         }
         if (preg_match('/(\d+(?:\.\d+)?)\s*(oz|ounce|ounces)\b/', $p, $m)) {
             return ['quantityInUnit' => (float) $m[1], 'unit' => 'oz'];
         }
-        // Flats / cases with N×Mlb inner packs (e.g. "8 1-lb cont")
-        if (preg_match('/(\d+)\s*x?\s*(\d+(?:\.\d+)?)\s*[- ]?\s*(lb|pound)/', $p, $m)) {
-            $total = (float) $m[1] * (float) $m[2];
-            return ['quantityInUnit' => $total, 'unit' => 'lb'];
+        // 3. Kilograms → lb (1 kg = 2.20462 lb)
+        if (preg_match('/(\d+(?:\.\d+)?)\s*kg\b/', $p, $m)) {
+            return ['quantityInUnit' => (float) $m[1] * 2.20462, 'unit' => 'lb'];
         }
-        // Count packs ("12 ct cartons", "24 ct"). Treat each piece as "each".
-        if (preg_match('/(\d+)\s*(ct|count|each)\b/', $p, $m)) {
+        // 4. Bushels: "1/2 bushel", "1 1/9 bushel cartons", "4/5 bushel cartons"
+        $bushels = $this->parseBushelFraction($p);
+        if ($bushels !== null) {
+            $lbsPerBushel = $this->bushelLbsFor($commodity);
+            return ['quantityInUnit' => $bushels * $lbsPerBushel, 'unit' => 'lb'];
+        }
+        // 5. Count packs ("12 count", "24 ct"). Item is "each".
+        if (preg_match('/(\d+)\s*(?:ct|count)\b/', $p, $m)) {
             return ['quantityInUnit' => (float) $m[1], 'unit' => 'each'];
-        }
-        // Bushels — convert to lb using typical produce bushel weight (~45 lb avg).
-        // This is approximate, so flag in source_ref via the carrier slug; for now we
-        // only use it if no lb match was found.
-        if (preg_match('/(\d+(?:\.\d+)?)\s*bushel/', $p, $m)) {
-            return ['quantityInUnit' => (float) $m[1] * 45.0, 'unit' => 'lb'];
         }
         return null;
     }
 
+    /** Parse "1 1/9", "4/5", "2/3", "1/2", "2" from start of $p. */
+    private function parseBushelFraction(string $p): ?float
+    {
+        if (!str_contains($p, 'bushel')) return null;
+        // "1 1/9 bushel" — whole + fraction
+        if (preg_match('/^(\d+)\s+(\d+)\s*\/\s*(\d+)\s+bushel/', $p, $m)) {
+            return (float) $m[1] + ((float) $m[2] / (float) $m[3]);
+        }
+        // "1/2 bushel"
+        if (preg_match('/^(\d+)\s*\/\s*(\d+)\s+bushel/', $p, $m)) {
+            return (float) $m[1] / (float) $m[2];
+        }
+        // "2 bushel" / "1 bushel"
+        if (preg_match('/^(\d+(?:\.\d+)?)\s+bushel/', $p, $m)) {
+            return (float) $m[1];
+        }
+        // Just "bushel" (rare) — treat as 1
+        return 1.0;
+    }
+
+    private function bushelLbsFor(string $commodity): float
+    {
+        foreach (self::BUSHEL_LBS as $key => $lbs) {
+            if (str_contains($commodity, $key)) return (float) $lbs;
+        }
+        return self::BUSHEL_DEFAULT_LBS;
+    }
+
     private function parseFloat(mixed $v): ?float
     {
-        if ($v === null || $v === '') return null;
+        if ($v === null || $v === '' || $v === 'N/A') return null;
         if (is_numeric($v)) return (float) $v;
         if (is_string($v)) {
             $clean = preg_replace('/[^0-9.\-]/', '', $v);
@@ -273,7 +325,6 @@ class UsdaAmsAdapter implements CogsIngestAdapter
     private function parseDate(mixed $v): ?string
     {
         if (!is_string($v) || $v === '') return null;
-        // Accept ISO (2026-05-26) and US (05/26/2026).
         if (preg_match('/^\d{4}-\d{2}-\d{2}/', $v, $m)) return substr($m[0], 0, 10);
         if (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})#', $v, $m)) {
             return sprintf('%04d-%02d-%02d', (int) $m[3], (int) $m[1], (int) $m[2]);
@@ -303,23 +354,5 @@ class UsdaAmsAdapter implements CogsIngestAdapter
         if ($resp === false) return [$status ?: 0, '', $latencyMs, $err ?: 'curl failed'];
         if ($status >= 400)  return [$status, (string) $resp, $latencyMs, "HTTP $status"];
         return [$status, (string) $resp, $latencyMs, null];
-    }
-
-    /**
-     * Resolve `ingredients => '__share_with__:1830'` references so every
-     * report sees the same ingredient map without us repeating 21 lines
-     * per slug.
-     */
-    private function resolveShares(): void
-    {
-        $bySlug = [];
-        foreach ($this->reports as $r) $bySlug[(string) $r['slug']] = $r;
-        foreach ($this->reports as $i => $r) {
-            $ing = $r['ingredients'] ?? null;
-            if (is_string($ing) && str_starts_with($ing, '__share_with__:')) {
-                $ref = substr($ing, strlen('__share_with__:'));
-                $this->reports[$i]['ingredients'] = $bySlug[$ref]['ingredients'] ?? [];
-            }
-        }
     }
 }
