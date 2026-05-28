@@ -8,6 +8,7 @@ class Database
 {
     private static ?Database $instance = null;
     private PDO $pdo;
+    private bool $persistent = false;
 
     private function __construct()
     {
@@ -17,13 +18,33 @@ class Database
         $user = Config::get('DB_USER', 'root');
         $pass = Config::get('DB_PASS', '');
 
+        // Persistent connections are a per-FPM-worker pool: reusing the
+        // same MySQL handle across requests avoids the ~1ms TCP/auth
+        // handshake on every page. CLI scripts (cron workers) get a
+        // fresh connection per invocation regardless — the persistent
+        // pool only makes sense in long-lived SAPI processes, and
+        // keeping CLI off prevents the worker chain from accidentally
+        // holding open connections after the script exits.
+        //
+        // Env switch: DB_PERSISTENT=false reverts to per-request connect
+        // (escape hatch if a hosting environment misbehaves under
+        // persistent PDO — see docs/infra.md).
+        $persistFlag = (string) Config::get('DB_PERSISTENT', 'true');
+        $persistWanted = filter_var($persistFlag, FILTER_VALIDATE_BOOLEAN);
+        $isCli = PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg';
+        $this->persistent = $persistWanted && !$isCli;
+
         $dsn = "mysql:host={$host};port={$port};dbname={$name};charset=utf8mb4";
+        $opts = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ];
+        if ($this->persistent) {
+            $opts[PDO::ATTR_PERSISTENT] = true;
+        }
         try {
-            $this->pdo = new PDO($dsn, $user, $pass, [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES => false,
-            ]);
+            $this->pdo = new PDO($dsn, $user, $pass, $opts);
         } catch (PDOException $e) {
             throw new \RuntimeException('Database connection failed: ' . $e->getMessage());
         }
@@ -40,6 +61,12 @@ class Database
     public function pdo(): PDO
     {
         return $this->pdo;
+    }
+
+    /** True if this handle is using PDO::ATTR_PERSISTENT. Exposed for /api/health. */
+    public function isPersistent(): bool
+    {
+        return $this->persistent;
     }
 
     public function query(string $sql, array $params = []): \PDOStatement

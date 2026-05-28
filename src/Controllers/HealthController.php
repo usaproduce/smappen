@@ -48,6 +48,7 @@ class HealthController
             'now' => date('c'),
             'elapsed_ms' => (int) round((microtime(true) - $started) * 1000),
             'connections' => $connections,
+            'pool' => ['persistent' => Database::getInstance()->isPersistent()],
         ];
         if ($dbError && Config::isDevelopment()) {
             $payload['db_error'] = $dbError;
