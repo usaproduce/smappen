@@ -339,7 +339,7 @@ class MenuController
      */
     public function suggestRecipe(Request $request): void
     {
-        $this->verifyOwnedRestaurant($request);
+        $r = $this->verifyOwnedRestaurant($request);
         $b = $request->getBody() ?? [];
         $name = trim((string) ($b['name'] ?? ''));
         $category = isset($b['category']) ? (string) $b['category'] : null;
@@ -349,7 +349,6 @@ class MenuController
         // Decorate ingredients with benchmark prices so the operator sees
         // immediate cost feedback before committing the draft.
         $benchRepo = new CogsBenchmarkRepository();
-        $r = $this->restaurants->findById((string) $request->getParam('id'), $request->user['organization_id']);
         $region = $r['region'] ?? null;
         foreach ($draft['ingredients'] as &$ing) {
             $row = $benchRepo->lookup($ing['ingredient_key'], $region);
