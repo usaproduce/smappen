@@ -1,9 +1,9 @@
 import toast from 'react-hot-toast';
 import { collabApi } from '../api/advanced';
-import { allOuterRings, polygonBounds } from './geo';
+import { allOuterRings, polygonBounds, polygonCentroid } from './geo';
 import { useMapStore } from '../stores/mapStore';
 import { paletteById, gradientCss, interpolatePalette } from './heatmapColors';
-import type { Area } from '../types';
+import type { Area, ImportedPoint } from '../types';
 import type { HeatmapMetric, HeatmapResponse } from '../api/heatmap';
 
 /**
@@ -31,6 +31,13 @@ const DEFAULT_FILL = '#7848BB';
 const BRAND_PURPLE = '#7848BB';
 
 export type SnapshotTarget = 'download' | 'clipboard';
+/** "viewport" is the WYSIWYG default — match the live map's current aspect
+ *  and pose exactly, so what the user composed on screen is what they get
+ *  in the PNG. The named ratios are fixed-shape presets for when the user
+ *  explicitly wants a Square (Instagram), Portrait (mobile share), or
+ *  Landscape (deck) frame. */
+export type SnapshotAspect = 'viewport' | 'landscape' | 'square' | 'portrait';
+export type SnapshotFormat = 'png' | 'jpeg';
 
 export interface MapSnapshotOpts {
   // Framing — bounds wins. Falls back to lat/lng/zoom, then to areas.
@@ -47,12 +54,24 @@ export interface MapSnapshotOpts {
   heatmapMetric?: HeatmapMetric;
   heatmapPaletteId?: string;
 
+  // Additional layers — passed through from AppLayout so the export
+  // captures everything the user can see on screen.
+  importedPoints?: ImportedPoint[] | null;
+  showImportedPoints?: boolean;
+  customLayers?: { id: string; color: string; radiusMeters: number; points: { lat: number; lng: number }[] }[] | null;
+
+  // Highlight + label preferences (mirror the on-screen state)
+  selectedAreaId?: string | null;
+  showPolygonLabels?: boolean;
+  isDark?: boolean;
+
   // Style — pass the active google.maps.MapTypeStyle so basemap matches.
   mapStyle?: google.maps.MapTypeStyle[];
 
   // Branding overlays
   title?: string;      // typically project name; rendered top-left
   subtitle?: string;   // typically the formatted date; rendered under title
+  caption?: string;    // optional user-supplied caption rendered bottom-center
 
   // Output
   filename?: string;
@@ -60,25 +79,56 @@ export interface MapSnapshotOpts {
   height?: number;
   paddingPct?: number; // % of viewport to leave as breathing room (default 6%)
   target?: SnapshotTarget; // 'download' (default) or 'clipboard'
+  aspect?: SnapshotAspect; // shorthand for picking W×H presets
+  format?: SnapshotFormat; // png (default, lossless) or jpeg (smaller)
 }
 
 export async function downloadMapSnapshot(opts: MapSnapshotOpts) {
   const key = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY ?? '';
 
   // Static Maps free tier caps at 1280×1280 (2560×2560 at scale=2).
-  const W = Math.min(1280, opts.width ?? 1280);
-  const H = Math.min(1280, opts.height ?? 800);
+  // Aspect = 'viewport' is the WYSIWYG default — caller passes the live
+  // map's width/height so the export matches the framing the user composed.
+  // The named ratios are explicit presets for social/deck formats.
+  const aspect: SnapshotAspect = opts.aspect ?? 'viewport';
+  let W: number, H: number;
+  if (aspect === 'viewport') {
+    W = Math.min(1280, opts.width ?? 1280);
+    H = Math.min(1280, opts.height ?? 720);
+  } else {
+    const presetDims =
+      aspect === 'square'   ? { w: 1280, h: 1280 } :
+      aspect === 'portrait' ? { w: 720,  h: 1280 } :
+                              { w: 1280, h: 720  };
+    W = Math.min(1280, opts.width ?? presetDims.w);
+    H = Math.min(1280, opts.height ?? presetDims.h);
+  }
   const scale = 2;
   const padPct = Math.max(0, Math.min(0.2, opts.paddingPct ?? 0.06));
   const target: SnapshotTarget = opts.target ?? 'download';
+  const format: SnapshotFormat = opts.format ?? 'png';
+  const isDark = !!opts.isDark;
+  const theme = overlayTheme(isDark);
 
   const areas = (opts.areas ?? []).filter((a) => a.geometry);
 
   // ── Framing ───────────────────────────────────────────────────────────
+  // Priority:
+  //   1. Explicit bounds (caller knows the exact box to capture).
+  //   2. Viewport WYSIWYG — when aspect='viewport' the user composed the
+  //      view on screen and we honor that pose exactly. No refit, no
+  //      recenter — the export shows what the user sees, just at the
+  //      requested W×H.
+  //   3. Fit to the bounding box of all areas (legacy behavior for the
+  //      named aspect presets — square/portrait don't match viewport
+  //      shape, so refitting to the areas is the only sensible default).
+  //   4. Fallback to lat/lng/zoom if no areas exist.
   let centerLat: number, centerLng: number, zoom: number;
   if (opts.bounds) {
     const fit = fitBoundsToCenterZoom(opts.bounds, W, H, padPct);
     centerLat = fit.lat; centerLng = fit.lng; zoom = fit.zoom;
+  } else if (aspect === 'viewport' && opts.lat != null && opts.lng != null && opts.zoom != null) {
+    centerLat = opts.lat; centerLng = opts.lng; zoom = Math.round(opts.zoom);
   } else {
     const b = areaCollectionBounds(areas);
     if (b) {
@@ -191,13 +241,40 @@ export async function downloadMapSnapshot(opts: MapSnapshotOpts) {
     ctx.restore();
   }
 
+  // ── Custom-layer circles (under areas, above heatmap) ────────────────
+  // Mirror CustomLayerMarkers — one fill+stroke circle per point.
+  if (opts.customLayers && opts.customLayers.length > 0) {
+    for (const cl of opts.customLayers) {
+      if (!cl.points || cl.points.length === 0) continue;
+      ctx.save();
+      for (const p of cl.points) {
+        const radiusPx = metersToCanvasPx(cl.radiusMeters, p.lat, zoom) * scale;
+        if (radiusPx < 0.5) continue;
+        const c = project(p.lng, p.lat);
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, radiusPx, 0, Math.PI * 2);
+        ctx.fillStyle = cl.color;
+        ctx.globalAlpha = 0.25;
+        ctx.fill();
+        ctx.globalAlpha = 0.85;
+        ctx.strokeStyle = cl.color;
+        ctx.lineWidth = 1 * scale;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   // ── Area polygons ─────────────────────────────────────────────────────
-  // Passive state of AreaPolygon.tsx (no selection pulse, no hover bump).
+  // Passive state of AreaPolygon.tsx — with the selected area bumped to
+  // an emphasized stroke + soft halo to mirror the on-screen highlight.
   const heatmapOn = !!opts.showHeatmap;
+  const selectedId = opts.selectedAreaId ?? null;
   for (const a of areas) {
+    const isSelected = a.id === selectedId;
     const fillColor = a.fill_color || DEFAULT_FILL;
-    const strokeColor = heatmapOn ? '#ffffff' : (a.stroke_color || fillColor);
-    const strokeWeight = heatmapOn ? 3 : (a.stroke_weight ?? 2);
+    const strokeColor = isSelected ? fillColor : (heatmapOn ? '#ffffff' : (a.stroke_color || fillColor));
+    const strokeWeight = isSelected ? Math.max(4, (a.stroke_weight ?? 2) + 2) : (heatmapOn ? 3 : (a.stroke_weight ?? 2));
 
     // Density-boost mirrors AreaPolygon.tsx so dense urban polygons read
     // as visually denser in the export, matching what the user sees.
@@ -218,6 +295,14 @@ export async function downloadMapSnapshot(opts: MapSnapshotOpts) {
       ctx.globalAlpha = fillOpacity;
       drawGeometry(ctx, a.geometry as any, project, /*fill*/ true, /*stroke*/ false);
     }
+    // Selected area: paint a soft halo behind the stroke so it lifts off
+    // the basemap the same way AreaPolygon's selection styling does.
+    if (isSelected) {
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = fillColor;
+      ctx.lineWidth = (strokeWeight + 6) * scale;
+      drawGeometry(ctx, a.geometry as any, project, /*fill*/ false, /*stroke*/ true);
+    }
     // Stroke at full alpha — independent of fill opacity (the old export
     // washed strokes out because globalAlpha was set before both).
     ctx.globalAlpha = 1;
@@ -227,43 +312,134 @@ export async function downloadMapSnapshot(opts: MapSnapshotOpts) {
     ctx.restore();
   }
 
+  // ── Imported points (clustered on screen; rendered as flat dots here
+  //    because cluster bubbles are pin metaphors that don't add value at
+  //    a static-image scale and would clutter labelled exports) ─────────
+  if (opts.showImportedPoints && opts.importedPoints && opts.importedPoints.length > 0) {
+    ctx.save();
+    ctx.fillStyle = BRAND_PURPLE;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5 * scale;
+    for (const p of opts.importedPoints) {
+      const c = project(p.lng, p.lat);
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 4 * scale, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ── Polygon centroid labels (matches uiPrefs.showPolygonLabels) ──────
+  if (opts.showPolygonLabels) {
+    ctx.save();
+    ctx.font = `700 ${11 * scale}px Inter, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const a of areas) {
+      if (!a.name || !a.geometry) continue;
+      const c = polygonCentroid(a.geometry as any);
+      const p = project(c.lng, c.lat);
+      // White text-stroke halo so the label survives any basemap (mirror
+      // the labels.text.stroke pattern used in our SMAPPEN_MAP_STYLE).
+      ctx.lineWidth = 4 * scale;
+      ctx.strokeStyle = isDark ? 'rgba(15,23,42,0.85)' : 'rgba(255,255,255,0.9)';
+      ctx.strokeText(a.name, p.x, p.y);
+      ctx.fillStyle = isDark ? '#F8FAFC' : '#1A1A2E';
+      ctx.fillText(a.name, p.x, p.y);
+    }
+    ctx.restore();
+  }
+
   // ── Center pins (one per area) ────────────────────────────────────────
   // Number every pin so the export is cross-referenceable in a deck. For
   // up to 8 areas we also draw the name caption under the pin so the reader
   // doesn't need a separate legend; above 8, numbers alone keep it legible.
+  //
+  // De-stack pins whose computed positions fall within ~32 device px of an
+  // already-placed pin (the El Fresco case: two 15-min isochrones at the
+  // same address render as a single visible pin without this). Pins after
+  // the first in a stack get pushed onto a circle around the cluster center
+  // so every number/caption is readable in the export.
   const showNames = areas.length > 0 && areas.length <= 8;
+  const placed: { x: number; y: number }[] = [];
+  const STACK_PX = 32 * scale;
   let pinIndex = 0;
   for (const a of areas) {
     pinIndex++;
     const pos = bestPinPosition(a);
     if (!pos) continue;
-    const p = project(pos.lng, pos.lat);
-    drawNumberedPin(ctx, p.x, p.y, a.fill_color || DEFAULT_FILL, scale, String(pinIndex));
-    if (showNames && a.name) {
-      drawPinCaption(ctx, p.x, p.y, a.name, scale);
+    const base = project(pos.lng, pos.lat);
+    // Look back over already-placed pins to count how many are stacked here.
+    let stackCount = 0;
+    let anchor = base;
+    for (const q of placed) {
+      const dx = q.x - base.x, dy = q.y - base.y;
+      if (Math.hypot(dx, dy) <= STACK_PX) { stackCount++; anchor = q; }
     }
+    let px = base.x, py = base.y;
+    if (stackCount > 0) {
+      // Fan out around the anchor on a ~28px-radius ring; angle steps by
+      // stackCount so successive pins land on distinct clock positions.
+      const angle = (stackCount * (Math.PI * 2) / 6) - Math.PI / 2;
+      const r = 28 * scale;
+      px = anchor.x + Math.cos(angle) * r;
+      py = anchor.y + Math.sin(angle) * r;
+      // Thin leader line back to the original location so the reader sees
+      // these pins all belong to the same anchor point.
+      ctx.save();
+      ctx.strokeStyle = 'rgba(15,23,42,0.45)';
+      ctx.lineWidth = 1 * scale;
+      ctx.setLineDash([2 * scale, 2 * scale]);
+      ctx.beginPath();
+      ctx.moveTo(base.x, base.y);
+      ctx.lineTo(px, py);
+      ctx.stroke();
+      ctx.restore();
+    }
+    drawNumberedPin(ctx, px, py, a.fill_color || DEFAULT_FILL, scale, String(pinIndex));
+    if (showNames && a.name) {
+      drawPinCaption(ctx, px, py, a.name, scale);
+    }
+    placed.push({ x: px, y: py });
   }
 
   // ── Overlays (legend, scale bar, title, attribution) ──────────────────
   // Drawn last so they sit above everything.
   if (opts.showHeatmap && opts.heatmapMeta && opts.heatmapMetric) {
-    drawHeatmapLegend(ctx, canvas.width, canvas.height, scale, {
+    drawHeatmapLegend(ctx, canvas.width, canvas.height, scale, theme, {
       meta: opts.heatmapMeta,
       metric: opts.heatmapMetric,
       paletteId: opts.heatmapPaletteId,
     });
   }
-  drawScaleBar(ctx, canvas.width, canvas.height, scale, centerLat, zoom);
-  if (opts.title || opts.subtitle) {
-    drawTitleBlock(ctx, scale, opts.title, opts.subtitle);
+  drawScaleBar(ctx, canvas.width, canvas.height, scale, theme, centerLat, zoom);
+  drawNorthArrow(ctx, canvas.width, scale, theme);
+
+  // Single-area exports get a small demographics caption under the title —
+  // mirrors the at-a-glance stats from the right panel so the export is
+  // self-contained for an email or a client deck.
+  let demoLines: string[] | null = null;
+  if (areas.length === 1) demoLines = singleAreaStatLines(areas[0]);
+
+  if (opts.title || opts.subtitle || demoLines) {
+    drawTitleBlock(ctx, scale, theme, opts.title, opts.subtitle, demoLines);
   }
-  drawBrandFooter(ctx, canvas.width, canvas.height, scale);
+  if (opts.caption && opts.caption.trim().length > 0) {
+    drawCaption(ctx, canvas.width, canvas.height, scale, theme, opts.caption.trim());
+  }
+  drawBrandFooter(ctx, canvas.width, canvas.height, scale, theme);
 
   // ── Export ────────────────────────────────────────────────────────────
   toast.loading(target === 'clipboard' ? 'Copying…' : 'Saving…', { id: 'snapshot' });
 
+  // Clipboard write only accepts PNG today (ClipboardItem MIME support is
+  // narrow on every UA in May 2026), so force PNG when copying and only let
+  // the format flag downgrade for downloads where JPEG saves real bytes.
+  const useFormat: SnapshotFormat = target === 'clipboard' ? 'png' : format;
+  const mime = useFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
   const blob: Blob | null = await new Promise((resolve) =>
-    canvas.toBlob((b) => resolve(b), 'image/png'),
+    canvas.toBlob((b) => resolve(b), mime, useFormat === 'jpeg' ? 0.92 : undefined),
   );
   if (!blob) { toast.error('Export failed (encoding)', { id: 'snapshot' }); return; }
 
@@ -290,7 +466,7 @@ export async function downloadMapSnapshot(opts: MapSnapshotOpts) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = opts.filename ?? defaultFilename();
+  link.download = retargetExtension(opts.filename ?? defaultFilename(), useFormat);
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -496,13 +672,15 @@ function drawNumberedPin(
 }
 
 /** Small pill caption rendered under a pin (when area count is low enough
- *  that names won't pile up on each other). */
+ *  that names won't pile up on each other). Truncates much later than the
+ *  previous version — a typical isochrone label like "El Fresco Tex-Mex
+ *  Grill – 15 min Car" fits without an ellipsis. */
 function drawPinCaption(
   ctx: CanvasRenderingContext2D,
   x: number, y: number, name: string, scale: number,
 ) {
-  const text = name.length > 28 ? name.slice(0, 26) + '…' : name;
-  const fontPx = 11 * scale;
+  const text = name.length > 48 ? name.slice(0, 46) + '…' : name;
+  const fontPx = 10 * scale;
   ctx.save();
   ctx.font = `600 ${fontPx}px Inter, system-ui, sans-serif`;
   const metrics = ctx.measureText(text);
@@ -512,8 +690,8 @@ function drawPinCaption(
   const h = fontPx + padY * 2;
   const px = x - w / 2;
   const py = y + 4 * scale; // sits just under the pin tip
-  ctx.fillStyle = 'rgba(255,255,255,0.92)';
-  ctx.strokeStyle = 'rgba(15,23,42,0.18)';
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.strokeStyle = 'rgba(15,23,42,0.20)';
   ctx.lineWidth = 1 * scale;
   roundedRect(ctx, px, py, w, h, 4 * scale);
   ctx.fill();
@@ -553,10 +731,52 @@ function roundedRect(
   ctx.closePath();
 }
 
+// ── Theme palette for the overlay chrome ────────────────────────────────
+// Light theme uses translucent white pills with slate text; dark theme uses
+// translucent slate-900 pills with light text so the overlays don't shout
+// against the dark Google Maps basemap.
+interface OverlayTheme {
+  pillFill: string;
+  pillStroke: string;
+  text: string;
+  textMuted: string;
+  accent: string;
+}
+function overlayTheme(isDark: boolean): OverlayTheme {
+  return isDark
+    ? {
+        pillFill:   'rgba(15,23,42,0.85)',
+        pillStroke: 'rgba(148,163,184,0.30)',
+        text:       '#F8FAFC',
+        textMuted:  '#CBD5E1',
+        accent:     '#A78BDA',
+      }
+    : {
+        pillFill:   'rgba(255,255,255,0.95)',
+        pillStroke: 'rgba(15,23,42,0.15)',
+        text:       '#1A1A2E',
+        textMuted:  '#475569',
+        accent:     BRAND_PURPLE,
+      };
+}
+
+/** Replace a file extension in `name` with `.png` or `.jpg` based on
+ *  the chosen format. Keeps the rest of the filename intact. */
+function retargetExtension(name: string, fmt: SnapshotFormat): string {
+  const ext = fmt === 'jpeg' ? 'jpg' : 'png';
+  return name.replace(/\.(png|jpe?g)$/i, '') + '.' + ext;
+}
+
+/** Canvas pixels per meter at a given lat + zoom, accounting for scale=2. */
+function metersToCanvasPx(meters: number, lat: number, zoom: number): number {
+  const mPerStaticPx = 156543.03392 * Math.cos((lat * Math.PI) / 180) / Math.pow(2, zoom);
+  return meters / mPerStaticPx;
+}
+
 // ── Scale bar (bottom-right) ────────────────────────────────────────────
 function drawScaleBar(
   ctx: CanvasRenderingContext2D,
-  W: number, H: number, scale: number,
+  W: number, H: number, scale: number, theme: OverlayTheme,
   centerLat: number, zoom: number,
 ) {
   // meters per device pixel of the static map; scale=2 means each canvas
@@ -598,15 +818,19 @@ function drawScaleBar(
   const padY = 6 * scale;
   const fontPx = 10 * scale;
   ctx.font = `600 ${fontPx}px Inter, system-ui, sans-serif`;
-  const widest = Math.max(barLenPx, barLenPxMi);
-  const labelW = Math.max(ctx.measureText(label).width, ctx.measureText(labelMi).width);
-  const pillW = Math.max(widest, labelW) + padX * 2;
+  // Each row is "[bar][gap][label]" — the pill must be wide enough for the
+  // longer of the two rows including the label, or the mi/km text gets
+  // clipped at the right edge.
+  const labelGap = 6 * scale;
+  const kmRowW = barLenPx + labelGap + ctx.measureText(label).width;
+  const miRowW = barLenPxMi + labelGap + ctx.measureText(labelMi).width;
+  const pillW = Math.max(kmRowW, miRowW) + padX * 2;
   const pillH = (fontPx * 2 + 6 * scale) + padY * 2;
   const pillX = rightX - pillW;
   const pillY = baseY - pillH;
 
-  ctx.fillStyle = 'rgba(255,255,255,0.95)';
-  ctx.strokeStyle = 'rgba(15,23,42,0.15)';
+  ctx.fillStyle = theme.pillFill;
+  ctx.strokeStyle = theme.pillStroke;
   ctx.lineWidth = 1 * scale;
   roundedRect(ctx, pillX, pillY, pillW, pillH, 6 * scale);
   ctx.fill();
@@ -615,7 +839,7 @@ function drawScaleBar(
   // Two stacked bars: km on top, mi on bottom, with their labels to the right.
   const drawBar = (lenPx: number, label: string, y: number) => {
     const x0 = pillX + padX;
-    ctx.strokeStyle = '#1A1A2E';
+    ctx.strokeStyle = theme.text;
     ctx.lineWidth = 1.5 * scale;
     ctx.beginPath();
     ctx.moveTo(x0, y);
@@ -628,7 +852,7 @@ function drawScaleBar(
     ctx.moveTo(x0 + lenPx, y - 3 * scale);
     ctx.lineTo(x0 + lenPx, y + 3 * scale);
     ctx.stroke();
-    ctx.fillStyle = '#1A1A2E';
+    ctx.fillStyle = theme.text;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, x0 + lenPx + 4 * scale, y);
@@ -642,7 +866,7 @@ function drawScaleBar(
 // ── Heatmap legend (bottom-left) ────────────────────────────────────────
 function drawHeatmapLegend(
   ctx: CanvasRenderingContext2D,
-  _W: number, H: number, scale: number,
+  _W: number, H: number, scale: number, theme: OverlayTheme,
   args: { meta: HeatmapResponse['meta']; metric: HeatmapMetric; paletteId?: string },
 ) {
   const palette = paletteById(args.paletteId ?? 'smappen-pastel');
@@ -669,14 +893,14 @@ function drawHeatmapLegend(
   const pillX = inset;
   const pillY = H - inset - pillH - 56 * scale; // sit above the brand footer
 
-  ctx.fillStyle = 'rgba(255,255,255,0.95)';
-  ctx.strokeStyle = 'rgba(15,23,42,0.15)';
+  ctx.fillStyle = theme.pillFill;
+  ctx.strokeStyle = theme.pillStroke;
   ctx.lineWidth = 1 * scale;
   roundedRect(ctx, pillX, pillY, pillW, pillH, 8 * scale);
   ctx.fill();
   ctx.stroke();
 
-  ctx.fillStyle = '#1A1A2E';
+  ctx.fillStyle = theme.text;
   ctx.font = `700 ${titleSize}px Inter, system-ui, sans-serif`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
@@ -699,10 +923,10 @@ function drawHeatmapLegend(
   ctx.fillStyle = grad;
   roundedRect(ctx, gradX, gradY, gradW, gradH, 3 * scale);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(15,23,42,0.25)';
+  ctx.strokeStyle = theme.pillStroke;
   ctx.stroke();
 
-  ctx.fillStyle = '#475569';
+  ctx.fillStyle = theme.textMuted;
   ctx.font = `600 ${valueSize}px Inter, system-ui, sans-serif`;
   ctx.textBaseline = 'top';
   ctx.textAlign = 'left';
@@ -734,24 +958,34 @@ function formatMetricValue(n: number | null | undefined, metric: HeatmapMetric):
 // ── Title block (top-left) ──────────────────────────────────────────────
 function drawTitleBlock(
   ctx: CanvasRenderingContext2D,
-  scale: number,
-  title?: string, subtitle?: string,
+  scale: number, theme: OverlayTheme,
+  title?: string, subtitle?: string, demoLines?: string[] | null,
 ) {
-  if (!title && !subtitle) return;
+  if (!title && !subtitle && (!demoLines || demoLines.length === 0)) return;
   const inset = 16 * scale;
   const padX = 12 * scale;
   const padY = 8 * scale;
   const titleSize = 16 * scale;
   const subtitleSize = 11 * scale;
+  const demoSize = 11 * scale;
   ctx.save();
   ctx.font = `800 ${titleSize}px Inter, system-ui, sans-serif`;
   const titleW = title ? ctx.measureText(title).width : 0;
   ctx.font = `500 ${subtitleSize}px Inter, system-ui, sans-serif`;
   const subW = subtitle ? ctx.measureText(subtitle).width : 0;
-  const pillW = Math.max(titleW, subW) + padX * 2;
-  const pillH = (title ? titleSize : 0) + (subtitle ? subtitleSize + 3 * scale : 0) + padY * 2;
-  ctx.fillStyle = 'rgba(255,255,255,0.95)';
-  ctx.strokeStyle = 'rgba(15,23,42,0.15)';
+  ctx.font = `600 ${demoSize}px Inter, system-ui, sans-serif`;
+  let demoW = 0;
+  if (demoLines) for (const d of demoLines) demoW = Math.max(demoW, ctx.measureText(d).width);
+  const pillW = Math.max(titleW, subW, demoW) + padX * 2;
+  let pillH = padY * 2;
+  if (title)    pillH += titleSize;
+  if (subtitle) pillH += subtitleSize + 3 * scale;
+  if (demoLines && demoLines.length > 0) {
+    pillH += 6 * scale; // separator gap
+    pillH += demoLines.length * (demoSize + 2 * scale);
+  }
+  ctx.fillStyle = theme.pillFill;
+  ctx.strokeStyle = theme.pillStroke;
   ctx.lineWidth = 1 * scale;
   roundedRect(ctx, inset, inset, pillW, pillH, 8 * scale);
   ctx.fill();
@@ -759,7 +993,7 @@ function drawTitleBlock(
   let y = inset + padY;
   if (title) {
     ctx.font = `800 ${titleSize}px Inter, system-ui, sans-serif`;
-    ctx.fillStyle = '#1A1A2E';
+    ctx.fillStyle = theme.text;
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
     ctx.fillText(title, inset + padX, y);
@@ -767,10 +1001,30 @@ function drawTitleBlock(
   }
   if (subtitle) {
     ctx.font = `500 ${subtitleSize}px Inter, system-ui, sans-serif`;
-    ctx.fillStyle = '#475569';
+    ctx.fillStyle = theme.textMuted;
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
     ctx.fillText(subtitle, inset + padX, y);
+    y += subtitleSize + 3 * scale;
+  }
+  if (demoLines && demoLines.length > 0) {
+    // Thin hairline separator above the stats so they read as a distinct block.
+    y += 4 * scale;
+    ctx.strokeStyle = theme.pillStroke;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(inset + padX, y);
+    ctx.lineTo(inset + pillW - padX, y);
+    ctx.stroke();
+    y += 4 * scale;
+    ctx.font = `600 ${demoSize}px Inter, system-ui, sans-serif`;
+    ctx.fillStyle = theme.text;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    for (const d of demoLines) {
+      ctx.fillText(d, inset + padX, y);
+      y += demoSize + 2 * scale;
+    }
   }
   ctx.restore();
 }
@@ -778,7 +1032,7 @@ function drawTitleBlock(
 // ── Smappen brand watermark (bottom-left, under legend) ─────────────────
 function drawBrandFooter(
   ctx: CanvasRenderingContext2D,
-  _W: number, H: number, scale: number,
+  _W: number, H: number, scale: number, theme: OverlayTheme,
 ) {
   const inset = 16 * scale;
   const padX = 8 * scale;
@@ -795,24 +1049,133 @@ function drawBrandFooter(
   const pillX = inset;
   const pillY = H - inset - pillH;
 
-  ctx.fillStyle = 'rgba(255,255,255,0.95)';
-  ctx.strokeStyle = 'rgba(15,23,42,0.15)';
+  ctx.fillStyle = theme.pillFill;
+  ctx.strokeStyle = theme.pillStroke;
   ctx.lineWidth = 1 * scale;
   roundedRect(ctx, pillX, pillY, pillW, pillH, 6 * scale);
   ctx.fill();
   ctx.stroke();
 
   // Brand dot — small purple circle as a stand-in logo mark.
-  ctx.fillStyle = BRAND_PURPLE;
+  ctx.fillStyle = theme.accent;
   ctx.beginPath();
   ctx.arc(pillX + padX + dotW / 2, pillY + pillH / 2, dotW / 2, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = '#1A1A2E';
+  ctx.fillStyle = theme.text;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, pillX + padX + dotW + gap, pillY + pillH / 2);
   ctx.restore();
+}
+
+// ── North arrow (top-right) ─────────────────────────────────────────────
+// Sized large enough to read at deck scale. The two-tone compass-rose
+// convention (accent half points up, muted half points down) reads as a
+// compass even at small print sizes.
+function drawNorthArrow(
+  ctx: CanvasRenderingContext2D,
+  W: number, scale: number, theme: OverlayTheme,
+) {
+  const size = 56 * scale;
+  const inset = 16 * scale;
+  const cx = W - inset - size / 2;
+  const cy = inset + size / 2;
+
+  ctx.save();
+  ctx.fillStyle = theme.pillFill;
+  ctx.strokeStyle = theme.pillStroke;
+  ctx.lineWidth = 1 * scale;
+  ctx.beginPath();
+  ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Slim diamond/needle. The top half uses the brand accent so the eye
+  // immediately reads "this side = north"; the bottom is theme-muted.
+  const r = size * 0.34;
+  // North half (filled accent)
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r);
+  ctx.lineTo(cx + r * 0.42, cy + r * 0.10);
+  ctx.lineTo(cx, cy);
+  ctx.lineTo(cx - r * 0.42, cy + r * 0.10);
+  ctx.closePath();
+  ctx.fillStyle = theme.accent;
+  ctx.fill();
+  // South half (muted)
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + r);
+  ctx.lineTo(cx + r * 0.42, cy - r * 0.10);
+  ctx.lineTo(cx, cy);
+  ctx.lineTo(cx - r * 0.42, cy - r * 0.10);
+  ctx.closePath();
+  ctx.fillStyle = theme.textMuted;
+  ctx.globalAlpha = 0.65;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // "N" cap above the arrow, sized to match the larger overall scale.
+  ctx.font = `800 ${13 * scale}px Inter, system-ui, sans-serif`;
+  ctx.fillStyle = theme.text;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('N', cx, cy - r - 2 * scale);
+  ctx.restore();
+}
+
+// ── Caption (bottom-center) ─────────────────────────────────────────────
+// User-supplied one-line annotation, e.g. "Q3 expansion targets" or
+// "Client deck v2". Sits between the heatmap legend and the scale bar so
+// it's never far from the operator's eye.
+function drawCaption(
+  ctx: CanvasRenderingContext2D,
+  W: number, H: number, scale: number, theme: OverlayTheme, caption: string,
+) {
+  const text = caption.length > 90 ? caption.slice(0, 88) + '…' : caption;
+  const padX = 14 * scale;
+  const padY = 8 * scale;
+  const fontPx = 13 * scale;
+  ctx.save();
+  ctx.font = `700 ${fontPx}px Inter, system-ui, sans-serif`;
+  const w = ctx.measureText(text).width + padX * 2;
+  const h = fontPx + padY * 2;
+  const x = (W - w) / 2;
+  const y = H - 80 * scale - h; // above the scale bar
+  ctx.fillStyle = theme.pillFill;
+  ctx.strokeStyle = theme.pillStroke;
+  ctx.lineWidth = 1 * scale;
+  roundedRect(ctx, x, y, w, h, 8 * scale);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = theme.text;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, W / 2, y + h / 2);
+  ctx.restore();
+}
+
+// ── Demographics stat lines for single-area exports ─────────────────────
+// Lifts the most decision-relevant numbers off the right panel into the
+// title block. Skipped silently when the area has no demographics cache.
+function singleAreaStatLines(a: Area): string[] | null {
+  const d = (a as any).demographics_cache as import('../types').Demographics | undefined | null;
+  if (!d) return null;
+  const lines: string[] = [];
+  if (d.population?.total != null) {
+    const pop = Math.round(d.population.total).toLocaleString();
+    const dens = d.population.density_per_sq_km != null
+      ? ` · ${Math.round(d.population.density_per_sq_km).toLocaleString()}/km²`
+      : '';
+    lines.push(`Pop ${pop}${dens}`);
+  }
+  if (d.income?.median_household != null) {
+    lines.push(`Median income $${Math.round(d.income.median_household).toLocaleString()}`);
+  }
+  if (d.housing?.median_value != null) {
+    lines.push(`Median home $${Math.round(d.housing.median_value).toLocaleString()}`);
+  }
+  return lines.length > 0 ? lines : null;
 }
 
 // ── Neutral fallback basemap (no Static Maps response) ──────────────────

@@ -68,6 +68,24 @@ export default function CustomLayerMarkers() {
     return () => { cancelled = true; };
   }, [currentProject?.id, customLayersVersion]);
 
+  // Mirror the snapshot of visible custom layers into mapStore so the
+  // screenshot composite can render the same circles on top of the
+  // static-map base. Keeps the layers visually in-sync with the live map
+  // without re-fetching from the API at export time.
+  const setCustomLayerSnapshots = useMapStore((s) => s.setCustomLayerSnapshots);
+  useEffect(() => {
+    const snaps = layers
+      .filter((l) => l.visible)
+      .map((l) => ({
+        id: l.id,
+        color: PALETTE_COLOR[l.palette_id] ?? '#7848BB',
+        radiusMeters: l.radius_meters,
+        points: (pointsByLayer[l.id] ?? []).map((p) => ({ lat: p.lat, lng: p.lng })),
+      }));
+    setCustomLayerSnapshots(snaps);
+    return () => { setCustomLayerSnapshots([]); };
+  }, [layers, pointsByLayer, setCustomLayerSnapshots]);
+
   useEffect(() => {
     circlesRef.current.forEach((c) => c.setMap(null));
     circlesRef.current = [];

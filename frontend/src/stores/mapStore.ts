@@ -84,6 +84,11 @@ interface MapState {
   isAreaHidden: (id: string) => boolean;
   setHeatmapFeatures: (features: { geometry: any; value: number | null; color: string }[] | null) => void;
   setHeatmapMeta: (meta: import('../api/heatmap').HeatmapResponse['meta'] | null) => void;
+  /** Snapshot of currently-rendered custom layers (id, color, radius_m,
+   *  points). Mirrored from CustomLayerMarkers so the screenshot composite
+   *  can draw the same circles on top of the static map. */
+  customLayerSnapshots: { id: string; color: string; radiusMeters: number; points: { lat: number; lng: number }[] }[];
+  setCustomLayerSnapshots: (s: { id: string; color: string; radiusMeters: number; points: { lat: number; lng: number }[] }[]) => void;
   /** Bumped by the Layers tab whenever a custom layer is created, updated, or
    *  deleted — CustomLayerMarkers watches this to know when to refetch. */
   customLayersVersion: number;
@@ -170,6 +175,8 @@ export const useMapStore = create<MapState>((set, get) => ({
   isAreaHidden: (id) => get().hiddenAreaIds.has(id),
   setHeatmapFeatures: (heatmapFeatures) => set({ heatmapFeatures }),
   setHeatmapMeta: (heatmapMeta) => set({ heatmapMeta }),
+  customLayerSnapshots: [],
+  setCustomLayerSnapshots: (customLayerSnapshots) => set({ customLayerSnapshots }),
   customLayersVersion: 0,
   bumpCustomLayers: () => set((s) => ({ customLayersVersion: s.customLayersVersion + 1 })),
   editingAreaId: null,

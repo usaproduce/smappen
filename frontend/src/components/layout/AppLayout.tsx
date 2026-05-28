@@ -25,7 +25,7 @@ import { useShortcuts } from '../../hooks/useShortcuts';
 import { useDynamicFavicon } from '../../hooks/useDynamicFavicon';
 import { useViewUrl } from '../../hooks/useViewUrl';
 import { saveProjectSnapshot, downloadMapSnapshot, buildSnapshotFilename } from '../../utils/mapExport';
-import type { SnapshotTarget } from '../../utils/mapExport';
+import type { SnapshotTarget, SnapshotAspect, SnapshotFormat } from '../../utils/mapExport';
 import { SMAPPEN_MAP_STYLE_DARK, MAP_STYLE_PRESETS } from '../../utils/mapStyle';
 import { GOOGLE_MAPS_LIBRARIES } from '../../utils/mapsLoader';
 
@@ -67,20 +67,65 @@ export default function AppLayout() {
   // Pull the project's areas at snapshot-time so the static map captures
   // every polygon + center pin currently visible. Hidden areas are filtered
   // out so the export both auto-fits to and renders only what's on screen.
-  const { areas: projectAreas } = useProjectStore();
-  const screenshot = (target: SnapshotTarget = 'download') => {
+  const { areas: projectAreas, importedPoints } = useProjectStore();
+  interface ScreenshotOptions {
+    target?: SnapshotTarget;
+    aspect?: SnapshotAspect;
+    format?: SnapshotFormat;
+    caption?: string;
+    /** When true, prompt the user inline for a one-line caption before exporting. */
+    promptCaption?: boolean;
+  }
+  const screenshot = (arg: SnapshotTarget | ScreenshotOptions = 'download') => {
+    const o: ScreenshotOptions = typeof arg === 'string' ? { target: arg } : arg;
+    const target = o.target ?? 'download';
+    let caption = o.caption;
+    if (o.promptCaption && !caption) {
+      const entered = window.prompt('Caption for this export (one line)', '');
+      if (entered === null) return; // user cancelled
+      caption = entered.trim() || undefined;
+    }
+
     const mapState = useMapStore.getState();
+    const uiState = useUiPrefsStore.getState();
     const visibleAreas = projectAreas.filter((a) => !mapState.hiddenAreaIds.has(a.id));
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    const mapStylePref = useUiPrefsStore.getState().mapStyle;
+    const appDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const mapStylePref = uiState.mapStyle;
     const preset = MAP_STYLE_PRESETS.find((p) => p.id === mapStylePref) ?? MAP_STYLE_PRESETS[0];
-    const mapStyle = (preset.id !== 'satellite' && isDark)
+    const mapStyle = (preset.id !== 'satellite' && appDark)
       ? SMAPPEN_MAP_STYLE_DARK
       : (preset.styles ?? MAP_STYLE_PRESETS[0].styles!);
+    // Overlay theme follows the BASEMAP, not the app shell — otherwise picking
+    // the "Dark" map preset on a light-themed UI yields white overlay pills
+    // on top of a dark map. Dark when: the user explicitly picked the dark
+    // preset, picked satellite (Google's imagery is mostly dark), or has the
+    // whole app in dark mode (MapCanvas forces SMAPPEN_MAP_STYLE_DARK then).
+    const isDark = preset.id === 'dark' || preset.id === 'satellite' || appDark;
 
-    // Live viewport is the fallback when there's nothing to auto-fit to.
+    // Live viewport center+zoom. With aspect='viewport' (the default) this
+    // becomes the export's pose — no auto-fit, no recenter — so the PNG
+    // matches exactly what the user composed on screen.
     const c = mapInstance?.getCenter();
     const z = mapInstance?.getZoom();
+
+    // Match the live map container's aspect so the export isn't squished
+    // into a fixed 16:9 box that re-frames the user's view. Both axes are
+    // capped at 1280 by the Static Maps free tier — scale the longer side
+    // down to 1280 and the other proportionally.
+    const div = mapInstance?.getDiv() as HTMLElement | undefined;
+    const vpW = div?.offsetWidth ?? 0;
+    const vpH = div?.offsetHeight ?? 0;
+    let vpExportW: number | undefined;
+    let vpExportH: number | undefined;
+    if (vpW > 0 && vpH > 0) {
+      const longest = Math.max(vpW, vpH);
+      if (longest <= 1280) { vpExportW = vpW; vpExportH = vpH; }
+      else {
+        const k = 1280 / longest;
+        vpExportW = Math.round(vpW * k);
+        vpExportH = Math.round(vpH * k);
+      }
+    }
 
     // Title block + filename pull from the active project so each export is
     // self-identifying when pasted into a deck or email.
@@ -97,14 +142,28 @@ export default function AppLayout() {
       heatmapMeta: mapState.heatmapMeta,
       heatmapMetric: mapState.heatmapMetric,
       heatmapPaletteId: mapState.heatmapPaletteId,
+      importedPoints,
+      showImportedPoints: mapState.showImportedPoints,
+      customLayers: mapState.customLayerSnapshots,
+      selectedAreaId: mapState.selectedAreaId,
+      showPolygonLabels: uiState.showPolygonLabels,
+      isDark,
       mapStyle,
       lat: c?.lat(),
       lng: c?.lng(),
       zoom: z ?? undefined,
       title: projectName ?? 'Untitled map',
       subtitle,
+      caption,
       filename: buildSnapshotFilename(projectName),
       target,
+      aspect: o.aspect, // undefined → mapExport defaults to 'viewport'
+      // Only override width/height for the WYSIWYG default. For named
+      // aspect presets (landscape/square/portrait) we let mapExport pick
+      // the preset dims so square stays square no matter the viewport.
+      width:  o.aspect ? undefined : vpExportW,
+      height: o.aspect ? undefined : vpExportH,
+      format: o.format,
     });
   };
   const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY ?? '';
@@ -129,7 +188,7 @@ export default function AppLayout() {
         <Header />
       </AppNav>
       {/* Map fills the row; sidebars and toolbar float over it as cards. */}
-      <div className="relative flex-1 min-h-0 bg-slate-50">
+      <div id="main-content" tabIndex={-1} className="relative flex-1 min-h-0 bg-slate-50 focus:outline-none">
         {loadError && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
             <div className="text-sm text-red-600 max-w-md">
@@ -182,7 +241,7 @@ export default function AppLayout() {
               onImport={() => setImportOpen(true)}
               onOpenAdvanced={() => setAdvancedOpen((v) => !v)}
               advancedOpen={advancedOpen}
-              onScreenshot={(target) => screenshot(target)}
+              onScreenshot={(o) => screenshot(o ?? 'download')}
             />
             {/* MiniMapToggle bottom-left preview was visually distracting +
                 duplicative with the toolbar's heatmap button. Removed —
