@@ -101,14 +101,16 @@ export default function CarafeFirstRunWizard({ onClose, onComplete }: Props) {
     onClose();
   }
 
-  // The "Try with sample" path — clones the cuisine-tagged sample
-  // restaurant + lands on its war-room. End-to-end target ≤10s; the
-  // sample is pre-built on the backend, so this is one POST + one nav.
+  // The "Try with sample" path — builds a fully-populated demo restaurant
+  // (24 items, 60 days of synthetic POS, open + measured recs, goals,
+  // labor) in the caller's org via the SampleDataService entry point.
+  // Idempotent: re-running upserts the same identifiers, so a back-button
+  // round-trip never creates duplicates.
   async function trySample() {
     if (working) return;
     setWorking(true);
     try {
-      const { id } = await restaurantsApi.cloneSample();
+      const { id } = await restaurantsApi.createSample();
       // For the reveal we synthesize a tasteful sample-recs preview from
       // a static fixture — the real overview endpoint is fetched on the
       // war-room itself. This keeps the reveal animation instant rather

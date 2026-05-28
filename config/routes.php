@@ -363,6 +363,10 @@ return function (Router $r) {
     // Restaurants — Carafe's primary org-scoped entity.
     $r->get('/api/restaurants',          [RestaurantController::class, 'index'],   $auth);
     $r->post('/api/restaurants',         [RestaurantController::class, 'create'],  $auth);
+    // Sample-data routes MUST come before /{id} so the literal "sample"
+    // doesn't match the {id} placeholder.
+    $r->post('/api/restaurants/sample',    [RestaurantController::class, 'createSample'], $auth);
+    $r->delete('/api/restaurants/sample',  [RestaurantController::class, 'removeSample'], $auth);
     $r->get('/api/restaurants/{id}',     [RestaurantController::class, 'show'],    $auth);
     $r->delete('/api/restaurants/{id}',  [RestaurantController::class, 'destroy'], $auth);
 

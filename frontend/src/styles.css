@@ -5,6 +5,20 @@
 /* Tell Tailwind v4 where to look for utility class usage. */
 @source "../**/*.{ts,tsx,html}";
 
+/* ── Tailwind v4 @theme — semantic accent palette ─────────────────────
+   Exposes the accent tokens as `bg-accent-*`, `text-accent-*`,
+   `border-accent-*` utilities. Tokens themselves are defined in :root
+   below so dark mode can override without touching this block. */
+@theme {
+  --color-accent-brand:      var(--accent-brand);
+  --color-accent-deep:       var(--accent-deep);
+  --color-accent-revenue:    var(--accent-revenue);
+  --color-accent-cost-food:  var(--accent-cost-food);
+  --color-accent-cost-labor: var(--accent-cost-labor);
+  --color-accent-margin:     var(--accent-margin);
+  --color-accent-attention:  var(--accent-attention);
+}
+
 :root {
   /* Smappen brand purple — replaces the old violet */
   --brand: #7848BB;
@@ -63,6 +77,34 @@
   --nav-active-bg: var(--brand-light);
   --nav-active-fg: #5b21b6;     /* violet-800 — preserves current contrast */
   --nav-ring: #a78bfa;          /* violet-400, for focus-visible */
+
+  /* ── Semantic accent system ────────────────────────────────────────────
+     Sampled stops from the heatmap "Viridis" ramp in
+     frontend/src/utils/palettes.ts (ACCENT_RAMP). Each stop is bound to a
+     stable semantic role so KPI cards / chart series / category chips
+     read in consistent colors across every page. Color encodes IDENTITY
+     (which metric), never STATE (good/bad) — status colors stay in
+     --money-positive / --money-negative / fresh-* tokens.
+
+     Swap ACCENT_RAMP in palettes.ts to re-theme the whole accent system
+     in one place. */
+  --accent-brand:      #7848BB;   /* primary / Carafe-found / hero — kept on the Smappen brand */
+  --accent-deep:       #440154;   /* headers / deep emphasis (Viridis stop 0) */
+  --accent-revenue:    #31688E;   /* revenue / money-in (Viridis blue-teal) */
+  --accent-cost-food:  #21918C;   /* food cost (Viridis teal) */
+  --accent-cost-labor: #44BF70;   /* labor (Viridis green) */
+  --accent-margin:     #7AD151;   /* margin / profit (Viridis lime) */
+  --accent-attention:  #FDE725;   /* highlight / "look here" (Viridis yellow) */
+
+  /* 12% tints — for backgrounds of category chips, KPI card stripes,
+     leaderboard rails. Faint enough to keep body text legible on top. */
+  --accent-brand-12:      color-mix(in srgb, var(--accent-brand)      12%, transparent);
+  --accent-deep-12:       color-mix(in srgb, var(--accent-deep)       12%, transparent);
+  --accent-revenue-12:    color-mix(in srgb, var(--accent-revenue)    12%, transparent);
+  --accent-cost-food-12:  color-mix(in srgb, var(--accent-cost-food)  12%, transparent);
+  --accent-cost-labor-12: color-mix(in srgb, var(--accent-cost-labor) 12%, transparent);
+  --accent-margin-12:     color-mix(in srgb, var(--accent-margin)     12%, transparent);
+  --accent-attention-12:  color-mix(in srgb, var(--accent-attention)  20%, transparent);
 }
 
 /* Skip-to-main link — visually hidden until focused via Tab, then springs
@@ -380,6 +422,17 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
   --fresh-aging-bg: #2E2210;
   --fresh-stale:    #F4A8A8;
   --fresh-stale-bg: #3A1A1A;
+
+  /* Semantic accent system — shift one stop toward the light end of the
+     ramp so saturated mid-Viridis hues stay legible against near-black
+     panel backgrounds. */
+  --accent-brand:      #A78BFA;   /* violet-400 — keeps the brand reading on dark */
+  --accent-deep:       #6E3B91;
+  --accent-revenue:    #5BA3C7;
+  --accent-cost-food:  #4FCCC2;
+  --accent-cost-labor: #6DCD59;
+  --accent-margin:     #B4DE2C;
+  --accent-attention:  #FDE725;
 }
 :root[data-theme="dark"] body {
   background: var(--bg);

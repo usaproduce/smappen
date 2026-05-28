@@ -94,8 +94,25 @@ export const PALETTES: Palette[] = [
 
 export const DEFAULT_PALETTE_ID = 'smappen-pastel';
 
-export function paletteById(id: string): Palette {
+/**
+ * Accent ramp shared between the map's heatmap and the rest of the UI's
+ * semantic accent tokens (KPI cards, chart series, leaderboards, goal
+ * trends). Anchored on Viridis: purple → teal → green → yellow. Purple
+ * anchor harmonizes with `--brand: #7848BB` so the accent system reads as
+ * an extension of the brand, not a rebrand.
+ *
+ * Swap this constant to re-theme the whole semantic-accent system in one
+ * place (the heatmap stays on whichever ramp the user picked).
+ */
+export const ACCENT_RAMP_ID = 'viridis';
+export const ACCENT_RAMP: Palette = paletteFromCatalog(ACCENT_RAMP_ID);
+
+function paletteFromCatalog(id: string): Palette {
   return PALETTES.find((p) => p.id === id) ?? PALETTES[0];
+}
+
+export function paletteById(id: string): Palette {
+  return paletteFromCatalog(id);
 }
 
 /** CSS linear-gradient string for a palette. */

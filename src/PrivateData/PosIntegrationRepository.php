@@ -17,7 +17,7 @@ class PosIntegrationRepository
     public function findActive(string $restaurantId, string $provider): ?array
     {
         return Database::getInstance()->fetch(
-            'SELECT id, organization_id, restaurant_id, provider,
+            'SELECT id, organization_id, restaurant_id, provider, is_sample,
                     access_token_enc, refresh_token_enc, token_iv,
                     expires_at, meta_json, connected_at, last_used_at, last_synced_at
                FROM pos_integrations

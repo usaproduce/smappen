@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { NavLink, useLocation, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
-  Home, ChefHat, BookOpen, DollarSign, Users2, Target,
+  Home, ChefHat, BookOpen, DollarSign, Users2, Target, Sparkles,
 } from 'lucide-react';
 import { restaurantsApi } from '../../api/restaurants';
 import { useRestaurantStore } from '../../stores/restaurantStore';
@@ -62,13 +62,44 @@ export default function RestaurantWorkspaceLayout({ children }: { children: Reac
         <RestaurantSwitcher />
         {currentRestaurant?.is_sample === 1 && (
           <span
-            className="hidden md:inline text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 flex-shrink-0"
-            style={{ background: 'var(--brand-light)', color: 'var(--brand)' }}
+            className="hidden md:inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 flex-shrink-0"
+            style={{ background: 'var(--carafe-accent-50)', color: 'var(--carafe-accent)' }}
           >
-            Sample
+            <Sparkles size={9} /> Sample
           </span>
         )}
       </AppNav>
+
+      {/* Sample-data banner — every workspace surface gets the same honest
+          disclosure so a first-time operator can't mistake the demo for live
+          data. Persistent (not dismissable) and links to the restaurants
+          page where Remove + Connect POS live. */}
+      {currentRestaurant?.is_sample === 1 && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="border-b"
+          style={{
+            background: 'var(--carafe-accent-50)',
+            borderColor: 'var(--carafe-accent-light)',
+            color: 'var(--ink)',
+          }}
+        >
+          <div className="max-w-7xl mx-auto px-4 md:px-6 py-2 flex items-center gap-3 text-xs">
+            <Sparkles size={14} style={{ color: 'var(--carafe-accent)' }} />
+            <span className="flex-1 min-w-0">
+              <strong>Sample data.</strong> Every number on this page is synthetic — connect your POS to see yours.
+            </span>
+            <NavLink
+              to="/app/restaurants"
+              className="font-bold hover:underline whitespace-nowrap"
+              style={{ color: 'var(--carafe-accent)' }}
+            >
+              Manage sample →
+            </NavLink>
+          </div>
+        </div>
+      )}
 
       {/* Mobile chip rail — sticky under AppNav so the operator can swap
           tabs without losing the dollar tile from view. */}

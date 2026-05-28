@@ -164,6 +164,21 @@ export const restaurantsApi = {
     const { data } = await api.post('/api/onboarding/clone-sample-restaurant');
     return data.data;
   },
+  /**
+   * Build a fully-populated "Trattoria Verde" sample in the caller's org —
+   * menu, recipes, plate costs, 60 days of synthetic POS, open + measured
+   * recommendations, goals, and labor. Idempotent. Same code path as
+   * scripts/seed-sample-restaurant.php.
+   */
+  async createSample(): Promise<{ id: string; created: boolean; counts: Record<string, number> }> {
+    const { data } = await api.post('/api/restaurants/sample');
+    return data.data;
+  },
+  /** Tear down every is_sample = 1 restaurant in the caller's org. */
+  async removeSample(): Promise<{ removed: boolean; restaurant_ids: string[] }> {
+    const { data } = await api.delete('/api/restaurants/sample');
+    return data.data;
+  },
 };
 
 export const posApi = {

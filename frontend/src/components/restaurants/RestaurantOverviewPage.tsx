@@ -394,8 +394,8 @@ function TodayServiceTile({ data }: { data: OverviewPayload }) {
         <div className="mb-3 text-xs" style={{ color: 'var(--slate)' }}>{t.note}</div>
       )}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <ServiceCell label="Covers"     value={t ? t.covers.toLocaleString() : '—'} />
-        <ServiceCell label="$ / cover"  value={t?.revenue_per_cover_cents != null ? formatUsd(t.revenue_per_cover_cents) : '—'} />
+        <ServiceCell label="Covers"     value={t ? t.covers.toLocaleString() : '—'} accent="var(--accent-revenue)" />
+        <ServiceCell label="$ / cover"  value={t?.revenue_per_cover_cents != null ? formatUsd(t.revenue_per_cover_cents) : '—'} accent="var(--accent-margin)" />
         <ServiceCell
           label="Food cost"
           value={t?.food_cost_pct != null ? formatPct(t.food_cost_pct) : '—'}
@@ -410,11 +410,13 @@ function TodayServiceTile({ data }: { data: OverviewPayload }) {
   );
 }
 
-function ServiceCell({ label, value, hint, tone = 'neutral', className }: {
+function ServiceCell({ label, value, hint, tone = 'neutral', accent, className }: {
   label: string;
   value: string;
   hint?: string;
   tone?: 'good' | 'warn' | 'bad' | 'neutral';
+  /** Optional semantic-accent stripe + label tint. Use --accent-* tokens. */
+  accent?: string;
   className?: string;
 }) {
   const color = {
@@ -429,9 +431,26 @@ function ServiceCell({ label, value, hint, tone = 'neutral', className }: {
     bad: 'var(--money-negative-bg)',
     neutral: 'var(--bg-panel)',
   }[tone];
+  // The accent prop only applies when the cell has no status to convey —
+  // tone-driven cells keep their state coloring per the "never overload
+  // ramp hues with error/ok meaning" rule.
+  const useAccent = tone === 'neutral' && accent;
   return (
-    <div className={'rounded-lg p-3 ' + (className ?? '')} style={{ background: bg }}>
-      <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--slate)' }}>
+    <div
+      className={'rounded-lg p-3 relative overflow-hidden ' + (className ?? '')}
+      style={{ background: bg }}
+    >
+      {useAccent && (
+        <span
+          aria-hidden="true"
+          className="absolute left-0 top-0 bottom-0 w-1"
+          style={{ background: accent }}
+        />
+      )}
+      <div
+        className="text-[10px] font-bold uppercase tracking-wider"
+        style={{ color: useAccent ? accent : 'var(--slate)' }}
+      >
         {label}
       </div>
       <div className="text-2xl font-extrabold tabular-nums mt-1 leading-none" style={{ color }}>

@@ -6,7 +6,17 @@ namespace App\Controllers;
 use App\Core\Database;
 use App\Core\Request;
 use App\Core\Response;
+use App\PrivateData\GoalRepository;
+use App\PrivateData\LaborShiftRepository;
+use App\PrivateData\MenuItemRepository;
+use App\PrivateData\PlateCostRepository;
+use App\PrivateData\PosIntegrationRepository;
+use App\PrivateData\PosSalesRepository;
+use App\PrivateData\RecipeRepository;
+use App\PrivateData\RecommendationRepository;
 use App\PrivateData\RestaurantRepository;
+use App\PrivateData\SampleDataService;
+use App\SharedRef\CogsBenchmarkRepository;
 
 /**
  * Restaurants — Carafe's primary entity. Org-scoped CRUD.
@@ -201,6 +211,68 @@ class RestaurantController
             ['id' => $newId, 'cuisine' => $sample['cuisine'] ?? null, 'name' => 'Demo: ' . $sample['name']],
             'Sample restaurant cloned',
             201
+        );
+    }
+
+    /**
+     * POST /api/restaurants/sample — seed a fully-populated sample restaurant
+     * in the caller's org. Calls SampleDataService, the same code path
+     * scripts/seed-sample-restaurant.php uses. Idempotent.
+     *
+     * Returns: { id, created, counts: { menu_items, recipes, pos_sales, ... } }
+     */
+    public function createSample(Request $request): void
+    {
+        $orgId = (string) $request->user['organization_id'];
+        try {
+            $result = $this->sampleService()->seedForOrganization($orgId);
+        } catch (\Throwable $e) {
+            error_log('[restaurants.createSample] ' . $e->getMessage());
+            Response::error('Could not seed sample data: ' . $e->getMessage(), 500);
+        }
+        Response::success(
+            [
+                'id'      => $result['restaurant_id'],
+                'created' => $result['created'],
+                'counts'  => $result['counts'] ?? [],
+            ],
+            $result['created'] ? 'Sample restaurant created' : 'Sample restaurant refreshed',
+            $result['created'] ? 201 : 200
+        );
+    }
+
+    /**
+     * DELETE /api/restaurants/sample — tear down every sample restaurant
+     * in the caller's org. Idempotent (no-op if none exist).
+     */
+    public function removeSample(Request $request): void
+    {
+        $orgId = (string) $request->user['organization_id'];
+        try {
+            $result = $this->sampleService()->removeForOrganization($orgId);
+        } catch (\Throwable $e) {
+            error_log('[restaurants.removeSample] ' . $e->getMessage());
+            Response::error('Could not remove sample data: ' . $e->getMessage(), 500);
+        }
+        Response::success(
+            ['removed' => $result['removed'], 'restaurant_ids' => $result['restaurant_ids']],
+            $result['removed'] ? 'Sample data removed' : 'No sample data to remove'
+        );
+    }
+
+    private function sampleService(): SampleDataService
+    {
+        return new SampleDataService(
+            $this->repo,
+            new MenuItemRepository(),
+            new RecipeRepository(),
+            new PlateCostRepository(),
+            new PosIntegrationRepository(),
+            new PosSalesRepository(),
+            new RecommendationRepository(),
+            new LaborShiftRepository(),
+            new GoalRepository(),
+            new CogsBenchmarkRepository(),
         );
     }
 }

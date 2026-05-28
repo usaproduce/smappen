@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Plus, Store, ChefHat } from 'lucide-react';
+import { Plus, Store, ChefHat, Sparkles, Trash2, Loader2 } from 'lucide-react';
 import { restaurantsApi } from '../../api/restaurants';
 import { useRestaurantStore, type Restaurant } from '../../stores/restaurantStore';
 import AppNav from '../layout/AppNav';
@@ -17,6 +17,11 @@ export default function RestaurantsPage() {
   const setRestaurants = useRestaurantStore((s) => s.setRestaurants);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  const [seedingSample, setSeedingSample] = useState(false);
+  const [removingSample, setRemovingSample] = useState(false);
+  const navigate = useNavigate();
+
+  const hasSample = restaurants.some((r) => r.is_sample === 1);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,6 +44,39 @@ export default function RestaurantsPage() {
     toast.success('Restaurant created');
   }
 
+  async function exploreWithSample() {
+    setSeedingSample(true);
+    const t = toast.loading('Building sample restaurant…');
+    try {
+      const result = await restaurantsApi.createSample();
+      toast.success(result.created ? 'Sample restaurant ready' : 'Sample restaurant refreshed', { id: t });
+      // Refresh list, then drop straight into the war-room.
+      const rs = await restaurantsApi.list();
+      setRestaurants(rs);
+      navigate(`/app/restaurants/${result.id}`);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error ?? 'Could not seed sample', { id: t });
+    } finally {
+      setSeedingSample(false);
+    }
+  }
+
+  async function removeSample() {
+    if (!window.confirm('Remove all sample data? This deletes the sample restaurant and everything attached to it.')) return;
+    setRemovingSample(true);
+    const t = toast.loading('Removing sample data…');
+    try {
+      await restaurantsApi.removeSample();
+      const rs = await restaurantsApi.list();
+      setRestaurants(rs);
+      toast.success('Sample data removed', { id: t });
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error ?? 'Could not remove sample', { id: t });
+    } finally {
+      setRemovingSample(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50">
       <AppNav />
@@ -54,10 +92,60 @@ export default function RestaurantsPage() {
               Connect your POS, see real plate cost on every item, get dollar-quantified pricing moves.
             </p>
           </div>
-          <button className="btn btn-primary h-10 px-4 text-sm" onClick={() => setShowCreate(true)}>
-            <Plus size={14} /> New restaurant
-          </button>
+          <div className="flex items-center gap-2">
+            {hasSample && (
+              <button
+                className="btn btn-ghost h-10 px-3 text-xs font-bold inline-flex items-center gap-1.5"
+                onClick={removeSample}
+                disabled={removingSample}
+                style={{ color: 'var(--money-negative)' }}
+              >
+                {removingSample ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                Remove sample data
+              </button>
+            )}
+            <button className="btn btn-primary h-10 px-4 text-sm" onClick={() => setShowCreate(true)}>
+              <Plus size={14} /> New restaurant
+            </button>
+          </div>
         </div>
+
+        {/* "Explore with sample data" CTA — visible only when the user has
+            no restaurants yet AND no sample exists. Lands them on a fully
+            populated war-room in one click. */}
+        {!loading && !hasSample && restaurants.length === 0 && !showCreate && (
+          <div
+            className="border rounded-xl p-5 mb-5 flex items-center gap-4"
+            style={{
+              background: 'var(--carafe-accent-50)',
+              borderColor: 'var(--carafe-accent-light)',
+            }}
+          >
+            <div
+              className="w-10 h-10 rounded-lg flex items-center justify-center"
+              style={{ background: 'var(--carafe-accent-light)', color: 'var(--carafe-accent)' }}
+            >
+              <Sparkles size={18} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-bold" style={{ color: 'var(--ink)' }}>
+                Explore with sample data
+              </div>
+              <div className="text-sm mt-0.5" style={{ color: 'var(--body)' }}>
+                A fully-populated demo restaurant with 24 menu items, 60 days of synthetic sales,
+                open moves, and real plate cost — so you can see the war-room before connecting your POS.
+              </div>
+            </div>
+            <button
+              onClick={exploreWithSample}
+              disabled={seedingSample}
+              className="btn btn-primary h-10 px-4 text-sm inline-flex items-center gap-1.5"
+            >
+              {seedingSample ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              {seedingSample ? 'Building…' : 'Try with sample'}
+            </button>
+          </div>
+        )}
 
         {showCreate && <CreateRestaurantCard onCreated={onCreated} onCancel={() => setShowCreate(false)} />}
 
@@ -100,8 +188,14 @@ export default function RestaurantsPage() {
                   </div>
                 </div>
                 {r.is_sample === 1 && (
-                  <span className="inline-block text-[10px] font-bold uppercase tracking-wider text-violet-700 bg-violet-50 rounded px-1.5 py-0.5">
-                    Sample
+                  <span
+                    className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5"
+                    style={{
+                      color: 'var(--carafe-accent)',
+                      background: 'var(--carafe-accent-50)',
+                    }}
+                  >
+                    <Sparkles size={9} /> Sample data
                   </span>
                 )}
               </Link>

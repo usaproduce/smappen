@@ -93,6 +93,28 @@ class PosService
         $row = $integrations->findActive($restaurantId, $provider);
         if (!$row) throw new \RuntimeException("No $provider connection for restaurant $restaurantId");
 
+        // Sample integrations carry pre-seeded menu items + pos_sales — never
+        // call the provider. The "synced at" stamp is touched so the UI's
+        // SyncStatus tile still renders fresh, and the menu/sales counts
+        // reported reflect what's already on disk.
+        if (!empty($row['is_sample']) && (int) $row['is_sample'] === 1) {
+            $integrations->touchSynced($row['id']);
+            $itemsCount = (int) (Database::getInstance()->fetch(
+                'SELECT COUNT(*) AS n FROM menu_items WHERE restaurant_id = ? AND is_active = 1',
+                [$restaurantId]
+            )['n'] ?? 0);
+            $salesCount = (int) (Database::getInstance()->fetch(
+                'SELECT COUNT(*) AS n FROM pos_sales WHERE restaurant_id = ? AND sold_at > DATE_SUB(NOW(), INTERVAL 7 DAY)',
+                [$restaurantId]
+            )['n'] ?? 0);
+            return [
+                'provider'     => $provider,
+                'pulled_count' => $itemsCount,
+                'sales_pulled' => $salesCount,
+                'is_sample'    => true,
+            ];
+        }
+
         $accessToken = self::decryptToken($row['access_token_enc'], $row['token_iv']);
         $meta = json_decode($row['meta_json'] ?? '{}', true) ?: [];
         $adapter = $this->adapter($provider);
