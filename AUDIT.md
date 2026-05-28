@@ -1,6 +1,6 @@
-# Smappen — Platform Audit (v5)
+# Smappen — Platform Audit (v6)
 
-*Snapshot as of 2026-05-27, post-deploy `e667348`. Supersedes the v4 audit. Captures every surface, controller, table, animation, palette swatch, scaffolded feature, deployed bug fix, and operational tweak currently in the repo + on the droplet — including the entire **Carafe Vendor Network** sub-product that landed since v4.*
+*Snapshot as of 2026-05-28, post-deploy `0c7e987`. Supersedes the v5 audit. Captures every surface, controller, table, animation, palette swatch, scaffolded feature, deployed bug fix, and operational tweak currently in the repo + on the droplet. **v6 documents the 15-prompt Carafe UX design batch**: money-first design tokens, a unified `<RecommendationCard>`, mobile-first war-room, the menu-engineering 2×2 chart, costs-page overpay-flags treatment, labor-vs-demand chart, goals scorecard, system-wide freshness + sync UI, full a11y + dark-mode + reduced-motion pass, command palette extended to Carafe, money-found PDF report, and the polished CarafeFirstRunWizard.*
 
 ---
 
@@ -91,6 +91,178 @@ Every authenticated surface mounts the unified **AppNav** (Dashboard / Restauran
 **RightPanel toolbar morph** (`0d1271a`, `817b64e`, `daeec3b`) — when the right panel opens, the card morphs out of the toolbar with a 2-second blob animation and Apple-glass bezier; clip-path inset prevents the seam. Re-fires on every tile/tab switch within the panel.
 
 **~30 Carafe bug-fix passes** — three labeled "Bug-fix pass" commits plus an OCD-tier series on B2B filtering (deny-list / brand whitelist) and worker spawn (PHP_BINARY resolves to php-fpm inside FPM; `e667348` fixed it to resolve `php` explicitly).
+
+### Headline changes since v5 — the v6 Carafe UX design batch (commit `0c7e987`)
+
+Single-commit batch of 15 sequenced prompts that put a coherent design language on top of the existing Carafe data plane. **No schema migrations, no service rewrites, no new background jobs** — exclusively UI primitives, component reuse, accessibility hardening, and one new PDF template + one new GET endpoint. 42 files changed, **7,068 insertions, 1,073 deletions**, eight new components, three pre-existing dirty files swept along.
+
+**Design tokens & primitives** — a Carafe semantic layer was added to `styles.css` on top of (not replacing) Smappen's `--brand` / `--cta` / `--ink` scale:
+
+```
+--money-positive    #0F8A4A    --money-positive-bg #E6F4EC
+--money-negative    #B14242    --money-negative-bg #FBECEC
+--money-neutral     #1A1A2E    --money-neutral-bg  #F1F1F5
+--carafe-accent     #C2541A    --carafe-accent-light #FBE6D5
+                               --carafe-accent-50    #FDF3EA
+--fresh-fresh / aging / stale   (matching backgrounds)
+```
+
+Every color paired with a dark-mode mate at `:root[data-theme="dark"]` (lighter foregrounds, darker tinted backgrounds — `#4ADE80` / `#F4A8A8` / `#F5C16C` against `#1f2937`-tier panels). All pairs measured + documented for WCAG AA contrast in a notes block at the bottom of `styles.css`. The Carafe accent is intentionally warm terracotta so Carafe surfaces feel kin-but-distinguishable from the violet Smappen brand.
+
+**Three primitives** wrap every dollar figure on every Carafe surface — defined under `frontend/src/components/carafe/`:
+
+- **`<MoneyStat>`** — uppercase eyebrow label + optional `<FreshnessChip>` + headline dollar figure (animated via the existing `AnimatedNumber`) + optional footer slot. Sizes `sm` / `md` / `lg` / `xl`. Tones `positive` / `negative` / `neutral` paint only the figure. `precision="cents"` for 2-decimal formatting. `null`/`undefined` value renders `—`.
+- **`<DollarDelta>`** — signed change with Lucide `ArrowUpRight` / `ArrowDownRight` / `Minus`. Color driven from the value's sign (callers cannot drift color from number). `goodWhen="down"` flips polarity for cost-style metrics. Sizes `sm` / `md` / `lg`. Optional comparison sub-label.
+- **`<FreshnessChip>`** — small pill with one of three states (fresh / aging / stale) derived from a timestamp + tunable thresholds (default fresh ≤30min, stale >24h) **or** an explicit `state` + `text` for non-temporal cases ("manual entry", "draft saved"). Re-renders every 60s via internal tick so "12m ago" stays current without a parent refetch.
+
+All three honor `data-theme="dark"`, drop emoji, and reuse the existing `AnimatedNumber` (which already gates on `prefers-reduced-motion`). Demo route at **`/dev/carafe-primitives`** (`CarafePrimitivesDemo.tsx`) shows every size × tone × freshness combination for QA.
+
+**Unified `<RecommendationCard>`** — replaces three previously-disparate "rec card" implementations (war-room TopMoveCard inline component, MenuPage local helper, slow-window list rows in LaborPage) with a single component that handles all three densities:
+
+- `density="hero"` — large MoneyStat headline + full Accept / Dismiss / Why-this button row; used by the war-room Top Move tile
+- `density="comfortable"` — medium MoneyStat + same button row; default; used by the menu page list
+- `density="compact"` — small figure + icon-only buttons; for future dense lists
+
+Kind iconography is per-kind, not generic: `TrendingUp` (price_raise), `TrendingDown` (price_lower), `ArrowLeftRight` (reposition), `RefreshCw` (reprice), `Scissors` (cut). "Why this?" expander uses the existing `.card-expand` keyframe + a payload-driven explanation: current price → suggested price → plate cost → recent sales pace → the `delta × monthly_qty = $X/mo` math line. Optional `readonly` prop hides Accept/Dismiss but keeps Why-this, used by daypart slow-window suggestions (which are synthesized rec objects with no real `recommendations` row to act on).
+
+**Optimistic accept/dismiss hook** — `useRecommendationAction()` is the single source of truth for rec decisions. Three steps inside one tick:
+
+1. Flip status in `restaurantStore.updateRecommendationStatus` immediately (UI updates <100ms — no waiting on the round-trip)
+2. Fire `recommendationsApi.accept(id)` / `.dismiss(id)`
+3. On success, push an `UndoAction` to the global `undoStore` **and** emit a 5-second `toast.custom` with an inline **Undo** button that calls the reverse closure; on failure roll back + surface an error toast
+
+Decision animation lives in `styles.css`: `.rec-decision-check` (240ms scale-pop on the checkmark, tightened from the original 320ms) and `.rec-card-collapse` (220ms max-height + opacity collapse so the next rec slides into the same slot). Both gated by `prefers-reduced-motion` — reduced-motion users see an instant unmount.
+
+**Mobile-first war-room** — `RestaurantOverviewPage.tsx` redesigned:
+
+- ROI hero + Top Move card form a **5/7 desktop grid** at `md+` and a single column on phone, so both are above the fold on a 390×844 viewport (verified math: 48px AppNav + ~50px chip rail + py-4 padding + ~210px ROI tile + ~280px Top Move = ~604px in ~730px available)
+- A sticky **`<RestaurantSwitcher>`** lives in `AppNav`'s **new `mobileContext` prop** — a 44px-tall pill button that opens a 280px-wide dropdown with search (when 4+ restaurants), "All restaurants" / "New restaurant" footer rows, and a `✓` mark on the current restaurant. Multi-location operators can swap one-handed during service.
+- On phones, `RestaurantWorkspaceLayout` replaces the desktop-shaped sidebar with a **horizontal-scrolling chip rail of tabs** (`scroll-x` utility), sticky at `top-12` so chip swaps stay visible while the war-room scrolls. Desktop keeps the vertical sidebar.
+- ROI hero exposes a brand-violet **"Download report"** button (44px) that hits the new money-found PDF endpoint via `responseType: 'blob'` (so the JWT travels with the request), then triggers a browser save dialog. Visible only when `foundDollars > 0`.
+- Today's Service tile uses three `ServiceCell` tiles tinted against goal bands (good/warn/bad/neutral with tokens, never color-alone — verbal labels live in the existing copy). Food-cost cell spans both columns on 2-col phone layouts so its color band reads cleanly.
+- Top Move uses `<RecommendationCard density="hero">` with a `topMoveToRec` adapter that converts `OverviewTopMove` → minimal `Recommendation`. `onAfterDecide` cycles the war-room's local queue + decrements `open_recs_count`.
+- POS card is now a `<SyncStatus>` (see below) + `<CogsStaleBanner>` (see below) stack — the war-room is read-mostly, click navigates to `/menu` where the actual sync controls live.
+
+**Menu-engineering 2×2** — `<MenuEngineeringChart>` is a custom 720×260 SVG (not recharts) plotting every item by volume (x) × margin (y), with four soft tinted quadrants anchored on the restaurant-median crosshair (not industry averages — the spec's differentiation point). New endpoint binding `engineeringApi.classify(restaurantId)` wraps the existing PHP `MenuEngineeringService::classify` route.
+
+- **Color-blind-safe quadrant palette** validated to retain ≥30 ΔE under deuteranopia / protanopia / tritanopia: teal `#0E7C7B` (stars), indigo `#4338CA` (puzzles), amber `#B45309` (plowhorses), slate `#475569` (dogs). No red/green pair.
+- **Collision handling** — greedy spiral: items sorted by descending radius, each placed at its true (volume, margin) coordinate; if it overlaps an already-placed point, it spirals outward in golden-ratio angle steps until clear, allowing 8% overlap so clusters stay readable. 60-iteration cap.
+- **Weight toggle** — pill toggle flips between sizing by **monthly units** (default) and **monthly revenue** (`price_cents × volume_monthly`). Radius scales with √metric so visual area, not radius, is proportional.
+- **Hover tooltip** — auto-flips quadrant based on screen position; shows item name + a `<MoneyStat size="md">` margin/unit (with margin% sub-label) + plate cost + monthly volume + **COGS attribution citation**: "Source: USDA Mid-Atlantic · May 4, 2025" composed from `currentRestaurant.region` + the overview endpoint's `usda_prices.as_of`.
+- **Tap/click → modal** — opens `<ItemDetailModal>` which renders the unified `<RecommendationCard>` when an open rec exists for that item (via `findRec` lookup), otherwise a summary tile with the same MoneyStat + plate cost + COGS source.
+- **Coverage strip** — amber-tinted "X of Y items plotted · add recipes to plot the rest" + the COGS citation chip on the right. Goes green when fully covered. Dedicated empty state for zero-recipes.
+- **Legend** — 4 quadrant swatches with hint text ("high margin · low volume", etc.), horizontal-scroll on phones.
+
+**Costs page overpay-flags hierarchy** — `CostsPage.tsx` redesigned:
+
+- **Food-cost % hero** (`FoodCostHero`) is a 3-column desktop grid: **status icon + verbal label** (`CheckCircle2`/`AlertTriangle`/`AlertOctagon` next to "Healthy" / "Watch" / "Over target"), 5xl percentage in the band color, and a **`BandRuler`** — a 0%→50%+ horizontal scale with three soft tinted segments (good/warn/bad) and a marker at the current %. Four labeled stops anchor the visual without relying on color.
+- **Overpay flags ranked list** (`OverpayList` + `OverpayRowCard`) replaces the old table. Each row is a 12-col grid (12/12 → 5/4/3 at md+): item name + qty sold + cost ratio with band icon (left), "Your cost / unit → Target at 35%" price cells + `<DollarDelta>` per-unit gap (middle), dominant `<MoneyStat size="lg">` showing $/period addressable (right). Sorted by `savingsCents` desc; the top row gets a 2px `--money-positive` border + "Top opportunity" badge.
+- **Coverage gauge** — thin brand-purple `role="progressbar"` bar showing "Coverage · X% of sales lines have plate cost", calm even at 5%; honest body copy "Adding recipes to the remaining N% unlocks more rows."
+- **COGS freshness strip** — one `<FreshnessChip size="xs">` per (source, region) pulled from `benchmark_freshness[]`. Stub-only state gets a separate amber callout with an Info icon.
+- **CogsStaleBanner** appears above the hero with three severities: `aging` (7–30d, amber), `stale` (>30d, 2px red border + "treat margin math as directional"), `missing` (slate neutral, "stub prices only").
+- Honest Phase-1 caveat at the bottom of the overpay list: *"savings is computed against a 35% food-cost target. When restaurant invoice ingestion ships, this list switches to actual-paid vs market price per ingredient — the visual stays the same."*
+- WCAG AA contrast verified on `--money-positive` 5.62:1, warn `#92670E` 6.42:1, `--money-negative` 5.72:1 on white.
+
+**Labor-vs-demand chart** — `<LaborDemandChart>` is a 720×260 SVG layering revenue (or covers) as a soft `--brand`-tinted area + labor cost as an `--ink` solid line, both on a 24-hour x-axis but plotted against independent y-scales. Built from `LaborAnalysis['hours']` aggregated by hour-of-day across the analysis window.
+
+- **Over-staff waste** = `labor_cost − revenue × 30%`, floored at 0 — what the operator is paying labor *above* a 30% labor ratio
+- **Under-staff upside** = `covers × (median_rpc − this-hour rpc)`, floored at 0 — dollars left on the table when a busy hour ran below the median pace
+- **Hour bands** — each flagged hour-of-day gets a tinted column (`--money-negative-bg` for over, `--fresh-aging-bg` for under), with annotation pills above the chart at the top-4 over-staff hours and top-3 under-staff hours: "−$120 3p" (red) or "+$80 7p" (amber). Pills use `foreignObject` for crisp text at any zoom.
+- **Header totals chips** — "$X over" + "$Y addressable" so the operator gets headlines without scanning bars.
+- **Mobile graceful degradation** — `min-w-[540px]` inside an `overflow-x-auto` so the chart sideways-scrolls on phones, plus a `DegradedSummary` block above (top-2 over + top-2 under hours as standalone tinted tiles) readable without the SVG at all.
+- **Slow-window suggestions render as `<RecommendationCard readonly density="comfortable">`** — `slowWindowToRec()` synthesizes a `Recommendation`-shaped object with `kind: 'reposition'` and `dollar_estimate_cents = revenue_cents` (honest "addressable revenue" framing).
+
+**Goals scorecard** — every `GoalCard` is now a proper scorecard in a `grid-cols-1 lg:grid-cols-2` grid. Three-row layout designed for <2s scan:
+
+- **Header**: metric name (`text-base font-extrabold`) + cadence pill + target value + `<StatusBadge>` + refresh + archive icons (all 44×44 tap targets)
+- **Hero value + delta**: current value via `<MoneyStat>` (dollar metrics) or a custom 4xl percentage (food_cost_pct, margin_pct), next to `<GoalDelta>` showing signed gap to target ("+1.2pp vs target") with `TrendingUp`/`TrendingDown` icon — color-coded for good/bad based on `lowerBetter`
+- **Ring + sparkline**: 84px SVG `<ProgressRing>` (% to target, animates via CSS `stroke-dasharray` transition) + chronological `<GoalSparkline>` with a dashed target reference line; per-snapshot dots tinted positive vs negative so the trend reads "we crossed back over in week 3" without a tooltip
+
+**Status model** collapses each goal into one of five states via a single ratio (`target/actual` for food-cost, `actual/target` otherwise): `hit` (≥1.0, restrained celebration — 2px `--money-positive` border + `CheckCircle2`), `on_track` (≥0.95), `at_risk` (≥0.80, amber `AlertTriangle`), `off_track` (<0.80, `AlertOctagon`), `unknown` (no data). Same math whether the metric is "higher is better" or "lower is better".
+
+Sparse-history fallback: <2 snapshots renders an explanatory placeholder ("Not enough history yet — at least two snapshots build the trend line"). New `GoalsEmptyState` suggests three starter goals (food-cost ≤30%, margin ≥65%, weekly revenue target) with primary CTA.
+
+**System-wide data freshness + sync** — every dollar number on every Carafe surface now carries an honest recency signal. Two new components:
+
+- **`<SyncStatus>`** drives every state of POS integration: `not_connected` → `connecting` (OAuth in flight, `Loader2` spinner) → `syncing` (indeterminate `.progress-bar`) → `synced` (FreshnessChip on `last_synced_at` + `last_sale_at`) → `stale` (auto-derived when synced > 48h, amber border, prominent "Re-sync now" button) → `error` (actionable message + Retry). State is auto-derived from `lastSyncedAt`/`isSyncing`/`isConnecting`/`errorMessage`/`staleAfterMinutes` props or callers can force one. Every state pairs icon + verbal label + tint; tokens auto-flip in dark mode. Used on MenuPage and war-room PosCard.
+- **`<CogsStaleBanner>`** is the graceful-degradation banner for the USDA feed: `fresh` (≤7d, renders nothing — no noise), `aging` (7–30d, amber strip with `AlertTriangle` + "COGS prices aging"), `stale` (>30d, 2px `--money-negative` border + "COGS prices may be out of date"), `missing` (slate neutral, "stub prices only — ingest pending"). Each variant shows the absolute `as_of` date inline; optional `onRetry` surfaces an inline link. Wired into CostsPage, MenuPage chart, and war-room.
+
+Plus FreshnessChip fills added to LaborPage (window.end "through Apr 28") and per GoalCard (snapshot age with cadence-aware thresholds — weekly fresh ≤2d / stale >7d; monthly ≤14d / >35d; quarterly ≤45d / >100d).
+
+**Accessibility hardening pass**:
+
+- **Global `:focus-visible` ring** on every focusable element (`button`, `a`, `[role="button"]`, `[role="tab"]`, `[role="option"]`, `[role="menuitem"]`, `[tabindex]`) — 2px solid `--nav-ring` violet, 2px offset, 6px radius. Mouse clicks don't trigger it. Dark mode brightens the ring to `#c4b5fd`.
+- **MenuPage table** margin-% column was previously color-only red — replaced with a `<MarginPctCell>` that pairs the color with an `AlertTriangle` icon + "Low" pill + `aria-label` describing the value and why it's flagged.
+- **Drop-a-pin button** on vendor map gets `aria-pressed` + state-aware `aria-label` ("Drop a pin to find vendors…" / "Cancel drop-a-pin"). Map/List view-toggle tabs get their own `aria-label`s alongside the existing `aria-selected`.
+- **Contrast pairs + "never color-alone" policy** documented at the bottom of `styles.css` with measured WCAG AA ratios for every status color against both white and dark panel backgrounds. Five components called out as the canonical "color + icon + verbal label" pattern: `FreshnessChip`, `SyncStatus`, goal `StatusBadge`, `CogsStaleBanner`, `MarginPctCell`.
+- `<RecommendationCard>` `aria-label` summarizes kind + impact; menu-engineering chart points carry per-point `aria-label` naming item + quadrant + dollar value; coverage gauge is a proper `role="progressbar"` with min/max/now; `<MenuEngineeringChart>` and `<GoalSparkline>` carry `role="img"` + descriptive labels.
+
+**Carafe motion vocabulary** — six discrete primitives, every one in the `@media (prefers-reduced-motion: reduce)` gate:
+
+| Primitive | Where | Duration |
+|---|---|---|
+| `.carafe-route-fade` | Workspace tab swaps | **160ms** opacity + 4px upward translate, keyed by `pathname` |
+| `.stagger-in` | Lists (recs, vendors, goals, slow-windows) | 280ms entrance + 30ms per row, capped at 8 |
+| `.card-expand` | Why-this expander | 160ms |
+| `.rec-decision-check` | Accept feedback | **240ms** (tightened from 320ms) — scale-pop on the checkmark |
+| `.rec-card-collapse` | Top Move cycling | **220ms** (tightened from 280ms) — max-height + opacity + margin collapse |
+| `.panel-slide-right` / `.panel-slide-left` | ServesPanel / VendorSidePanel | 220ms |
+
+Plus `<AnimatedNumber>` rolls at `240ms` default. The `useEffect([value])` dependency ensures the animation only fires when the value *actually* changes — a poll returning the same number never re-triggers. Every functional transition is ≤250ms per spec.
+
+Stagger applied via `style={{ '--stagger-i': i }}` to: MenuPage recommendations, VendorMapPage list-view + ServesPanel rows, SavedVendorsPage grid, GoalsPage cards (via `staggerIndex` prop), LaborPage slow-window cards.
+
+**Layout-shaped skeleton primitives** — `frontend/src/components/carafe/CarafeSkeleton.tsx` exports `SkeletonBlock`, `SkeletonCard`, `SkeletonStatRow`, `SkeletonList`, `SkeletonTable`, `SkeletonChart`, `SkeletonRecCard`. Each mirrors the silhouette of a real Carafe layout fragment (e.g. `SkeletonRecCard` has a 40×40 icon + dollar-figure block + three button-shaped blocks matching `RecommendationCard` proportions). Composed from the existing `.skeleton` utility so dark mode + the new `prefers-reduced-motion` gate apply for free. Loading blocks carry `aria-busy="true" aria-live="polite"`. Wired into MenuPage, CostsPage, LaborPage, GoalsPage, SavedVendorsPage. All previous generic `<div className="skeleton h-32" />` ladders were swapped for layout-shaped versions.
+
+**Empty states with primary CTAs** — every Carafe surface now has an action-oriented empty state, no dead ends:
+- **Costs** → `CostsEmptyState` points back to Recipes (`/app/restaurants/:id/recipes`) — brand-tinted dashed card, BookOpen icon, "Add recipes to see your real food cost"
+- **Labor** → `LaborEmptyState` (zero data) + revised slow-windows zero state (green-tinted positive: "Every hour with sales pulled its weight…" + "Add another shift" CTA)
+- **Goals** → `GoalsEmptyState` with 3 suggested-goal tiles + `+ New goal` CTA
+- **SavedVendors** → 3 value-prop tiles (Map view / Shortlist / Affiliated) + `Browse vendors →`
+- **Recipes** + **MenuPage** retained their existing wired CTAs
+
+**Vendor map visual polish**:
+
+- **Backend**: `VendorCoverageRepository::listForVendor` now exposes the existing `simplified_100m` / `simplified_1km` / `simplified_10km` Douglas-Peucker tier columns via `ST_AsGeoJSON` (they were populated by `VendorGeometryService::reSimplify` in v5 but never exposed). `VendorMapController::detail` decodes all four geometries into the response. Frontend type updated.
+- **`<VendorCoveragePolygons>`** (new) picks tier by live map zoom — `zoom ≥ 14` → 100m (street), `zoom ≥ 10` → 1km (city), `< 10` → 10km (metro). Falls through tiers when null, last-resort to full `geometry`. Path arrays memoized against `(coverage, tier)` so pans inside the same tier don't re-mount the Google overlay. Affiliated vendors get brand-violet fill+stroke, independents get calm slate. 30ms post-mount opacity bump = subtle fade-in on selection.
+- **`<AffiliatedBadge>`** (new) — two variants (`pill` and `icon`) for the affiliated-supplier disclosure. Tooltip copy is intentionally boring and exact: *"Affiliated supplier. Carafe has a business relationship with this vendor through USA Produce. They do not pay for ranking placement, and reviews come from operators only — affiliation never changes a vendor's order in the 'who serves me?' results."* Keyboard-accessible (Enter/Space toggles), screen-reader-accessible (`aria-describedby` + `role="tooltip"`), closes on Esc + outside click.
+- **ServesPanel polish** — drops in via `.panel-slide-right`. Drop-a-pin opens the panel + sets `servesLoading` *before* the network round-trip so the operator sees the pin land + a skeleton appear inside ~16ms (one frame). Layout-shaped 3-row skeleton during load; header reads "Searching…" then "N vendors" on settle.
+- **Filter strip mobile collapse** — at `md+` everything sits in one row; on phones only search + type + a new `<SlidersHorizontal /> Filters` button stay. The Filters button shows a brand-violet count badge when category/rating/affiliated have non-default values. Tap opens a disclosure with the rest stacked vertically + a "Done" button. All controls ≥44px. "Who serves me?" button shrinks its label to "Who?" on narrowest phones.
+- **VendorSidePanel header** uses the new `<AffiliatedBadge pill>` instead of the bare `ShieldCheck` + uppercase text; tokens applied throughout; mobile width `min(96vw, 420px)`; 44×44 close.
+
+**CarafeFirstRunWizard** — new 3-step polished onboarding modal at `frontend/src/components/onboarding/CarafeFirstRunWizard.tsx`. The `CarafeOnboardingGate` stub was replaced with real logic: fetches `/api/onboarding/state`, opens the wizard when `flags.carafe_wizard_complete` is unset AND `org_restaurant_count === 0` (so invitees and returning users land on the war-room directly).
+
+- **Step 1** — three use-case cards (no emojis): `Store` "I run a restaurant", `MapPin` "I'm opening a new spot", `Compass` "Just curious about Carafe". Each row 64px tall with brand-tinted icon tile; hover transitions to `--carafe-accent-50` background + `--carafe-accent` border. Stagger-animate in.
+- **Step 2** — path-specific: real flow has restaurant-name input + Google Places autocomplete address input (uses the existing `.cf-wizard-pac` styles), with a `Try sample first` secondary + `Create restaurant` primary; exploring flow has no inputs, just a value-prop card listing what comes with the sample restaurant (35-item menu with plate costs, 90d of synthetic POS, open recs, USDA-region COGS attribution) + a single `Try with sample →` CTA.
+- **Step 3** — sample paths show a `<MoneyStat size="xl" tone="positive">` "$4,280 We found these moves for you" headline + 3 `<RecommendationCard density="compact" readonly>` rows stagger-animating in (Carbonara $1,640/mo price raise, Bruschetta $820/mo reposition, Calamari $480/mo cut — sum = $4,280, matches the headline). Real-restaurant paths show a calmer "Your war-room is ready" with a next-steps note.
+- **Step indicator** — three pill chips in `--carafe-accent`. Each chip is a button with `aria-label="Step N, current"` / `"go back"` + `aria-current="step"`. Past steps are clickable to rewind; step 3 is terminal.
+- **Dismissal paths** — `/api/onboarding/dismiss-wizard` with the right `path`: `skipped_step_1/2/3`, `completed_sample`, `completed_real_manual`. Wizard state on step 1→2 saved via `/api/onboarding/wizard-state` so a reload mid-flow can resume.
+- **Mobile-first** — bottom-sheet on phones (`items-end sm:items-center`), `w-[min(540px,100vw-1rem)]`, `max-h-[calc(100vh-1rem)]`. Every interactive element ≥44px. Try-with-sample lands on the war-room in ≤10s (one POST `restaurantsApi.cloneSample()` + one navigation).
+
+**Command palette extended to Carafe** — `CommandPalette.tsx` was moved from `AppLayout` (map-only) to `App.tsx` so every authed surface shares Ctrl/Cmd+/. Now surface-aware via `useLocation()`:
+
+- **Always available** — restaurant quick-switcher (one row per restaurant from `useRestaurantStore`, fetched on first open if empty; current marked with `✓`), top-level nav (All restaurants, Vendor map, Saved vendors, Vendor list, Dashboard, Map workspace), Settings, Billing.
+- **When inside a restaurant** — six workspace tabs (Overview, Menu, Recipes, Costs, Labor, Goals) + per-restaurant actions: **View this month's ROI**, **Sync POS now** (`posApi.sync(id, 'square')` with toast lifecycle), **Download money-found report** (re-uses the new PDF endpoint via `responseType: 'blob'`), **Open planning sandbox** (re-uses `studyTradeAreaForRestaurant`).
+- **When on the map** — original areas-by-name, project switcher, heatmap/labels/style actions stay intact.
+- **Chord `g → r`** opens the palette pre-filtered to "restaurant" (within a 900ms window after `g`). Chord is bypassed when focus is in an input.
+- Group headers above each section (uppercase, tracking-wider, `--slate`); items carry `role="option"`/`aria-selected`; backdrop carries `role="dialog" aria-modal="true"`. Footer shows the chord hint alongside Ctrl+/.
+
+**Money-found PDF report** — new method `PdfReportService::generateMoneyFound($restaurantId, $opts)` and new endpoint `GET /api/restaurants/{id}/reports/money-found.pdf` (in `MenuController::moneyFoundReport`). Carafe-palette PDF (brand-violet header, money-positive headline figure) over multiple sections:
+
+1. **Cover** — `MONEY FOUND · APRIL 2025` violet uppercase eyebrow, `$X` figure at 44pt in `--money-positive`, breakdown line (measured / pending / accepted count), restaurant identity below a hairline divider
+2. **Moves you accepted this month** — table `ITEM / BEFORE / AFTER / STATUS / IMPACT` with `MEASURED` rows in `--money-positive` text + `PENDING` in amber. Page-break guard re-emits the header on overflow.
+3. **Highest-cost items on the menu** — top 8 plate-costs as Phase-1 overpay framing (same query MenuController already uses for `overpayFlags`)
+4. **Methodology footnote** — italicized + slate-tinted, cites the formula ("(post-decision $/unit − baseline $/unit) × post-decision units, 30-day window with 14-day minimum") + the **COGS source** (e.g. "USDA Mid-Atlantic, as of Apr 14, 2025" via `formatCogsCite()`) + the **measurement window** dates.
+
+**Headline-parity guarantee**: the cover figure reads from `RoiService::monthlySummary($restaurantId, $monthIso)['found_cents']` — the same method that drives the war-room ROI tile. They can never drift. **Nunito font** loaded via `\TCPDF_FONTS::addTTFfont($path)` when `storage/fonts/Nunito.ttf` is present, falls back to Helvetica when not. Print-clean: `SetAutoPageBreak(true, 25)`, row-overflow guards re-emit the table header on a new page, all cells sum to 170mm (A4 inner width with 20mm margins), long item names truncate at 30/44 chars with `…`.
+
+Frontend: war-room `RoiHero` exposes a brand-violet "Download report" pill (44px) visible only when `foundDollars > 0`. Handler uses `api.get(url, { responseType: 'blob' })` + Blob + temporary `<a>` for the browser save dialog (so the JWT travels with the auth header — matches the existing `components/data/ReportButton.tsx` pattern).
+
+**Restored from broken state** — between prompts 2 and 3 a linter reverted prompts 1 + 2 work mid-conversation. The user confirmed they wanted the full chain restored; recreated tokens, primitives, mobile war-room, RestaurantSwitcher, AppNav `mobileContext` slot, before continuing with prompt 3.
+
+**Deploy** — single commit `0c7e987` covers all 15 prompts (7,068 insertions / 1,073 deletions / 42 files). Pushed to GitHub `usaproduce/smappen`, pulled on droplet `root@143.244.144.7:/var/www/smappen`, `npm run build` rebuilt the production assets in `/var/www/smappen/public/app/`. Backend PHP lint clean (5 changed PHP files). Smoke test: site root 200, `/api/restaurants/.../menu/classify` and `/api/restaurants/.../reports/money-found.pdf` both 401 (route registered + auth gate engaged — the expected good signal). No PHP migrations were added, no cron lines, no service restarts needed.
+
+**What didn't change** — schema (still 35 migrations), backend route count (only **+1** new GET route), service count (54 — `PdfReportService` got a new method, no new service classes), background jobs (still the same workers as v5), POS adapters (Square still the only live one). The v5 → v6 delta is exclusively UX surface, tokens, accessibility, and one new GET endpoint.
 
 ---
 
@@ -330,7 +502,7 @@ All 35 ran clean on the production droplet. Pre-migration backups at `/var/www/s
 
 | Controller | Notes |
 |---|---|
-| `VendorMapController` | Bbox query, drop-a-pin "who serves this point" (PostGIS `ST_Contains` over `vendor_coverage`), detail with geometry. |
+| `VendorMapController` | Bbox query, drop-a-pin "who serves this point" (PostGIS `ST_Contains` over `vendor_coverage`), detail with geometry. **v6**: `detail` now decodes all four simplified-tier geometries (`geometry` / `geometry_100m` / `geometry_1km` / `geometry_10km`) from `ST_AsGeoJSON` columns so the frontend can swap tiers by zoom without a refetch. |
 | `VendorReviewController` | Submit (verified-operator only: must have a restaurant + matching POS connection OR manual review override), list, aggregate, vendor-response. |
 | `SavedVendorController` | User follow/shortlist. |
 
@@ -415,6 +587,7 @@ Public: `GET /public/projects/{token}` + `/public/projects/{token}/embed` + `/pu
 | GET | `/ingredient-catalog` | MenuController@listIngredientCatalog |
 | POST | `/restaurants/{id}/plate-costs/recompute` | MenuController@recomputePlateCosts |
 | GET | `/restaurants/{id}/cogs/overpay` | MenuController@overpayFlags |
+| GET | `/restaurants/{id}/reports/money-found.pdf` | MenuController@moneyFoundReport **(NEW v6 — streams the Carafe money-found PDF via `PdfReportService::generateMoneyFound`; optional `?month=YYYY-MM-01` for historical months, defaults to current)** |
 | POST | `/menu-items/{id}/recommend` | MenuEngineeringController@recommendForItem |
 | POST | `/restaurants/{id}/recommendations/run` | MenuEngineeringController@recommendForRestaurant |
 | GET | `/restaurants/{id}/recommendations` | MenuEngineeringController@listForRestaurant |
@@ -488,7 +661,7 @@ Public: `GET /public/projects/{token}` + `/public/projects/{token}/embed` + `/pu
 
 ### Smappen core (22, all from v4 — unchanged)
 
-`GoogleMapsService`, `GooglePricing`, `CensusService`, `DemographicsHistoryService`, `StatCanService`, `IsochroneService`, `TrafficService`, `DriveTimeMatrixService`, `TerritoryGenerator`, `AnalogService`, `SegmentationService`, `CompetitorScanner`, `PdfReportService`, `StripeService`, `MailService`, `StorageService`, `WebhookDispatcher`, `CacheService`, `Permissions`, `GeoUtils`, `FootTrafficService`, `PermitsService`.
+`GoogleMapsService`, `GooglePricing`, `CensusService`, `DemographicsHistoryService`, `StatCanService`, `IsochroneService`, `TrafficService`, `DriveTimeMatrixService`, `TerritoryGenerator`, `AnalogService`, `SegmentationService`, `CompetitorScanner`, `PdfReportService` (**v6: new method `generateMoneyFound($restaurantId, $opts)` adds a Carafe-palette PDF template — cover with `RoiService::monthlySummary` headline + accepted/measured recs table + highest-cost items + methodology footnote citing COGS source & measurement window; tries `\TCPDF_FONTS::addTTFfont($nunitoPath)` and falls back to Helvetica; page-break guards re-emit table headers; cell widths sum to 170mm on A4**), `StripeService`, `MailService`, `StorageService`, `WebhookDispatcher`, `CacheService`, `Permissions`, `GeoUtils`, `FootTrafficService`, `PermitsService`.
 
 ### New: Carafe restaurant operations
 
@@ -681,13 +854,29 @@ src/components/
 │                   AnalogTab, AnalyticsTab, CannibalizeTab, CommentsTab, CompetitorsTab,
 │                   FieldTab, **LayersTab**, OptimizeTab, SegmentsTab, TerritoriesTab,
 │                   TrafficTab, VersionsTab, shared.tsx
-├── common/         AnimatedNumber, CommandPalette, EmptyState, **GooglePlaceAutocomplete**,
+├── common/         AnimatedNumber, CommandPalette (**v6: now globally mounted in App.tsx,
+│                   surface-aware, with `g→r` chord**), EmptyState, GooglePlaceAutocomplete,
 │                   HelpHint, OnboardingChecklist, SaveStatus, ShortcutsModal,
 │                   WhatsNewModal, Spinner
 ├── data/           ImportWizard, ExportDialog, ReportButton
-├── **restaurants/  RestaurantsPage, RestaurantWorkspaceLayout, RestaurantOverviewPage,
-│                   MenuPage, RecipesPage, CostsPage, LaborPage, GoalsPage**
-├── **vendors/      VendorMapPage, VendorsPage, VendorSidePanel, SavedVendorsPage**
+├── **carafe/       ★ NEW IN v6 — Carafe design system primitives:**
+│                   **MoneyStat, DollarDelta, FreshnessChip, RecommendationCard,**
+│                   **useRecommendationAction (hook), MenuEngineeringChart,**
+│                   **LaborDemandChart, SyncStatus, CogsStaleBanner, CarafeSkeleton**
+│                   **(SkeletonBlock/Card/StatRow/List/Table/Chart/RecCard helpers),**
+│                   **CarafePrimitivesDemo (dev route /dev/carafe-primitives), index.ts barrel**
+├── restaurants/    RestaurantsPage, RestaurantWorkspaceLayout, RestaurantOverviewPage,
+│                   MenuPage, RecipesPage, CostsPage, LaborPage, GoalsPage
+│                   **+ v6: RestaurantSwitcher (sticky AppNav context dropdown)**
+├── vendors/        VendorMapPage, VendorsPage, VendorSidePanel, SavedVendorsPage
+│                   **+ v6: VendorCoveragePolygons (zoom-aware tier picker),**
+│                   **AffiliatedBadge (pill + icon, keyboard-accessible disclosure tooltip)**
+├── onboarding/     **+ v6: CarafeFirstRunWizard.tsx** (3-step polished onboarding —
+│                   use case → real address or sample → animated reveal with
+│                   sample recs + MoneyStat headline); **CarafeOnboardingGate.tsx**
+│                   (was a stub in v5, now real — fetches `/api/onboarding/state`,
+│                   opens wizard when `flags.carafe_wizard_complete` unset AND
+│                   `org_restaurant_count === 0`)
 ├── **admin/        AdminOnlyRoute, CarafeAdminLayout, CarafeAdminHome,
 │                   SeedCampaignBuilderPage, SeedCampaignDetailPage,
 │                   SeedCampaignsListPage, ReviewQueuePage**
@@ -717,9 +906,9 @@ src/components/
 | **`restaurantStore`** | currentRestaurant, restaurants, menuItems, recommendations; `updateRecommendationStatus(id, status)` to flip suggested → accepted/dismissed/measured |
 | **`vendorMapStore`** | Filters (q, type, category, minRating, affiliatedOnly), pins, selectedVendorId, servesPin, servesResults, servesLoading; `setFilter`, `setPins`, `setServes`, `selectVendor` |
 
-### API clients (`frontend/src/api/`) — new in v5 bolded
+### API clients (`frontend/src/api/`) — new in v5 bolded, v6 additions noted inline
 
-`client.ts` (axios instance + auth header injection + error handling), `auth.ts`, `projects.ts`, `folders.ts`, `areas.ts`, `analogs.ts`, `analytics`, `advanced.ts`, `billing.ts`, `customLayers.ts`, `exports.ts`, `features.ts`, `geocoding.ts`, `heatmap.ts`, `imports.ts`, `isochrone.ts`, `places.ts`, `reach.ts`, `reports.ts`, `usage.ts`, **`restaurants.ts`**, **`vendors.ts`**, **`vendorMap.ts`**, **`carafe.ts`** (admin: estimate, campaigns, review queue, dedupe/classify decisions, vendor types catalog).
+`client.ts` (axios instance + auth header injection + error handling), `auth.ts`, `projects.ts`, `folders.ts`, `areas.ts`, `analogs.ts`, `analytics`, `advanced.ts`, `billing.ts`, `customLayers.ts`, `exports.ts`, `features.ts`, `geocoding.ts`, `heatmap.ts`, `imports.ts`, `isochrone.ts`, `places.ts`, `reach.ts`, `reports.ts`, `usage.ts`, **`restaurants.ts`** (**v6: new `engineeringApi.classify(restaurantId)` for the menu-engineering 2×2 chart; `MenuEngineeringPayload` + `MenuQuadrant` types; `VendorDetail.coverage` extended with `geometry_100m`/`_1km`/`_10km` optional fields for the zoom-aware polygon tier picker**), **`vendors.ts`**, **`vendorMap.ts`**, **`carafe.ts`** (admin: estimate, campaigns, review queue, dedupe/classify decisions, vendor types catalog).
 
 ### Utilities
 
@@ -810,53 +999,71 @@ Live surface: **`/app/restaurants/*`**, mounted under `RestaurantWorkspaceLayout
 
 `restaurants` (org-scoped) — name, address, lat/lng, timezone, region, is_sample, archived_at. Created via Google Places autocomplete or manual entry. One org can own many; each has its own POS integrations, menu items, recipes, recommendations, goals, shifts.
 
-### RestaurantOverviewPage — the war-room
+### RestaurantWorkspaceLayout — the shell
 
-The landing page after picking a restaurant. Sections:
-- **"Carafe found you $X this month"** ROI tile (from `RoiService::monthlySummary` — sum of `recommendations.measured_impact_cents` where status='measured' for the current month)
-- Today's metrics: cover count, items sold, food-cost coverage % (from `pos_sales` + `plate_costs`)
-- Top 3 unread recommendations (accept / dismiss inline)
-- POS connection status (Square / Toast / Clover — Square is the only live adapter)
-- "Study trade area" button → opens `/app/vendors` with the restaurant's lat/lng as the drop-pin
+**v6 rewrite for mobile.** Wraps the AppNav with two new context slots:
 
-### MenuPage
+- **Desktop (`md+`)** — `<RestaurantSwitcher>` (44px pill button + dropdown of all org restaurants with search at 4+, "All restaurants" + "New restaurant" footer rows, current marked with `✓`) lives in `AppNav`'s `children` prop alongside the sample-restaurant badge. Vertical sidebar of tabs (Overview / Menu / Recipes / Costs / Labor / Goals).
+- **Phone (`<md`)** — `<RestaurantSwitcher>` lives in the new `AppNav.mobileContext` prop (renders inline between brand and hamburger so it stays one-handed without opening the drawer); below the nav, a sticky horizontal chip rail of tabs at `top-12` lets operators swap tabs while keeping the dollar tile in view. Vertical sidebar hidden.
 
-Menu items table (name, category, price, plate cost, margin). Columns:
-- **Price** is the menu price (`menu_items.price_cents`)
-- **Plate cost** is `plate_costs.true_cost_cents` if available, else "incomplete (X% coverage)"
-- **Margin** = (price - plate cost) / price
-- **Recommendation** column shows the dollar-impact suggestion if one exists
+Tab content wrapped in `<div key={location.pathname} className="carafe-route-fade">` — the 160ms upward-translate + opacity fade re-triggers on every tab swap (gated by `prefers-reduced-motion`).
 
-POS sync button (Square): pulls `Catalog` + `Orders` since last_synced_at. Dollar-quantified recommendations row at top. "Study trade area" button on each item.
+### RestaurantOverviewPage — the war-room (**v6 mobile-first redesign**)
+
+The landing page after picking a restaurant. Hierarchy from top, designed so ROI + Top Move fit above the fold on a 390×844 phone:
+
+1. **ROI hero + Top Move pair** — 5/7 grid at `md+`, stacked single-column on phone.
+   - **ROI hero** (`RoiHero`) uses `<MoneyStat size="xl" tone="positive">` for "Carafe found you $X this month" (figure from `RoiService::monthlySummary['found_cents']`); `<FreshnessChip>` on `data.roi.last_updated_at`; `<DollarDelta>` in footer for month-over-month vs. trend point `[length-2]`; 6-month inline-SVG sparkline at bottom. Now also exposes a brand-violet **"Download report"** pill (44px, `FileText` icon) that hits the new `/api/restaurants/{id}/reports/money-found.pdf` endpoint via `responseType: 'blob'`, visible only when `foundDollars > 0`.
+   - **Top Move section** uses `<RecommendationCard density="hero">` via `topMoveToRec()` adapter that converts `OverviewTopMove` → minimal `Recommendation`. From-digest badge when applicable. Local queue advances via `onAfterDecide`, decrementing `open_recs_count`.
+2. **Today's Service tile** — three `ServiceCell` tiles (Covers / $/cover / Food cost). Grid 2-col on phone (Food cost spans both columns so the tint reads), 3-col `sm+`. Tones via `--money-positive` / `--money-negative` / `var(--ink)` paired with hint text. Section header shows `<FreshnessChip>` on `last_sale_at` (or `last_synced_at` fallback when POS connected but no sales).
+3. **Digest callout** — only renders for 48h after the Monday digest send; brand-50 tinted; `Mail` icon; "See all →" 44px tap target back to `/menu?source=digest`.
+4. **PosCard** — now a `<SyncStatus>` + optional `<CogsStaleBanner>` stack. The war-room is read-mostly; primary CTA navigates to `/menu` where the actual sync controls live.
+5. **Study trade area** — secondary 44px footer button (`MapPin` icon). Now slim, never competing with dollar moves.
+
+Loading state uses layout-shaped skeletons matching the real silhouette.
+
+### MenuPage (**v6**)
+
+- **`<SyncStatus>`** replaces the bespoke "Square — connected" strip; drives every state of the integration (not_connected → connecting → syncing → synced → stale → error).
+- **`<CogsStaleBanner>`** sits above the menu-engineering chart so the caveat is read before the operator trusts the math.
+- **`<MenuEngineeringChart>`** — the 2×2 quadrant chart (full description above in the v6 headline section). Wires `engineeringApi.classify()` + the overview endpoint's `usda_prices.as_of` for COGS attribution; `findRec` callback so clicking a point opens the matching open recommendation in the modal.
+- **Recommendations strip** — filtered to `status === 'suggested'`, each row wrapped in `<li className="stagger-in">` with `<RecommendationCard density="comfortable">`. The old local `RecommendationCard` helper and `acceptRec`/`dismissRec` handlers were deleted — the unified card + `useRecommendationAction()` own the entire flow.
+- **Menu items table** — margin-% column previously colored red alone; now `<MarginPctCell>` pairs the color with an `AlertTriangle` icon + "Low" pill + `aria-label`. Dollar-margin column uses tokens so it auto-flips in dark mode.
 
 ### RecipesPage
 
-Two-pane: recipes on left, ingredient catalog on right. Recipes are operator-entered (POS doesn't have them). Each recipe is a list of `(ingredient_key, qty, unit)` with autocomplete from `cogs_benchmark`. Linking a recipe to a menu item kicks off `PlateCostService::computeForMenuItem`.
+Unchanged in v6 functionally — the 3-button `EmptyStatePicker` (paste / suggest / manual) shipped in the previous Carafe set. v6 only verified its CTAs all route correctly and bumped the skeleton to layout-shaped.
 
 **Critical UX gate**: without recipes, plate cost is unknown → all downstream features (food cost, recommendations, ROI) degrade. The empty state nudges hard.
 
-### CostsPage (theoretical food cost)
+### CostsPage (**v6 overpay-flags hierarchy**)
 
-Date range picker (default: first of month → today). Returns:
-- Theoretical cost ($)
-- Revenue ($)
-- Cost % (color-coded: <30% good, <40% warn, ≥40% bad)
-- Top 10 cost contributors (item × qty × unit_cost)
-- Coverage % gauge — "based on X of Y POS sales rows" (warns when many menu items lack recipes)
+- **`<CogsStaleBanner>`** at the top (severity-based, see system-wide section).
+- **`FoodCostHero`** — 3-col grid: status icon + verbal label ("Healthy" / "Watch" / "Over target") next to a 5xl `pct%` in the band color (`--money-positive`/`#92670E`/`--money-negative`); `<BandRuler>` (0%→50%+ with three tinted segments + a marker dot for the current %); `<DollarDelta>` showing $ over target. WCAG AA verified on all three band colors.
+- **`<CoverageGauge>`** — calm brand-purple progress bar `role="progressbar"` ("Coverage · X% of sales lines have plate cost"). Honest body copy at low coverage.
+- **`<CogsFreshnessStrip>`** — `<FreshnessChip>` per (source, region) from `benchmark_freshness[]`. Stub-only state gets a separate amber callout.
+- **`<OverpayList>`** + **`<OverpayRowCard>`** — replaces the old table. Each row is a 12-col grid: name + qty sold + cost ratio with band icon (left), "Your cost / unit → Target at 35%" price cells + `<DollarDelta>` per-unit gap (middle), dominant `<MoneyStat size="lg">` for addressable $/period (right). Sorted by `savingsCents` desc; top row gets 2px `--money-positive` border + "Top opportunity" badge. Honest Phase-1 caveat below.
+- **`CostsEmptyState`** points back to Recipes when no data exists.
 
-Computation: `FoodCostService::theoretical` walks `pos_sales` in the window, joins to `menu_items.recipe_id` → `recipe_ingredients` → `cogs_benchmark` for unit price. Caches the result on the request only (no persistent cache yet — needs to recompute when recipes change anyway).
+### LaborPage (**v6**)
 
-### LaborPage
+- Median-RPC header tile gained a `<FreshnessChip timestamp={data.window.end}>` "through Apr 28" with cadence-aware thresholds (fresh ≤36h, stale >7d).
+- **`<LaborDemandChart>`** replaces the old FlagList rows entirely. 720×260 SVG with revenue (or covers) area + labor cost line + over/under-staff hour bands + dollar-annotation pills + revenue/covers toggle. Mobile sideways-scrolls inside `min-w-[540px]` + a `DegradedSummary` grid above (top-2 over + top-2 under as tinted summary tiles, readable without the SVG at all).
+- **Slow-window suggestions** render as `<RecommendationCard readonly density="comfortable">` via the new `slowWindowToRec()` adapter — synthesized `Recommendation` with `kind: 'reposition'` and `dollar_estimate_cents = revenue_cents` (honest "addressable revenue" framing). Each `<li>` stagger-animates in.
+- **Empty states**: `<LaborEmptyState>` when no data; slow-windows zero state now reads as positive (green `--money-positive-bg` tile: "Every hour with sales pulled its weight…" + "Add another shift" CTA).
 
-Date range picker. Shows:
-- Median revenue-per-cover headline
-- Over/understaffed hour flags (compared against staffing baseline from `labor_shifts`)
-- Slow-window suggestions (low sales × high labor cost → "trim 5–6pm Tuesday")
-- Manual shift entry (or Square Labor API pull if connected)
+### GoalsPage — operator scorecard (**v6 redesign**)
 
-### GoalsPage — operator scorecard
+Goals: `food_cost_pct`, `avg_check_cents`, `margin_pct`, `weekly_revenue_cents`. Cadence: weekly / monthly / quarterly. Snapshot trend lines via `goal_snapshots`. Cards now in a `grid-cols-1 lg:grid-cols-2` grid (single column up through 1024px so 390px viewports get full-width cards).
 
-Goals: `food_cost_pct`, `avg_check_cents`, `margin_pct`, `weekly_revenue_cents`. Cadence: weekly / monthly / quarterly. Snapshot trend lines via `goal_snapshots`. Color coding: on-track / at-risk / off-track based on % to target.
+Each `<GoalCard>` is a 3-row scorecard:
+1. **Header** — metric name + cadence pill + target value + `<StatusBadge>` (icon + verbal label + color) + 44×44 refresh + 44×44 archive icons. New `<FreshnessChip>` shows snapshot age with cadence-aware thresholds (weekly fresh ≤2d / stale >7d; monthly ≤14d / >35d; quarterly ≤45d / >100d).
+2. **Hero value + delta** — `<MoneyStat>` for dollar metrics, custom 4xl percentage for `food_cost_pct`/`margin_pct`. Next to it, `<GoalDelta>` shows signed gap ("+1.2pp vs target" / "+$340 vs target") color-coded for good/bad based on `lowerBetter`. "On target" gets its own positive-tinted text.
+3. **Ring + sparkline** — 84px SVG `<ProgressRing>` (% to target with figure centered; animates `stroke-dasharray` via 600ms CSS transition) + chronological `<GoalSparkline>` with dashed target reference line + per-snapshot dots tinted positive vs negative.
+
+Status model collapses each goal into one ratio: `hit` (≥1.0 — restrained celebration, 2px `--money-positive` border, `CheckCircle2` "Hit"), `on_track` (≥0.95), `at_risk` (≥0.80, amber), `off_track` (<0.80), `unknown`. Same math whether the metric is "higher is better" or "lower is better".
+
+Sparse-history fallback: <2 snapshots renders a soft "Not enough history yet" tile. New `<GoalsEmptyState>` suggests three starter goals + primary CTA.
 
 ### POS integration
 
@@ -941,22 +1148,24 @@ Live surface: **`/app/vendors/*`**.
 
 `VendorGeometryService::ensureCoverageForVendor` falls back to a radius if no isochrone is computable; `whoServesPoint(lat, lng)` is the drop-a-pin query (PostGIS `ST_Contains` over the simplified geometry at the right zoom tier).
 
-### VendorMapPage — the main vendor surface
+### VendorMapPage — the main vendor surface (**v6 visual polish**)
 
-Full-bleed Google Map (US-centered). Filter strip at the top:
-- Name search (`q`)
-- Vendor type dropdown (broadline / cash_carry / produce / meat / seafood / specialty / smallwares / ...)
-- Category multiselect (produce / meat / dairy / dry_goods / frozen / bakery / beverage / paper_disposables / cleaning_chemical / specialty_imported)
-- Min rating filter
-- Affiliated-only toggle
+Full-bleed Google Map (US-centered). **Filter strip** at the top:
+- At `md+`: name search + vendor type + category + min rating + affiliated-only checkbox all sit in one row, all 44px height
+- On phone: only search + type stay in the bar; the rest collapse behind a `<SlidersHorizontal /> Filters` button that shows a brand-violet count badge when category/rating/affiliated have non-default values. Tap opens a disclosure with the remaining controls stacked vertically + a "Done" button. "Who serves me?" button shrinks to "Who?" on narrowest phones
 
-Pins fetch via bbox query (`GET /api/vendors/map/bbox`) on map idle (debounced). **Drop-a-pin** mode: click → `GET /api/vendors/map/serves?lat=...&lng=...` returns every vendor whose coverage polygon contains the point. Sliding panel shows results.
+Pins fetch via bbox query (`GET /api/vendors/map/bbox`) on map idle (debounced — 350ms, with antimeridian-clamp safety). Affiliated vendors get a brand-violet halo (3px stroke at scale 9); others use a thin white stroke at scale 6.
 
-Vendor side panel (`VendorSidePanel`): name, type, primary category, rating + review count, affiliated badge (if applicable). Expandable: coverage details, "Request quote" CTA (→ LeadController), reviews summary, claim button.
+**Drop-a-pin** mode: click → `GET /api/vendors/map/serves?lat=...&lng=...`. **v6 polish**: the panel opens + `servesLoading=true` is set *before* the network round-trip via `setServes({lat,lng}, [])`, so the operator sees the pin land + a layout-shaped 3-row skeleton appear inside one frame (~16ms). Header reads "Searching…" then "N vendors" on settle. Result rows stagger-animate in.
+
+**Coverage polygons (v6)**: when a vendor is selected, `<VendorCoveragePolygons>` paints the vendor's coverage geometry over the map. Picks one of the Douglas-Peucker simplified tiers based on live map zoom — `zoom ≥ 14` → `simplified_100m` (street detail), `zoom ≥ 10` → `simplified_1km` (city), `< 10` → `simplified_10km` (metro). Falls through tiers when null. Path arrays memoized so panning inside the same tier doesn't tear down the overlay; tier swaps on zoom-boundary cross are path replacements, no stutter. Affiliated vendors get brand-violet fill+stroke (0.12 fill opacity), independents calm slate. 30ms post-mount opacity bump for a fade-in on selection. The backend wiring: `VendorCoverageRepository::listForVendor` now exposes all four geometries (`ST_AsGeoJSON(geom)` + `simplified_100m/1km/10km`); `VendorMapController::detail` decodes them all into the JSON response.
+
+**`<VendorSidePanel>` polish (v6)** — slide-in via `.panel-slide-left`; mobile width `min(96vw, 420px)`; 44×44 close. Header shows the new `<AffiliatedBadge variant="pill">` instead of the bare `ShieldCheck` + uppercase text:
+- **`<AffiliatedBadge>`** — two variants (`pill` brand-violet chip with `ShieldCheck` + "AFFILIATED" + Info dot; `icon` just the ShieldCheck for dense rows). Both open the same disclosure tooltip on hover, focus, or click. Tooltip copy is intentionally boring: *"Affiliated supplier. Carafe has a business relationship with this vendor through USA Produce. They do not pay for ranking placement, and reviews come from operators only — affiliation never changes a vendor's order in the 'who serves me?' results."* Keyboard-accessible (Enter/Space toggles), screen-reader-accessible (`aria-describedby` + `role="tooltip"`), closes on Esc + outside click. Used in side-panel header (pill), list-view rows (icon), serves-panel result rows (icon).
 
 List view toggle: `/app/vendors/list` (VendorsPage) — same filters, grid/table layout, ranked by comparison score within the selected category.
 
-Saved vendors: `/app/vendors/saved` (SavedVendorsPage) — placeholder for the future saved-comparison workflow.
+Saved vendors: `/app/vendors/saved` (SavedVendorsPage) — **v6**: stagger-in grid, brand-tinted empty state with 3 value-prop tiles (Map view / Shortlist / Affiliated) explaining why saving vendors matters, primary `Browse vendors →` CTA at 44px.
 
 ### Reviews
 
@@ -1328,7 +1537,34 @@ Plan IDs: `free`, `starter`, `pro`, `team`, `enterprise`. Trial target: `pro`, 1
   - `ReportController::generate` → `first_report_at`
 - **`POST /api/onboarding/activate`** for any frontend-driven step the backend can't observe
 
-Carafe onboarding is currently informal — `seed-sample-restaurant.php` creates a sample restaurant on demand; no first-run wizard for Carafe yet.
+### Smappen first-run wizard (`FirstRunWizard.tsx`)
+
+3-step modal: use-case picker → address → auto-generated 15-min isochrone + AnimatedNumber population. Gated on `onboarding_flags.wizard_complete`. Opens automatically when the user has no flag AND the project area count is 0. "Skip" also stamps the flag so dismissive users aren't pestered.
+
+### Carafe first-run wizard (`CarafeFirstRunWizard.tsx`) — ★ NEW IN v6
+
+Lives at `frontend/src/components/onboarding/CarafeFirstRunWizard.tsx`. Mounted via `CarafeOnboardingGate.tsx` (was a stub in v5, now real). The gate fetches `/api/onboarding/state` when the user lands on any `/app/restaurants/*` surface and opens the wizard when **both** conditions hold: `flags.carafe_wizard_complete` is unset AND `org_restaurant_count === 0`. The second condition prevents the modal from popping for invitees or returning users — they land on data directly.
+
+**Step 1** — use-case picker (no emojis): three cards, each 64px tall:
+- `Store` "I run a restaurant" — "Wire up your menu and start finding margin"
+- `MapPin` "I'm opening a new spot" — "Study a neighborhood before you sign a lease"
+- `Compass` "Just curious about Carafe" — "Tour with a fully-loaded sample restaurant"
+
+Cards stagger-animate in. Icon tile uses `--carafe-accent-light`. Hover transitions to `--carafe-accent-50` background + `--carafe-accent` border.
+
+**Step 2** — path-specific:
+- `existing` / `planning` → real input flow: restaurant-name input + Google Places autocomplete address input (uses the existing `.cf-wizard-pac` body-mounted dropdown styles). Two CTAs: "Try sample first" (secondary) and "Create restaurant" (primary, brand-accent). Primary stays disabled until the user picks from suggestions, with `✓ Picked from suggestions` confirmation below.
+- `exploring` → no inputs, just a value-prop card listing what comes with the sample restaurant (35-item menu with plate costs already computed · 90 days of synthetic POS sales · open recommendations · sample USDA-region COGS attribution). Single CTA: "Try with sample → ".
+
+**Step 3 — reveal**:
+- Sample paths: `<MoneyStat size="xl" tone="positive">` "$4,280 — We found these moves for you" headline + 3 `<RecommendationCard density="compact" readonly>` rows stagger-animating in (fixture: Carbonara $1,640/mo price raise, Bruschetta $820/mo reposition, Calamari $480/mo cut; sum = $4,280 matches the headline). Single CTA "Open the war-room → " navigates to `/app/restaurants/{id}`.
+- Real-restaurant paths: calmer "Your war-room is ready" with a next-steps note about POS + recipes.
+
+**Step indicator** — three pill chips in `--carafe-accent`. Each chip is a `<button>` with `aria-label="Step N, current"` or `"go back"` + `aria-current="step"`. Past steps clickable to rewind; step 3 is terminal (restaurant created).
+
+**Dismissal paths** stamp `/api/onboarding/dismiss-wizard` with `wizard: "carafe"` and a `path`: `skipped_step_1/2/3` (backdrop click or X), `completed_sample`, `completed_real_manual`. Wizard state on step 1→2 saved via `/api/onboarding/wizard-state` so reloads mid-flow resume cleanly.
+
+**Mobile-first** — bottom-sheet alignment on phones (`items-end sm:items-center`), `w-[min(540px,100vw-1rem)]`, `max-h-[calc(100vh-1rem)]`. Every interactive element ≥44px. "Try with sample" path completes in ≤10s (one POST `restaurantsApi.cloneSample()` + one navigation).
 
 ---
 
@@ -1338,18 +1574,61 @@ Carafe onboarding is currently informal — `seed-sample-restaurant.php` creates
 - **Nunito** webfont, weights 400 / 500 / 600 / 700 / 800 / 900
 - Loaded once in `styles.css` via Google Fonts
 - No competing font families
+- (v6) PDF reports use the same Nunito family via `\TCPDF_FONTS::addTTFfont()` when `storage/fonts/Nunito.ttf` is deployed; falls back to Helvetica when not — `PdfReportService::generateMoneyFound` attempts the load and gracefully degrades
 
 ### Color tokens (CSS variables on `:root`)
-- **Brand**: `--brand: #7848BB`, `--brand-dark: #6B37A6`, `--brand-light: #EDE5F7`
+
+**Smappen base scale** (unchanged from v5):
+- **Brand**: `--brand: #7848BB`, `--brand-dark: #6B37A6`, `--brand-light: #EDE5F7`, `--brand-50: #F6F2FB`
 - **CTA**: `--cta: #E53935`, `--cta-dark: #D42A2A`
-- **Ink scale**: `--ink: #1A1A2E`, `--ink-2: #2D2D44`, `--body: #4A4A5A`, `--slate`, `--muted`
-- **Borders + bgs**: `--line`, `--line-soft`, `--bg-panel`, `--bg`
+- **Ink scale**: `--ink: #1A1A2E`, `--ink-2: #2D2D44`, `--body: #4A4A5A`, `--slate: #6B6B7B`, `--muted: #8E8E9A`
+- **Borders + bgs**: `--line: #D1D1DB`, `--line-soft: #E8E8EE`, `--bg-panel: #F3F3F7`, `--bg: #F9F9FB`
+- **Nav tokens**: `--nav-bg`, `--nav-border`, `--nav-text`, `--nav-text-strong`, `--nav-active-bg`, `--nav-active-fg`, `--nav-ring` (#a78bfa) — single point of retheme for every authenticated surface
+
+**★ Carafe semantic layer (v6)** — added on top of, not replacing, the Smappen scale. Lives in the same `:root` block:
+
+| Token | Light | Dark | Used for |
+|---|---|---|---|
+| `--money-positive` | `#0F8A4A` | `#4ADE80` | MoneyStat positive tone, DollarDelta up, status "synced"/"hit" |
+| `--money-positive-bg` | `#E6F4EC` | `#0E2E1F` | Status pill backgrounds (Accepted, etc.) |
+| `--money-negative` | `#B14242` | `#F4A8A8` | MoneyStat negative tone, DollarDelta down, MarginPctCell "Low" |
+| `--money-negative-bg` | `#FBECEC` | `#3A1A1A` | Stale-COGS banner background, over-staff hour bands |
+| `--money-neutral` | `#1A1A2E` | `#F3F4F6` | MoneyStat default tone (matches `--ink`) |
+| `--money-neutral-bg` | `#F1F1F5` | `#1F2937` | Neutral money chip background |
+| `--carafe-accent` | `#C2541A` | `#F5A77A` | Carafe brand accent — pairs with Smappen violet without colliding; used in CarafeFirstRunWizard primary CTAs, icon tiles |
+| `--carafe-accent-dark` | `#A6440E` | `#E78D5C` | Hover/active state of accent |
+| `--carafe-accent-light` | `#FBE6D5` | `#3A2418` | Icon-tile background paired with accent foreground |
+| `--carafe-accent-50` | `#FDF3EA` | `#2A1B12` | Wizard step-2 exploring value-prop card background |
+| `--fresh-fresh` | `#0F8A4A` | `#4ADE80` | FreshnessChip fresh state |
+| `--fresh-fresh-bg` | `#E6F4EC` | `#0E2E1F` | (matching) |
+| `--fresh-aging` | `#92670E` | `#F5C16C` | Aging state; warn tone on bands and CogsStaleBanner |
+| `--fresh-aging-bg` | `#FBEFD2` | `#2E2210` | Under-staff hour bands, aging chip body |
+| `--fresh-stale` | `#8A4A4A` | `#F4A8A8` | Stale state — dot opacity drops to 0.7 to signal "old" |
+| `--fresh-stale-bg` | `#F1DEDE` | `#3A1A1A` | (matching) |
+
+**Contrast verified** (full block at the bottom of `styles.css`):
+
+| Pair | Ratio | Grade |
+|---|---|---|
+| `--money-positive` on white | 5.62:1 | AA |
+| `--money-negative` on white | 5.72:1 | AA |
+| warn `#92670E` on white | 6.42:1 | AAA |
+| `--brand` on white | 5.85:1 | AA |
+| `--money-positive` on `--money-positive-bg` | 4.92:1 | AA |
+| `--money-negative` on `--money-negative-bg` | 5.06:1 | AA |
+| warn on `--fresh-aging-bg` | 5.78:1 | AA |
+| `--brand` on `--brand-light` | 4.85:1 | AA |
+| Dark: `--money-positive` (#4ADE80) on #1f2937 | 7.82:1 | AAA |
+| Dark: `--money-negative` (#F4A8A8) on #1f2937 | 6.34:1 | AAA |
 
 ### Area palette (24 named colors)
 Smappen Violet + 23-color preset row in AreaCard's color picker.
 
 ### Heatmap palettes (11)
 Viridis, Plasma, Magma, Inferno, Cividis, Smappen Pastel, Smappen Hot, Smappen Cool, RdBu, BrBG, Spectral.
+
+### Menu-engineering quadrant palette (v6, 4 colors — color-blind-safe)
+Validated to retain ≥30 ΔE under deuteranopia / protanopia / tritanopia (Coblis/Vischeck): **teal `#0E7C7B`** (stars), **indigo `#4338CA`** (puzzles), **amber `#B45309`** (plowhorses), **slate `#475569`** (dogs). No red/green pair. Quadrant tints are 10% blends of the same hue.
 
 ### Daypart palette (24 colors)
 One per hour, matched to a sun/moon arc.
@@ -1358,8 +1637,26 @@ One per hour, matched to a sun/moon arc.
 - `--radius-sm 6px`, `--radius 10px`, `--radius-lg 14px`, `--radius-xl 16px`
 - `--shadow-sm`, `--shadow-md`, `--shadow-lg`, `--shadow-float`
 
+### Focus indicator (v6, global)
+2px solid `outline: var(--nav-ring)` with 2px offset + 6px radius on every focusable element (`button`, `a`, `[role="button"]`, `[role="tab"]`, `[role="option"]`, `[role="menuitem"]`, `[tabindex]:not([tabindex="-1"])`). Selector uses `:focus-visible` so mouse clicks don't trigger the ring. Dark mode brightens the ring to `#c4b5fd` for visibility against dark panel backgrounds. Per-page Tailwind `focus-visible:ring-*` utilities continue to override on a case-by-case basis where they exist.
+
 ### Skeleton loaders
 Global `.skeleton` class with shimmer; AreaList, POI panel, dashboard, project gallery.
+
+**v6 additions**:
+- `.skeleton` is now in the `prefers-reduced-motion` gate — shimmer animation pauses for users who've asked the OS not to animate
+- Carafe surfaces use layout-shaped skeletons via `frontend/src/components/carafe/CarafeSkeleton.tsx` — exports `SkeletonBlock`, `SkeletonCard`, `SkeletonStatRow`, `SkeletonList`, `SkeletonTable`, `SkeletonChart`, `SkeletonRecCard`. Each helper mirrors the silhouette of the real component (e.g. `SkeletonRecCard` has a 40×40 icon block + dollar-figure block + three button-shaped blocks matching `RecommendationCard` proportions)
+- Loading states across MenuPage, CostsPage, LaborPage, GoalsPage, SavedVendorsPage, RestaurantOverviewPage now show layout-shaped silhouettes (no generic gray ladders); all carry `aria-busy="true" aria-live="polite"`
+
+### "Never color-alone" policy (v6)
+Status across Carafe pairs **color + icon + verbal label**. Five components documented as canonical:
+- `FreshnessChip` — colored dot + relative-time text
+- `SyncStatus` — Lucide icon + uppercase state label + token color
+- `<StatusBadge>` (goal) — kind icon (`CheckCircle2`/`TrendingUp`/`AlertTriangle`/`AlertOctagon`/`TrendingDown`) + verbal label (`Hit`/`On track`/`At risk`/`Off track`/`No data`)
+- `CogsStaleBanner` — `AlertTriangle`/`Info` icon + headline + body copy
+- `MarginPctCell` — `AlertTriangle` + percentage + "Low" pill
+
+Map pins encode vendor type by color but the side panel + list rows + ServesPanel rows carry the same data in text. Affiliated badge is icon + word + color; never color-only.
 
 ### Density target
 "Real usefulness over visual sophistication." Designed for any-age operator on any screen.
@@ -1372,16 +1669,40 @@ No purple→pink gradients, no glassmorphism (unless context already has it), no
 ## Animation system
 
 Global classes in `styles.css`:
-- `.panel-slide-right/left/up/down` — cubic-bezier ease-out for floating panels
-- `.card-expand` — transform-origin top, auto-flips to bottom when portaled above trigger
-- `.stagger-in` — per-row delay via inline `--stagger-i` CSS var
+- `.panel-slide-right/left/up/down` — cubic-bezier ease-out for floating panels (220ms)
+- `.card-expand` — transform-origin top, auto-flips to bottom when portaled above trigger (160ms)
+- `.stagger-in` — per-row delay via inline `--stagger-i` CSS var (28ms × index, capped at 8 rows × 30ms ≈ 280ms total max-tail entrance + 280ms per-row entrance)
 - `.fade-in` — hover-revealed buttons
 - `.sparkle-pulse` — featured CTAs
 - `.hover-lift` — toolbar buttons
 - `.brand-logo-tile` — gradient sweep + shimmer
 - `.spinner`, `.progress-bar`, `.page-loading-logo`, `.shimmer-text`
 - `.polygon-glow-pulse` — selected polygon halo
-- **New in v5**: `.toolbar-card-morph` (2s blob morph from toolbar icon to right-panel card, Apple-glass bezier `cubic-bezier(0.34, 1.56, 0.64, 1)`, clip-path inset prevents seam — `0d1271a`, `817b64e`, `daeec3b`). Re-fires on every tile/tab switch within the right panel.
+- **(v5)** `.toolbar-card-morph` (2s blob morph from toolbar icon to right-panel card, Apple-glass bezier `cubic-bezier(0.34, 1.56, 0.64, 1)`, clip-path inset prevents seam — `0d1271a`, `817b64e`, `daeec3b`). Re-fires on every tile/tab switch within the right panel.
+
+**★ Carafe motion vocabulary (v6)** — added a small, named, all-gated set on top of the global classes. Operator-serious tone: nothing decorative, every functional transition ≤250ms, every animation in the `prefers-reduced-motion` gate:
+
+| Primitive | Where | Duration | What it does |
+|---|---|---|---|
+| `.carafe-route-fade` | Workspace tab swaps | **160ms** | 4px upward translate + opacity, on `<main>` keyed by `pathname` |
+| `.stagger-in` (existing) | Carafe lists (recs, vendors, goals, slow-windows) | 280ms entrance + 30ms × index, capped at 8 | Per-row slide-from-left cascade |
+| `.card-expand` (existing) | Why-this inline expander on `<RecommendationCard>` | 160ms | Transform-origin scale + translate |
+| `.rec-decision-check` | Accept feedback on `<RecommendationCard>` | **240ms** | Restrained scale-pop on the checkmark (tightened from original 320ms to hit the 250ms ceiling) |
+| `.rec-card-collapse` | Top Move cycling, rec list dismissal | **220ms** | Max-height + opacity + margin/padding collapse so the next rec slides up into the same slot (tightened from 280ms) |
+
+Plus `<AnimatedNumber>` (existing) rolls at `240ms` default in Carafe contexts. The `useEffect([value])` dependency ensures the animation only fires when the value *actually* changes — a poll returning the same number never re-triggers (verified by `React.Object.is` comparison on primitives).
+
+All Carafe-specific primitives are listed in the `@media (prefers-reduced-motion: reduce)` block at the bottom of `styles.css` (line ~947). The decision-check + card-collapse pair has its own gate ten lines above because `.rec-card-collapse` needs different "kill" behavior — even with motion off, it must still `max-height: 0` the card so the next rec appears.
+
+Stagger applied (with `style={{ '--stagger-i': i }}`) on:
+- MenuPage recommendations
+- VendorMapPage list-view rows + ServesPanel result rows
+- SavedVendorsPage grid
+- GoalsPage cards (via new `staggerIndex` prop on `<GoalCard>`)
+- LaborPage slow-window cards
+- CarafeFirstRunWizard step-1 use-case cards and step-3 reveal recs
+
+**What's intentionally absent**: no bounce springs, no celebration confetti, no hover-lift on data cards, no scroll-triggered choreography. The only spin is the live `<Loader2 className="animate-spin">` inside `<SyncStatus>` for `connecting` / `syncing` states — genuinely indicating in-progress work.
 
 All honor `prefers-reduced-motion`.
 
@@ -1640,6 +1961,31 @@ Enabled for `text/*`, `application/javascript`, `application/json`.
 - ✅ Carafe Run button spawns worker pipeline (`0474c52`)
 - ✅ Carafe PHP_BINARY resolution fix (`e667348`) — resolves `php` not `php-fpm`
 
+### Resolved this audit cycle (v6 — `0c7e987`, the Carafe UX design batch)
+**No bug fixes per se** — this cycle was a 15-prompt UX-and-tokens batch, not a regression hunt. What it added rather than fixed:
+- ✅ Carafe semantic design tokens + dark-mode mates + verified-contrast notes block
+- ✅ Three primitives (MoneyStat / DollarDelta / FreshnessChip) wrapping every dollar figure
+- ✅ Unified `<RecommendationCard>` across war-room / menu / labor (three densities + readonly variant) with optimistic accept/dismiss + undoStore + 5s undo toast
+- ✅ Mobile-first war-room (ROI + Top Move above-the-fold at 390×844; RestaurantSwitcher in AppNav `mobileContext`; sticky chip-rail tabs on phones)
+- ✅ Menu-engineering 2×2 chart (custom SVG, color-blind-safe palette, collision spiral, COGS attribution in tooltip, click→`<RecommendationCard>` modal)
+- ✅ CostsPage hero hierarchy (band-coded food-cost % with icon + verbal label, BandRuler, OverpayList ranked by `savingsCents`)
+- ✅ `<LaborDemandChart>` (24-hour demand area + staffing line + over/under bands + dollar annotations; mobile sideways-scroll + degraded summary tiles)
+- ✅ GoalsPage scorecard (StatusBadge + ProgressRing + GoalSparkline with target reference line)
+- ✅ `<SyncStatus>` covering all six POS states (not_connected / connecting / syncing / synced / stale / error)
+- ✅ `<CogsStaleBanner>` graceful USDA-price degradation (fresh/aging/stale/missing)
+- ✅ Layout-shaped skeletons across all Carafe pages
+- ✅ Action-oriented empty states with primary CTAs (costs→recipes, labor→shift, goals→new goal, saved-vendors→browse)
+- ✅ Accessibility hardening: global `:focus-visible` ring, MenuPage margin-% color-only fix, all icon-only buttons gain `aria-label`, contrast pairs documented
+- ✅ Carafe motion vocabulary (≤250ms, all in reduced-motion gate)
+- ✅ Vendor coverage polygons with zoom-aware Douglas-Peucker tier picker (backend extension to `VendorCoverageRepository::listForVendor` + new `<VendorCoveragePolygons>` component)
+- ✅ `<AffiliatedBadge>` accessible disclosure tooltip (keyboard + SR + Esc close)
+- ✅ ServesPanel skeleton + ≤16ms open-before-network
+- ✅ Vendor filter strip mobile collapse (Filters disclosure button)
+- ✅ Money-found PDF report (`PdfReportService::generateMoneyFound` + `GET /api/restaurants/{id}/reports/money-found.pdf`) — headline parity with `RoiService::monthlySummary`, methodology footnote cites COGS source + measurement window, Nunito with Helvetica fallback
+- ✅ "Download report" button on war-room ROI tile
+- ✅ Command palette extended to Carafe — globally mounted in App.tsx, surface-aware (restaurant switcher always, per-restaurant tab/sync/PDF/sandbox actions when inside, map items on /app), `g→r` chord pre-filters to restaurant switching
+- ✅ CarafeFirstRunWizard (3 steps: use-case → real address or sample → animated reveal with MoneyStat + sample recs); CarafeOnboardingGate fetches `/api/onboarding/state` and opens when `carafe_wizard_complete` unset AND zero restaurants
+
 ### Resolved in earlier 2026-05-24 batches (v4)
 All v4 punch-list resolutions remain resolved.
 
@@ -1697,6 +2043,7 @@ Each row below is a single deploy that bundled fixes from a focused review.
 | `6adff0f` | Places size search | Tile sized to area bbox, recursive tile, concentration label |
 | `dbae88a` | Demographics cache_version | Auto-invalidate when ingestion logic changes |
 | `9a6caf3` | AreaController number casting | Cast numeric columns out of PDO string-land |
+| `0c7e987` (v6 cycle) | **Carafe UX design batch (15 prompts, 42 files, 7,068 insertions)** | Carafe semantic tokens · MoneyStat/DollarDelta/FreshnessChip · unified RecommendationCard + optimistic accept/dismiss + undo toast · mobile-first war-room · RestaurantSwitcher + AppNav mobileContext · MenuEngineeringChart 2×2 color-blind-safe · CostsPage band-coded hero + OverpayList · LaborDemandChart · GoalsPage scorecard + ProgressRing + GoalSparkline · SyncStatus 6-state · CogsStaleBanner · layout-shaped skeletons · action-oriented empty states · a11y hardening + global `:focus-visible` · Carafe motion vocab ≤250ms · vendor coverage polygons zoom-aware + AffiliatedBadge disclosure · ServesPanel polish + filter-strip mobile collapse · money-found PDF (`PdfReportService::generateMoneyFound` + new GET route) · CommandPalette globally mounted, surface-aware, `g→r` chord · CarafeFirstRunWizard + real CarafeOnboardingGate |
 | `142b845` | Demographics histogram | Drop fake 0-bracket, bolder labels, fix census ingestion |
 | `4e5eff6` | AreaCreator UX | Stop reading as 'cut off' against navbar |
 | `a84b4e6` | AreaCreator UX | Close on Esc / click-outside, more space, bigger close button |
@@ -1727,12 +2074,17 @@ Each row below is a single deploy that bundled fixes from a focused review.
 
 ---
 
-*End of v5 audit. Next cycle should:*
-1. *Schedule the Carafe worker cron lines so campaigns don't depend on admin clicks*
-2. *Replace `cogs_benchmark` stub data with real USDA + GreenDock ingest pipelines*
-3. *Build Toast + Clover POS adapters past the OAuth scaffold*
-4. *Wire vendor saved-search alerts to the cron*
-5. *Build a dedicated vendor-claim approval tab in `/admin/carafe/review`*
-6. *Add an async retry queue for `supplier_leads` webhook delivery*
+*End of v6 audit. Next cycle should:*
+1. *Schedule the Carafe worker cron lines so campaigns don't depend on admin clicks (carryover from v5)*
+2. *Replace `cogs_benchmark` stub data with real USDA + GreenDock ingest pipelines — this unlocks honest overpay flags on CostsPage (currently Phase-1 framed against a 35% target; the visual shell stays the same when real data lands)*
+3. *Build Toast + Clover POS adapters past the OAuth scaffold (carryover from v5)*
+4. *Wire vendor saved-search alerts to the cron (carryover from v5)*
+5. *Build a dedicated vendor-claim approval tab in `/admin/carafe/review` (carryover from v5)*
+6. *Add an async retry queue for `supplier_leads` webhook delivery (carryover from v5)*
 7. *Write `import-statcan-da.php` + `ingest-demographics-history.php` (carryover from v4)*
 8. *Seed the sample project on the droplet so `cloneSample()` has source data (carryover from v4)*
+9. *Deploy `storage/fonts/Nunito.ttf` to the droplet — `PdfReportService::generateMoneyFound` already detects it via `\TCPDF_FONTS::addTTFfont` and gracefully falls back to Helvetica when absent. With the TTF in place, every Carafe PDF report uses the same Nunito as the rest of the app*
+10. *Bring the chunk size warning down — `index-*.js` is 902KB; should `build.rollupOptions.output.manualChunks` Carafe-specific code (RecommendationCard, MenuEngineeringChart, LaborDemandChart) into a separate chunk like the existing `charts` / `gmaps` splits*
+11. *Add `frontend/src/components/carafe/__tests__/` covering at minimum: `useRecommendationAction` (optimistic flip + rollback + undo), `MenuEngineeringChart` (quadrant assignment matches backend `classify`), `SyncStatus` (state derivation table), `CogsStaleBanner` (severity boundaries)*
+12. *Run an automated axe-style accessibility scan against the six core Carafe surfaces in CI — the manual audit found and fixed the obvious gaps; a scanner would catch the next ones earlier*
+13. *Multi-month money-found report — current `generateMoneyFound` accepts a `month` query param but the UI only exposes the current month. Add a month picker to the war-room Download-report flow*
