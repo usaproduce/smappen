@@ -54,4 +54,9 @@
 # send-weekly-digest — weekly Monday 13:00 UTC (= 9:00 AM US-East, 6:00 AM US-West).
 0 13 * * 1 /usr/bin/flock -n /tmp/carafe-weekly-digest.lock /usr/bin/php /var/www/smappen/scripts/send-weekly-digest.php >> /var/www/smappen/storage/logs/cron/digest.log 2>&1
 
+# refresh-cogs-benchmark — nightly USDA AMS + NASS + GreenDock ingest at 04:30 UTC.
+# Each adapter writes a cogs_ingest_batches row per batch; the worst-case
+# regional sweep is ~30 HTTP calls and finishes well under 5 minutes.
+30 4 * * * /usr/bin/flock -n /tmp/carafe-cogs-refresh.lock /usr/bin/php /var/www/smappen/scripts/refresh-cogs-benchmark.php --quiet >> /var/www/smappen/storage/logs/cron/cogs-refresh.log 2>&1
+
 # === END CARAFE CRON ===
