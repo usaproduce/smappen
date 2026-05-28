@@ -328,6 +328,8 @@ return function (Router $r) {
     $r->post('/api/onboarding/clone-sample',[OnboardingController::class, 'cloneSample'],$auth);
     $r->post('/api/onboarding/clone-sample-restaurant', [RestaurantController::class, 'cloneSample'], $auth);
     $r->post('/api/onboarding/activate',    [OnboardingController::class, 'activate'],   $auth);
+    $r->post('/api/onboarding/wizard-state', [OnboardingController::class, 'saveWizardState'], $auth);
+    $r->post('/api/onboarding/dismiss-wizard', [OnboardingController::class, 'dismissWizard'], $auth);
 
     // Alerts — generic threshold/event rules + delivery digest
     $r->get('/api/alerts',                  [AlertsController::class, 'index'],   $auth);
@@ -376,6 +378,7 @@ return function (Router $r) {
     $r->post('/api/recipes/{id}/ingredients',                   [MenuController::class, 'addIngredient'],         $auth);
     $r->delete('/api/recipe-ingredients/{id}',                  [MenuController::class, 'removeIngredient'],      $auth);
     $r->get('/api/ingredient-catalog',                          [MenuController::class, 'listIngredientCatalog'], $auth);
+    $r->get('/api/ingredient-catalog/coverage',                 [MenuController::class, 'ingredientCatalogCoverage'], $auth);
     $r->post('/api/restaurants/{id}/plate-costs/recompute',     [MenuController::class, 'recomputePlateCosts'],   $auth);
     $r->get('/api/restaurants/{id}/cogs/overpay',               [MenuController::class, 'overpayFlags'],          $auth);
     $r->post('/api/restaurants/{id}/recipes/paste/preview',     [MenuController::class, 'previewPaste'],          $auth);
@@ -483,6 +486,12 @@ return function (Router $r) {
     // Read-only summary derived from worker_heartbeats (mig 038). Powers
     // the /admin/carafe stale-worker banner.
     $r->get('/api/admin/carafe/cron-health',                    [CarafeAdminController::class, 'cronHealth'], $adminAuth);
+
+    // COGS benchmark admin — per-source freshness + recent anomalies +
+    // unmatched commodity suggestions + missing recipe ingredient_keys.
+    // Powers /admin/cogs (CogsHealthPage) and the per-price trace drill-in.
+    $r->get('/api/admin/cogs/health',                           [\App\Controllers\CogsAdminController::class, 'health'], $adminAuth);
+    $r->get('/api/admin/cogs/trace',                            [\App\Controllers\CogsAdminController::class, 'trace'],  $adminAuth);
 
     // Review queue (spec v3 §8) — admin surface for ambiguous dedupe matches
     // and low-confidence classifications. Two action namespaces under one

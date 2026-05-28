@@ -15,7 +15,12 @@ namespace App\SharedRef\CogsIngest;
  */
 final class IngestBatch
 {
-    /** @param IngestRow[] $rows */
+    /**
+     * @param IngestRow[] $rows
+     * @param array<int, array{commodity:string, variety:string, unit_hint:?string}> $unmatched
+     *        Upstream rows whose commodity/variety didn't map to any
+     *        ingredient_key — surfaced via cogs_unmatched_commodities.
+     */
     public function __construct(
         public readonly string  $adapter,        // 'usda_ams' | 'usda_nass' | 'greendock'
         public readonly string  $source,         // matches cogs_benchmark.source ENUM
@@ -28,6 +33,7 @@ final class IngestBatch
         public readonly ?int    $latencyMs   = null,
         public readonly bool    $ok          = true,
         public readonly ?string $errorMessage = null,
-        public readonly ?array  $notes       = null
+        public readonly ?array  $notes       = null,
+        public readonly array   $unmatched   = []
     ) {}
 }

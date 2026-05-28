@@ -158,19 +158,44 @@ class UsdaAmsAdapter implements CogsIngestAdapter
 
         $records = $json['results'];
         $rows = [];
-        $skippedNoMatch = 0;
         $skippedUnparseable = 0;
         $latestObserved = $asOfDate;
+        // Roll unmatched rows up per (commodity, variety) so we don't write
+        // 200 rows to cogs_unmatched_commodities per slug per night.
+        $unmatchedAgg = [];
 
         foreach ($records as $rec) {
             if (!is_array($rec)) { $skippedUnparseable++; continue; }
             $matched = $this->matchIngredient($rec, $commodityMap);
-            if ($matched === null) { $skippedNoMatch++; continue; }
+            if ($matched === null) {
+                $commodity = trim((string) ($rec['commodity'] ?? ''));
+                $variety   = trim((string) ($rec['variety']   ?? ''));
+                if ($commodity !== '') {
+                    $aggKey = $commodity . '|' . $variety;
+                    if (!isset($unmatchedAgg[$aggKey])) {
+                        $unmatchedAgg[$aggKey] = [
+                            'commodity' => $commodity,
+                            'variety'   => $variety,
+                            'unit_hint' => (string) ($rec['package'] ?? ''),
+                            'count'     => 0,
+                        ];
+                    }
+                    $unmatchedAgg[$aggKey]['count']++;
+                }
+                continue;
+            }
             $row = $this->buildRow($rec, $matched, $region, $label);
             if ($row === null) { $skippedUnparseable++; continue; }
             $rows[] = $row;
             if ($row->asOf > $latestObserved) $latestObserved = $row->asOf;
         }
+
+        // Filter to high-frequency unmatched so we don't spam the table with
+        // one-off oddities. Operators care about volume signals.
+        $unmatched = array_values(array_filter(
+            $unmatchedAgg,
+            fn($u) => $u['count'] >= 2
+        ));
 
         return new IngestBatch(
             adapter: $this->key(), source: $this->source(),
@@ -180,9 +205,11 @@ class UsdaAmsAdapter implements CogsIngestAdapter
             ok: true,
             notes: [
                 'records_in_response' => count($records),
-                'no_match'            => $skippedNoMatch,
+                'no_match'            => array_sum(array_column($unmatchedAgg, 'count')),
+                'unique_no_match'     => count($unmatchedAgg),
                 'unparseable'         => $skippedUnparseable,
             ],
+            unmatched: $unmatched,
         );
     }
 

@@ -42,6 +42,7 @@ import SeedCampaignsListPage     from './components/admin/SeedCampaignsListPage'
 import SeedCampaignBuilderPage   from './components/admin/SeedCampaignBuilderPage';
 import SeedCampaignDetailPage    from './components/admin/SeedCampaignDetailPage';
 import ReviewQueuePage           from './components/admin/ReviewQueuePage';
+import CogsHealthPage            from './components/admin/CogsHealthPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useAuthStore } from './stores/authStore';
 import { useTheme } from './hooks/useTheme';
@@ -99,6 +100,7 @@ export default function App() {
           <Route path="campaigns/new"                  element={<SeedCampaignBuilderPage />} />
           <Route path="campaigns/:id"                  element={<SeedCampaignDetailPage />} />
           <Route path="review"                         element={<ReviewQueuePage />} />
+          <Route path="cogs"                           element={<CogsHealthPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
