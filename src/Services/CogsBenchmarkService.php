@@ -124,9 +124,10 @@ class CogsBenchmarkService
      */
     public function freshness(?string $region = null): array
     {
+        // `rows` is a reserved word in MySQL 8; use `row_count` as the alias.
         $sql = "SELECT source, region, MAX(fetched_at) AS last_ingested_at,
                        MAX(as_of)      AS as_of,
-                       SUM(rows_inserted) AS rows
+                       SUM(rows_inserted) AS row_count
                   FROM cogs_ingest_batches
                  WHERE ok = 1
                    AND fetched_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
@@ -139,7 +140,15 @@ class CogsBenchmarkService
         $sql .= " GROUP BY source, region
                   ORDER BY last_ingested_at DESC";
         try {
-            return Database::getInstance()->fetchAll($sql, $params);
+            $rows = Database::getInstance()->fetchAll($sql, $params);
+            // Re-key row_count → rows for the API response shape (frontend
+            // type is CogsBenchmarkFreshness.rows). Done here rather than
+            // in SQL because `rows` is a reserved word in MySQL 8.
+            return array_map(function ($r) {
+                $r['rows'] = (int) ($r['row_count'] ?? 0);
+                unset($r['row_count']);
+                return $r;
+            }, $rows);
         } catch (\Throwable $e) {
             error_log('[cogs-benchmark] freshness() failed: ' . $e->getMessage());
             return [];
