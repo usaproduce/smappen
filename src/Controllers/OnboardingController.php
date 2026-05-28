@@ -71,17 +71,161 @@ class OnboardingController
 
     public function state(Request $request): void
     {
-        $row = Database::getInstance()->fetch(
-            'SELECT onboarding_flags, use_case, signed_up_at FROM users WHERE id = ?',
+        $db = Database::getInstance();
+        $row = $db->fetch(
+            'SELECT onboarding_flags, onboarding_state, use_case, signed_up_at, organization_id, created_at
+               FROM users WHERE id = ?',
             [$request->user['id']]
         );
         $flags = $row && $row['onboarding_flags'] ? json_decode($row['onboarding_flags'], true) : [];
         if (!is_array($flags)) $flags = [];
+        $state = $row && $row['onboarding_state'] ? json_decode($row['onboarding_state'], true) : [];
+        if (!is_array($state)) $state = [];
+
+        // Signal #19: invitee detection. If this user is not the org's first
+        // user, the wizard copy should acknowledge team context.
+        // Signal #19/gate: org's current restaurant count. Lets the frontend
+        // gate the wizard correctly even on shared workspaces.
+        $orgId = (string) ($row['organization_id'] ?? '');
+        $isFirstUser = true;
+        $orgRestaurantCount = 0;
+        if ($orgId !== '') {
+            $firstUserRow = $db->fetch(
+                'SELECT id FROM users WHERE organization_id = ? ORDER BY created_at ASC LIMIT 1',
+                [$orgId]
+            );
+            $isFirstUser = $firstUserRow && (string) $firstUserRow['id'] === (string) $request->user['id'];
+            $countRow = $db->fetch(
+                'SELECT COUNT(*) AS n FROM restaurants WHERE organization_id = ? AND archived_at IS NULL',
+                [$orgId]
+            );
+            $orgRestaurantCount = (int) ($countRow['n'] ?? 0);
+        }
+
         Response::success([
-            'flags' => $flags,
-            'use_case' => $row['use_case'] ?? null,
-            'signed_up_at' => $row['signed_up_at'] ?? null,
+            'flags'                => $flags,
+            'wizard_state'         => $state,
+            'use_case'             => $row['use_case'] ?? null,
+            'signed_up_at'         => $row['signed_up_at'] ?? null,
+            'is_org_first_user'    => $isFirstUser,
+            'org_restaurant_count' => $orgRestaurantCount,
         ]);
+    }
+
+    /**
+     * Save a wizard's resume state — opaque JSON, capped at 4KB so we don't
+     * let the frontend stash huge blobs. One namespace per wizard ('carafe',
+     * 'smappen', etc.) so they don't stomp each other.
+     *
+     *   POST /api/onboarding/wizard-state
+     *   { "wizard": "carafe", "state": { "step": 3, "useCase": "existing", ... } }
+     */
+    public function saveWizardState(Request $request): void
+    {
+        $b = $request->getBody() ?? [];
+        $wizard = $b['wizard'] ?? null;
+        $payload = $b['state'] ?? null;
+        if (!is_string($wizard) || !preg_match('/^[a-z_]{1,30}$/', $wizard)) {
+            Response::error('wizard (a-z_ ≤30 chars) required', 422);
+        }
+        if (!is_array($payload)) {
+            Response::error('state (object) required', 422);
+        }
+        $json = json_encode($payload);
+        if (strlen($json) > 4096) {
+            Response::error('state too large (>4KB)', 413);
+        }
+
+        $db = Database::getInstance();
+        $row = $db->fetch('SELECT onboarding_state FROM users WHERE id = ?', [$request->user['id']]);
+        $state = $row && $row['onboarding_state'] ? json_decode($row['onboarding_state'], true) : [];
+        if (!is_array($state)) $state = [];
+        $state[$wizard] = $payload;
+        $db->query(
+            'UPDATE users SET onboarding_state = ? WHERE id = ?',
+            [json_encode($state), $request->user['id']]
+        );
+        Response::success(['wizard_state' => $state]);
+    }
+
+    /**
+     * Atomic dismiss: stamp the flag, stamp activation_metrics.carafe_wizard_completed_at,
+     * record the exit path, and clear any resume state for the wizard.
+     *
+     *   POST /api/onboarding/dismiss-wizard
+     *   { "wizard": "carafe", "path": "completed_sample" }
+     *
+     * Valid paths (advisory — accepted as a free string capped at 40 chars):
+     *   skipped_step_1, skipped_step_2, skipped_step_3,
+     *   completed_sample, completed_real_manual, completed_real_pos
+     */
+    public function dismissWizard(Request $request): void
+    {
+        $b = $request->getBody() ?? [];
+        $wizard = $b['wizard'] ?? null;
+        $path   = $b['path']   ?? null;
+        if (!is_string($wizard) || !preg_match('/^[a-z_]{1,30}$/', $wizard)) {
+            Response::error('wizard (a-z_ ≤30 chars) required', 422);
+        }
+        if (!is_string($path) || $path === '' || mb_strlen($path) > 40) {
+            Response::error('path (1-40 chars) required', 422);
+        }
+
+        $db = Database::getInstance();
+        $row = $db->fetch('SELECT onboarding_flags, onboarding_state FROM users WHERE id = ?', [$request->user['id']]);
+        $flags = $row && $row['onboarding_flags'] ? json_decode($row['onboarding_flags'], true) : [];
+        if (!is_array($flags)) $flags = [];
+        $state = $row && $row['onboarding_state'] ? json_decode($row['onboarding_state'], true) : [];
+        if (!is_array($state)) $state = [];
+
+        // Stamp the flag with metadata so the re-pop heuristic (#4) can
+        // distinguish "completed" from "soft-skip 24h ago".
+        $isCompletion = str_starts_with($path, 'completed_');
+        $flagKey = $wizard . '_wizard_complete';
+        $flags[$flagKey] = true;
+
+        // Soft-skip bookkeeping: remember the dismissed-at + path so the
+        // gate can pop once more after 24h on a non-completion exit.
+        if (!$isCompletion) {
+            $state[$wizard . '_dismissed_at'] = gmdate('Y-m-d\TH:i:s\Z');
+            $state[$wizard . '_dismissed_path'] = $path;
+        } else {
+            // Completion clears any resume state — we're done with this wizard.
+            unset($state[$wizard]);
+            unset($state[$wizard . '_dismissed_at']);
+            unset($state[$wizard . '_dismissed_path']);
+        }
+        $db->query(
+            'UPDATE users SET onboarding_flags = ?, onboarding_state = ? WHERE id = ?',
+            [json_encode($flags), json_encode($state), $request->user['id']]
+        );
+
+        // Stamp activation metrics: completion stamps carafe_wizard_completed_at;
+        // path goes into carafe_wizard_dismissed_path regardless (we want
+        // funnel signal for both "completed_sample" AND "skipped_step_2").
+        if ($wizard === 'carafe') {
+            if ($isCompletion) {
+                self::stampActivation($request->user['id'], $request->user['organization_id'], 'carafe_wizard_completed_at');
+            }
+            self::recordDismissPath($request->user['id'], $request->user['organization_id'], $path);
+        }
+
+        Response::success(['flags' => $flags, 'wizard_state' => $state]);
+    }
+
+    /** Idempotent insert+update of the dismiss-path column. */
+    private static function recordDismissPath(string $userId, string $orgId, string $path): void
+    {
+        try {
+            Database::getInstance()->query(
+                'INSERT INTO activation_metrics (user_id, organization_id, signed_up_at, carafe_wizard_dismissed_path)
+                 VALUES (?, ?, NOW(), ?)
+                 ON DUPLICATE KEY UPDATE carafe_wizard_dismissed_path = VALUES(carafe_wizard_dismissed_path)',
+                [$userId, $orgId, $path]
+            );
+        } catch (\Throwable $e) {
+            error_log('recordDismissPath failed: ' . $e->getMessage());
+        }
     }
 
     /**
@@ -170,6 +314,10 @@ class OnboardingController
             'first_menu_synced'             => 'first_menu_synced_at',
             'first_recommendation_accepted' => 'first_recommendation_accepted_at',
             'first_dollar_measured'         => 'first_dollar_measured_at',
+            // Carafe wizard per-step funnel (added in migration 037)
+            'carafe_wizard_step_2'          => 'carafe_wizard_step_2_at',
+            'carafe_wizard_step_3'          => 'carafe_wizard_step_3_at',
+            'carafe_wizard_completed'       => 'carafe_wizard_completed_at',
         ][$step] ?? null;
         if (!$col) Response::error('Invalid step', 422);
         self::stampActivation($request->user['id'], $request->user['organization_id'], $col);

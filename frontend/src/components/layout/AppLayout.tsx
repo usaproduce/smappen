@@ -24,7 +24,8 @@ import { useUiPrefsStore } from '../../stores/uiPrefsStore';
 import { useShortcuts } from '../../hooks/useShortcuts';
 import { useDynamicFavicon } from '../../hooks/useDynamicFavicon';
 import { useViewUrl } from '../../hooks/useViewUrl';
-import { saveProjectSnapshot, downloadMapSnapshot } from '../../utils/mapExport';
+import { saveProjectSnapshot, downloadMapSnapshot, buildSnapshotFilename } from '../../utils/mapExport';
+import type { SnapshotTarget } from '../../utils/mapExport';
 import { SMAPPEN_MAP_STYLE_DARK, MAP_STYLE_PRESETS } from '../../utils/mapStyle';
 import { GOOGLE_MAPS_LIBRARIES } from '../../utils/mapsLoader';
 
@@ -58,6 +59,7 @@ export default function AppLayout() {
   useShortcuts({
     onCreateArea: () => setCreatorOpen(true),
     onSaveSnapshot: () => currentProject && saveProjectSnapshot(currentProject.id),
+    onScreenshot: () => screenshot('download'),
   });
   useDynamicFavicon();
   useViewUrl();
@@ -66,7 +68,7 @@ export default function AppLayout() {
   // every polygon + center pin currently visible. Hidden areas are filtered
   // out so the export both auto-fits to and renders only what's on screen.
   const { areas: projectAreas } = useProjectStore();
-  const screenshot = () => {
+  const screenshot = (target: SnapshotTarget = 'download') => {
     const mapState = useMapStore.getState();
     const visibleAreas = projectAreas.filter((a) => !mapState.hiddenAreaIds.has(a.id));
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -79,14 +81,30 @@ export default function AppLayout() {
     // Live viewport is the fallback when there's nothing to auto-fit to.
     const c = mapInstance?.getCenter();
     const z = mapInstance?.getZoom();
+
+    // Title block + filename pull from the active project so each export is
+    // self-identifying when pasted into a deck or email.
+    const projectName = currentProject?.name ?? null;
+    const now = new Date();
+    const dateLabel = now.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    const areaCount = visibleAreas.length;
+    const subtitle = `${dateLabel}${areaCount > 0 ? ` · ${areaCount} area${areaCount === 1 ? '' : 's'}` : ''}`;
+
     downloadMapSnapshot({
       areas: visibleAreas,
       heatmapFeatures: mapState.heatmapFeatures,
       showHeatmap: mapState.showHeatmap,
+      heatmapMeta: mapState.heatmapMeta,
+      heatmapMetric: mapState.heatmapMetric,
+      heatmapPaletteId: mapState.heatmapPaletteId,
       mapStyle,
       lat: c?.lat(),
       lng: c?.lng(),
       zoom: z ?? undefined,
+      title: projectName ?? 'Untitled map',
+      subtitle,
+      filename: buildSnapshotFilename(projectName),
+      target,
     });
   };
   const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY ?? '';
@@ -164,7 +182,7 @@ export default function AppLayout() {
               onImport={() => setImportOpen(true)}
               onOpenAdvanced={() => setAdvancedOpen((v) => !v)}
               advancedOpen={advancedOpen}
-              onScreenshot={screenshot}
+              onScreenshot={(target) => screenshot(target)}
             />
             {/* MiniMapToggle bottom-left preview was visually distracting +
                 duplicative with the toolbar's heatmap button. Removed —

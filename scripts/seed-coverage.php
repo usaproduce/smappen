@@ -45,11 +45,13 @@ $svc = new VendorGeometryService(
     new VendorCoverageRepository(),
 );
 
-WorkerHeartbeat::beat('seed-coverage', 'start',
+WorkerHeartbeat::start('seed-coverage',
     "batch-size=$batchSize" . ($simplifyOnly ? ' --simplify-only' : ''));
 
 $started = microtime(true);
 
+$covered = 0;
+$vendorCount = 0;
 if (!$simplifyOnly) {
     $db = Database::getInstance();
     // Vendors with at least one primary location but no coverage row yet.
@@ -64,7 +66,7 @@ if (!$simplifyOnly) {
          LIMIT ?",
         [$batchSize]
     );
-    $covered = 0;
+    $vendorCount = count($rows);
     foreach ($rows as $r) {
         try {
             $n = $svc->ensureCoverageForVendor((string) $r['id'], (string) ($r['type'] ?? ''));
@@ -75,7 +77,7 @@ if (!$simplifyOnly) {
     }
     if (!$quiet) {
         $elapsed = round(microtime(true) - $started, 1);
-        echo "Coverage created for $covered location(s) across " . count($rows) . " vendor(s) in {$elapsed}s\n";
+        echo "Coverage created for $covered location(s) across $vendorCount vendor(s) in {$elapsed}s\n";
     }
 }
 
@@ -85,3 +87,5 @@ if (!$quiet) {
     $elapsed = round(microtime(true) - $simStart, 1);
     echo "Simplified $simplified coverage row(s) in {$elapsed}s\n";
 }
+
+WorkerHeartbeat::finish('seed-coverage', "covered=$covered vendors=$vendorCount simplified=$simplified");

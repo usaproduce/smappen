@@ -7,10 +7,20 @@ export interface UsageToday {
   breakdown: { api_name: string; calls: number; cost_usd: number }[];
 }
 
+export interface UsageDay {
+  day: string;        // YYYY-MM-DD
+  cost_usd: number;
+  calls: number;
+}
+
 export const usageApi = {
   async today(): Promise<UsageToday> {
     const { data } = await api.get('/api/usage/today');
     return data.data;
+  },
+  async days(): Promise<UsageDay[]> {
+    const { data } = await api.get('/api/usage/days');
+    return (data.data?.days ?? []) as UsageDay[];
   },
   async pricing(): Promise<Record<string, number>> {
     const { data } = await api.get('/api/usage/pricing');

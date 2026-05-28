@@ -12,9 +12,9 @@ use App\Core\Config;
  * username and empty password.
  *
  * MARS API call shape (verified against the live API on 2026-05-27):
- *   GET https://marsapi.ams.usda.gov/services/v1.2/reports/{slug}/Report Details
+ *   GET https://marsapi.ams.usda.gov/services/v1.2/reports/{slug}/Report%%20Details
  *       ?q=report_begin_date=YYYY-MM-DD
- *   (the "/Report Details" section is required; the root URL returns
+ *   (the "/Report%%20Details" section is required; the root URL returns
  *    a header-only section with no commodity rows)
  *
  * One slug → one IngestBatch. fetchBatchesForRegion yields one batch

@@ -5,6 +5,7 @@ import { useUiPrefsStore } from '../stores/uiPrefsStore';
 interface Opts {
   onCreateArea?: () => void;
   onSaveSnapshot?: () => void;
+  onScreenshot?: () => void;
 }
 
 /**
@@ -16,7 +17,7 @@ interface Opts {
  *   Cmd/Ctrl+S — save a project snapshot (versioning)
  *   Del / ⌫    — delete the selected area (with confirm)
  */
-export function useShortcuts({ onCreateArea, onSaveSnapshot }: Opts = {}) {
+export function useShortcuts({ onCreateArea, onSaveSnapshot, onScreenshot }: Opts = {}) {
   const { selectedAreaId, selectArea } = useMapStore();
 
   useEffect(() => {
@@ -40,7 +41,10 @@ export function useShortcuts({ onCreateArea, onSaveSnapshot }: Opts = {}) {
         // otherwise the browser's "save page" dialog pops up over the app.
         // Silent no-op when un-wired is better UX than a "not configured" toast.
         e.preventDefault();
-        onSaveSnapshot?.();
+        // Shift+Cmd/Ctrl+S → map screenshot (visual export). The plain combo
+        // still goes to the project versioning snapshot.
+        if (e.shiftKey) onScreenshot?.();
+        else onSaveSnapshot?.();
         return;
       }
       if (!cmd && (e.key === 'd' || e.key === 'D')) {
@@ -91,5 +95,5 @@ export function useShortcuts({ onCreateArea, onSaveSnapshot }: Opts = {}) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedAreaId, selectArea, onCreateArea, onSaveSnapshot]);
+  }, [selectedAreaId, selectArea, onCreateArea, onSaveSnapshot, onScreenshot]);
 }

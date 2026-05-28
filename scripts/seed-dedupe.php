@@ -44,7 +44,7 @@ $quiet      = array_key_exists('quiet', $opts);
 
 $svc = new VendorDedupeService();
 
-WorkerHeartbeat::beat('seed-dedupe', "start", "batch-size=$batchSize" . ($skipMerges ? ' --skip-merges' : ''));
+WorkerHeartbeat::start('seed-dedupe', "batch-size=$batchSize" . ($skipMerges ? ' --skip-merges' : ''));
 
 $started = microtime(true);
 $counts  = $svc->dedupeNewLocations($batchSize);
@@ -54,6 +54,7 @@ if (!$quiet) {
     echo "Dedupe pass: scanned={$counts['scanned']} auto_merge={$counts['auto_merge']} review={$counts['review']} reject={$counts['reject']} in {$elapsed}s\n";
 }
 
+$merged = 0;
 if (!$skipMerges) {
     $started = microtime(true);
     $merged  = $svc->applyPendingAutoMerges();
@@ -62,3 +63,5 @@ if (!$skipMerges) {
         echo "Applied $merged auto-merge action(s) in {$elapsed}s\n";
     }
 }
+
+WorkerHeartbeat::finish('seed-dedupe', "scanned={$counts['scanned']} auto_merge={$counts['auto_merge']} review={$counts['review']} merged=$merged");

@@ -6,14 +6,7 @@ namespace App\Controllers;
 use App\Core\Database;
 use App\Core\Request;
 use App\Core\Response;
-use App\PrivateData\MenuItemRepository;
-use App\PrivateData\PlateCostRepository;
-use App\PrivateData\RecipeRepository;
-use App\PrivateData\RecommendationRepository;
 use App\PrivateData\RestaurantRepository;
-use App\Services\MenuEngineeringService;
-use App\Services\PlateCostService;
-use App\SharedRef\CogsBenchmarkRepository;
 
 /**
  * Restaurants — Carafe's primary entity. Org-scoped CRUD.
@@ -88,29 +81,57 @@ class RestaurantController
 
     /**
      * Clone the system-wide `is_sample = 1` restaurant into the caller's
-     * org so the first-run wizard's "Try with sample" path lands the user
-     * on a war-room with real plate costs and recommendations in <10s.
+     * org so the first-run wizard's "Try with sample" path can land the
+     * user on a war-room within a couple of seconds.
      *
-     * Re-runs PlateCostService + MenuEngineeringService against the new
-     * restaurant_id so the war-room shows dollar-quantified recs out of
-     * the box — we deliberately don't copy plate_costs / recommendations
-     * rows since they reference menu_item_ids that we just regenerated.
+     * Idempotent (#20): if the caller's org already has a Demo: * row,
+     *   return it instead of cloning a second copy. The wizard typically
+     *   hits this twice (once on click, once if the user reopens) and we
+     *   don't want a graveyard of duplicate Demo restaurants.
+     *
+     * Cuisine-aware (#12): body { cuisine: "italian" | "mexican" | "asian"
+     *   | "american" } picks the matching seeded sample. Falls back to the
+     *   first available sample if cuisine missing or unmatched.
+     *
+     * Engines run separately (#11): we deliberately DO NOT kick plate-cost
+     *   + recommendation runs inside this request. The frontend chains:
+     *      1. POST clone-sample-restaurant          → restaurant row only
+     *      2. POST /restaurants/{id}/plate-costs/recompute
+     *      3. POST /restaurants/{id}/recommendations/run
+     *   …with visible per-step progress. Lets the user see something
+     *   happening instead of a 2-3s spinner.
      */
     public function cloneSample(Request $request): void
     {
-        $sample = $this->repo->findSample();
+        $orgId = $request->user['organization_id'];
+        $b = $request->getBody() ?? [];
+        $cuisine = isset($b['cuisine']) && is_string($b['cuisine']) ? strtolower(trim($b['cuisine'])) : null;
+        if ($cuisine !== null && !preg_match('/^[a-z_]{1,30}$/', $cuisine)) {
+            $cuisine = null;
+        }
+
+        // Idempotency: short-circuit if the org already has a Demo restaurant.
+        $existing = $this->repo->findExistingDemoForOrg($orgId);
+        if ($existing) {
+            Response::success(
+                ['id' => $existing['id'], 'already_exists' => true, 'name' => $existing['name']],
+                'Demo restaurant already in your workspace',
+                200
+            );
+        }
+
+        $sample = $cuisine !== null ? $this->repo->findSampleByCuisine($cuisine) : null;
+        if (!$sample) $sample = $this->repo->findSample();
         if (!$sample) {
             Response::error(
-                'No sample restaurant configured on this server. Run scripts/seed-sample-restaurant.php on the droplet.',
+                'No sample restaurant configured on this server. Run scripts/seed-sample-restaurants-by-cuisine.php on the droplet.',
                 404
             );
         }
-        $orgId = $request->user['organization_id'];
 
         $db = Database::getInstance();
         $db->beginTransaction();
         try {
-            // 1. Restaurant row — copy address/coords/region, NOT is_sample.
             $newId = $this->repo->create($orgId, [
                 'name'     => 'Demo: ' . $sample['name'],
                 'address'  => $sample['address']  ?? null,
@@ -118,10 +139,11 @@ class RestaurantController
                 'lng'      => $sample['lng']      ?? null,
                 'timezone' => $sample['timezone'] ?? null,
                 'region'   => $sample['region']   ?? null,
+                'cuisine'  => $sample['cuisine']  ?? $cuisine,
                 'is_sample' => false,
             ]);
 
-            // 2. Recipes + ingredients (id remap so menu_item.recipe_id can rebind).
+            // Recipes + ingredients (id remap so menu_item.recipe_id rebinds).
             $recipeMap = [];
             $recipes = $db->fetchAll(
                 'SELECT id, name, notes FROM recipes WHERE restaurant_id = ?',
@@ -148,7 +170,6 @@ class RestaurantController
                 }
             }
 
-            // 3. Menu items — rebind recipe_id, drop pos_* columns (not connected).
             $items = $db->fetchAll(
                 'SELECT name, category, price_cents, recipe_id, is_active
                    FROM menu_items WHERE restaurant_id = ?',
@@ -176,24 +197,10 @@ class RestaurantController
             Response::error('Could not clone sample restaurant: ' . $e->getMessage(), 500);
         }
 
-        // 4. Kick the engines so the war-room renders dollar-quantified recs
-        // on first paint — that's the whole point of the wizard's final screen.
-        try {
-            $items = new MenuItemRepository();
-            $recipes = new RecipeRepository();
-            $plateCosts = new PlateCostRepository();
-            $bench = new CogsBenchmarkRepository();
-            $pc = new PlateCostService($items, $recipes, $plateCosts, $bench);
-            $pc->computeForRestaurant($newId, $orgId, $sample['region'] ?? 'US');
-
-            $engine = new MenuEngineeringService($items, $plateCosts, new RecommendationRepository());
-            $engine->recommendForRestaurant($newId, $orgId);
-        } catch (\Throwable $e) {
-            error_log('[cloneSample] engine kick failed: ' . $e->getMessage());
-            // Non-fatal — the restaurant is created either way; recs will be
-            // empty but the operator can recompute from the war-room.
-        }
-
-        Response::success(['id' => $newId], 'Sample restaurant cloned', 201);
+        Response::success(
+            ['id' => $newId, 'cuisine' => $sample['cuisine'] ?? null, 'name' => 'Demo: ' . $sample['name']],
+            'Sample restaurant cloned',
+            201
+        );
     }
 }

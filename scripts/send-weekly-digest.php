@@ -27,7 +27,7 @@ $db = Database::getInstance();
 
 $dry = in_array('--dry', $argv ?? [], true);
 
-WorkerHeartbeat::beat('send-weekly-digest', 'start', $dry ? '--dry' : '');
+WorkerHeartbeat::start('send-weekly-digest', $dry ? '--dry' : 'live');
 
 // Idempotency ledger — lightweight inline migration so this script is
 // self-contained. Removes the operator-step of "did you run the migration?"
@@ -45,7 +45,7 @@ $db->query('CREATE TABLE IF NOT EXISTS digest_sends (
   INDEX idx_digest_sends_restaurant_sent (restaurant_id, sent_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
 
-// Backfill rec_ids column on installs that pre-date migration 037.
+// Backfill rec_ids column on installs that pre-date migration 040.
 $has = $db->fetch(
     'SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
@@ -125,6 +125,8 @@ foreach ($rows as $row) {
 }
 
 echo "[" . date('c') . "] done. sent=$sent skipped=$skipped\n";
+
+WorkerHeartbeat::finish('send-weekly-digest', "sent=$sent skipped=$skipped" . ($dry ? ' DRY' : ''));
 
 // ─────────────────────────── helpers ───────────────────────────
 

@@ -78,10 +78,29 @@ class MenuEngineeringController
         $r = $this->verifyOwnedRestaurant($request);
         $status = $request->getQuery('status'); // null|'suggested'|'accepted'|...
         $rows = $this->recs->listByRestaurant($r['id'], $status ? (string) $status : null);
+
+        // Build menu_item_id → {name, price_cents} lookup so summarize()
+        // can render "raise Carbonara to $19.50". One query, not N.
+        $items = $this->itemsByIdFor($r['id']);
+
         foreach ($rows as &$row) {
             $row['payload'] = $row['payload'] ? json_decode($row['payload'], true) : null;
+            $mi = isset($row['menu_item_id']) ? ($items[(string) $row['menu_item_id']] ?? null) : null;
+            $row['narrative_short'] = \App\Services\MenuEngineeringService::summarize($row, $mi);
         }
         Response::success(['recommendations' => $rows]);
+    }
+
+    /** Lightweight map for the summary join — only fields the summarizer needs. */
+    private function itemsByIdFor(string $restaurantId): array
+    {
+        $rows = \App\Core\Database::getInstance()->fetchAll(
+            'SELECT id, name, price_cents FROM menu_items WHERE restaurant_id = ?',
+            [$restaurantId]
+        );
+        $map = [];
+        foreach ($rows as $r) $map[(string) $r['id']] = $r;
+        return $map;
     }
 
     public function accept(Request $request): void

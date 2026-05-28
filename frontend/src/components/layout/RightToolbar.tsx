@@ -14,7 +14,7 @@ interface Props {
   onImport: () => void;
   onOpenAdvanced?: () => void;
   advancedOpen?: boolean;
-  onScreenshot?: () => void;
+  onScreenshot?: (target: 'download' | 'clipboard') => void;
 }
 
 export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, advancedOpen, onScreenshot }: Props) {
@@ -121,7 +121,15 @@ export default function RightToolbar({ onCreateArea, onImport, onOpenAdvanced, a
           >
             <Sparkles size={20} />
           </button>
-          <button className="toolbar-btn" data-tooltip="Screenshot map" onClick={onScreenshot}>
+          {/* Plain click → download PNG. Shift+click → copy to clipboard,
+              so the user can paste straight into Slack / email / a deck
+              without round-tripping through the filesystem. The Shift hint
+              lives in the tooltip + the keyboard-shortcuts modal. */}
+          <button
+            className="toolbar-btn"
+            data-tooltip="Screenshot map (Shift+click to copy)"
+            onClick={(e) => onScreenshot?.(e.shiftKey ? 'clipboard' : 'download')}
+          >
             <Camera size={20} />
           </button>
           {/* NF5 — 3D tilt */}

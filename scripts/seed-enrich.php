@@ -51,7 +51,7 @@ $svc = new PlacesEnrichService();
 
 $argsNote = ($refreshTier !== null ? "refresh-tier=$refreshTier" :
              ($allCampaigns ? 'all-campaigns' : "campaign=$campaignId"));
-WorkerHeartbeat::beat('seed-enrich', 'start', $argsNote);
+WorkerHeartbeat::start('seed-enrich', $argsNote);
 
 if ($refreshTier !== null) {
     $started = microtime(true);
@@ -60,6 +60,7 @@ if ($refreshTier !== null) {
     if (!$quiet) {
         echo "tier-refresh $refreshTier: " . json_encode($tally) . " in {$elapsed}s\n";
     }
+    WorkerHeartbeat::finish('seed-enrich', "tier=$refreshTier " . json_encode($tally));
     exit(0);
 }
 
@@ -78,6 +79,7 @@ if ($allCampaigns) {
             echo "campaign {$c['id']} ({$c['name']}): " . json_encode($tally) . " in {$elapsed}s\n";
         }
     }
+    WorkerHeartbeat::finish('seed-enrich', "all-campaigns ran=" . count($running));
     exit(0);
 }
 
@@ -88,3 +90,4 @@ $elapsed = round(microtime(true) - $started, 1);
 if (!$quiet) {
     echo "campaign $campaignId: " . json_encode($tally) . " in {$elapsed}s\n";
 }
+WorkerHeartbeat::finish('seed-enrich', "campaign=$campaignId " . json_encode($tally));

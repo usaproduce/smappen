@@ -21,7 +21,7 @@ use App\Services\WorkerHeartbeat;
 
 Config::load(dirname(__DIR__));
 
-WorkerHeartbeat::beat('measure-roi', 'start');
+WorkerHeartbeat::start('measure-roi');
 
 $startedAt = date('c');
 echo "[$startedAt] measure-roi start\n";
@@ -29,3 +29,5 @@ $svc = new RoiService(new RecommendationRepository(), new PosSalesRepository());
 $count = $svc->measurePending();
 echo "  measured: $count\n";
 echo "[" . date('c') . "] done\n";
+
+WorkerHeartbeat::finish('measure-roi', "measured=$count");

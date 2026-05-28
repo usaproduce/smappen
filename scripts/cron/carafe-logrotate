@@ -1,0 +1,20 @@
+# Carafe cron-pipeline log rotation.
+# Installed to /etc/logrotate.d/carafe-cron by scripts/install-cron.sh.
+# Weekly rotation, 4 weeks retained, compressed; matches the standard
+# Ubuntu logrotate cadence so it gets picked up by /etc/cron.daily/logrotate
+# without any further setup.
+/var/www/smappen/storage/logs/cron/*.log
+/var/www/smappen/storage/logs/cron-alerts.log
+{
+    # storage/logs is owned by www-data so that PHP-FPM can write to it.
+    # Without su, logrotate refuses to rotate "world/group-writable" dirs.
+    su www-data www-data
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 www-data www-data
+    sharedscripts
+}

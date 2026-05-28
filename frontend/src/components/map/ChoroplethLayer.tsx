@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
-  const { mapInstance, heatmapLevel, heatmapPaletteId, setHoveredHeatmap, setHeatmapLoading, setHeatmapFeatures } = useMapStore();
+  const { mapInstance, heatmapLevel, heatmapPaletteId, setHoveredHeatmap, setHeatmapLoading, setHeatmapFeatures, setHeatmapMeta } = useMapStore();
   const dataLayerRef = useRef<google.maps.Data | null>(null);
   const rangeRef = useRef<{ min: number; max: number; breaks?: number[] }>({ min: 0, max: 1 });
   const fetchTokenRef = useRef(0);
@@ -87,6 +87,9 @@ export default function ChoroplethLayer({ metric, onMetaChange }: Props) {
           })));
         }
         onMetaChange?.(res.meta);
+        // Mirror meta to the store so the screenshot composite can render
+        // an embedded legend (min/max/breaks/metric) without prop drilling.
+        setHeatmapMeta(res.meta);
 
         // Once the user idles for ~1s, warm the cache with surrounding viewports.
         if (prefetchTimerRef.current) window.clearTimeout(prefetchTimerRef.current);

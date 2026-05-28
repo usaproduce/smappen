@@ -53,6 +53,10 @@ interface MapState {
    *  composite to draw the heatmap polygons on top of the static-map base
    *  so the captured PNG actually includes the heatmap the user sees. */
   heatmapFeatures: { geometry: any; value: number | null; color: string }[] | null;
+  /** Meta from the latest heatmap fetch (min/max/breaks/metric). Mirrored
+   *  out of MapCanvas local state so the screenshot composite can render
+   *  an embedded legend without prop-drilling. */
+  heatmapMeta: import('../api/heatmap').HeatmapResponse['meta'] | null;
   setCenter: (c: { lat: number; lng: number }) => void;
   setZoom: (z: number) => void;
   selectArea: (id: string | null) => void;
@@ -79,6 +83,7 @@ interface MapState {
   toggleAreaVisibility: (id: string) => void;
   isAreaHidden: (id: string) => boolean;
   setHeatmapFeatures: (features: { geometry: any; value: number | null; color: string }[] | null) => void;
+  setHeatmapMeta: (meta: import('../api/heatmap').HeatmapResponse['meta'] | null) => void;
   /** Bumped by the Layers tab whenever a custom layer is created, updated, or
    *  deleted — CustomLayerMarkers watches this to know when to refetch. */
   customLayersVersion: number;
@@ -120,6 +125,7 @@ export const useMapStore = create<MapState>((set, get) => ({
     ? new Set(JSON.parse(localStorage.getItem('smappen_hidden_areas') || '[]'))
     : new Set<string>(),
   heatmapFeatures: null,
+  heatmapMeta: null,
   setCenter: (center) => set({ center }),
   setZoom: (zoom) => set({ zoom }),
   selectArea: (id) => set({ selectedAreaId: id }),
@@ -163,6 +169,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   }),
   isAreaHidden: (id) => get().hiddenAreaIds.has(id),
   setHeatmapFeatures: (heatmapFeatures) => set({ heatmapFeatures }),
+  setHeatmapMeta: (heatmapMeta) => set({ heatmapMeta }),
   customLayersVersion: 0,
   bumpCustomLayers: () => set((s) => ({ customLayersVersion: s.customLayersVersion + 1 })),
   editingAreaId: null,

@@ -244,6 +244,53 @@ class MenuEngineeringService
         return $created;
     }
 
+    /**
+     * Short dollar-headlined sentence for compact display (wizard step 4,
+     * digest emails, war-room top-move chip). One line, ≤80 chars typical.
+     * Built from rec.payload + the menu item — no LLM call, deterministic.
+     *
+     *   "$420/mo · raise Carbonara to $19.50 (margin 41% → 65%)"
+     *   "$180/mo · cut Caprese — it's a low-margin, low-volume dog"
+     *
+     * Falls back gracefully if payload is missing fields (older recs).
+     */
+    public static function summarize(array $rec, ?array $menuItem = null): string
+    {
+        $name = $menuItem['name'] ?? 'this item';
+        $dollarsMo = isset($rec['dollar_estimate_cents']) && $rec['dollar_estimate_cents'] > 0
+            ? '$' . number_format($rec['dollar_estimate_cents'] / 100, 0) . '/mo'
+            : null;
+        $payload = is_array($rec['payload'] ?? null) ? $rec['payload'] : [];
+
+        $body = match ($rec['kind'] ?? '') {
+            'price_raise' => self::summarizePriceRaise($name, $payload),
+            'price_lower' => sprintf('lower %s by %s — volume should lift',
+                $name,
+                isset($payload['price_delta_cents']) ? '$' . number_format(abs($payload['price_delta_cents']) / 100, 2) : 'a notch'),
+            'reposition'  => sprintf("feature %s — it's a star (high margin, high volume)", $name),
+            'reprice'     => sprintf('reprice %s — high margin but slow; small cut could lift covers', $name),
+            'cut'         => sprintf("cut %s — it's a dog (low margin, low volume)", $name),
+            default       => $name,
+        };
+        return $dollarsMo ? "$dollarsMo · $body" : $body;
+    }
+
+    private static function summarizePriceRaise(string $name, array $payload): string
+    {
+        $cur = isset($payload['current_price_cents']) ? '$' . number_format($payload['current_price_cents'] / 100, 2) : null;
+        $new = isset($payload['recommended_price_cents']) ? '$' . number_format($payload['recommended_price_cents'] / 100, 2) : null;
+        $curMargin = isset($payload['current_margin_pct']) ? (int) round($payload['current_margin_pct'] * 100) : null;
+        $goalMargin = isset($payload['target_margin_pct']) ? (int) round($payload['target_margin_pct'] * 100) : null;
+
+        if ($new !== null && $curMargin !== null && $goalMargin !== null) {
+            return sprintf('raise %s to %s (margin %d%% → %d%%)', $name, $new, $curMargin, $goalMargin);
+        }
+        if ($new !== null && $cur !== null) {
+            return sprintf('raise %s from %s to %s', $name, $cur, $new);
+        }
+        return sprintf('raise %s — margin is below 60%% floor', $name);
+    }
+
     private static function layoutNarrative(array $it, string $kind): string
     {
         $name = (string) $it['name'];

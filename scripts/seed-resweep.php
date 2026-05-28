@@ -52,10 +52,11 @@ if ($campaignId === null && !$allCampaigns && $skipRecovery) {
 
 $svc = new SeedDeltaService();
 
-WorkerHeartbeat::beat('seed-resweep', 'start',
+WorkerHeartbeat::start('seed-resweep',
     ($campaignId ? "campaign=$campaignId " : ($allCampaigns ? 'all-campaigns ' : '')) .
     "max-age-days=$maxAgeDays stuck-after=$stuckAfter");
 
+$recovered = 0;
 if (!$skipRecovery) {
     $recovered = $svc->recoverStuckTiles($stuckAfter);
     if (!$quiet) {
@@ -66,13 +67,14 @@ if (!$skipRecovery) {
 if ($campaignId !== null) {
     $n = $svc->scheduleResweepForCampaign((string) $campaignId, $maxAgeDays);
     if (!$quiet) echo "Re-queued $n tile(s) on campaign $campaignId (older than {$maxAgeDays}d)\n";
+    WorkerHeartbeat::finish('seed-resweep', "recovered=$recovered requeued=$n");
     exit(0);
 }
 
+$total = 0;
 if ($allCampaigns) {
     $cs = new SeedCampaignService();
     $rows = $cs->index(200, 0);
-    $total = 0;
     foreach ($rows as $c) {
         if (!in_array($c['status'] ?? '', ['running','done','paused','approved'], true)) continue;
         $n = $svc->scheduleResweepForCampaign($c['id'], $maxAgeDays);
@@ -83,3 +85,5 @@ if ($allCampaigns) {
     }
     if (!$quiet) echo "Total re-queued: $total\n";
 }
+
+WorkerHeartbeat::finish('seed-resweep', "recovered=$recovered requeued=$total");

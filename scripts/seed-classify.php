@@ -32,7 +32,7 @@ $batchSize  = max(1, (int) ($opts['batch-size'] ?? 5000));
 $quiet      = array_key_exists('quiet', $opts);
 
 $svc     = new VendorClassifierService();
-WorkerHeartbeat::beat('seed-classify', "start", "batch-size=$batchSize");
+WorkerHeartbeat::start('seed-classify', "batch-size=$batchSize");
 $started = microtime(true);
 $counts  = $svc->classifyPending($batchSize);
 $elapsed = round(microtime(true) - $started, 1);
@@ -40,3 +40,5 @@ $elapsed = round(microtime(true) - $started, 1);
 if (!$quiet) {
     echo "Classified {$counts['total']} vendor(s): auto={$counts['auto']} review={$counts['review']} in {$elapsed}s\n";
 }
+
+WorkerHeartbeat::finish('seed-classify', "classified={$counts['total']} auto={$counts['auto']} review={$counts['review']}");

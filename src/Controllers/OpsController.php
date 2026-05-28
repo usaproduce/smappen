@@ -273,4 +273,155 @@ class OpsController
         );
         Response::success([]);
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Dashboard overview — one round-trip for the landing page.
+    // Returns aggregates the dashboard needs so the page paints with 3
+    // requests (projects, activity, this) instead of N+1 area fetches.
+    // ─────────────────────────────────────────────────────────────────────
+
+    public function dashboardStats(Request $request): void
+    {
+        $org = $request->user['organization_id'];
+        $uid = $request->user['id'];
+        $db = Database::getInstance();
+
+        $proj = $db->fetch(
+            'SELECT COUNT(*) AS c FROM projects WHERE organization_id = ?',
+            [$org]
+        );
+        $totalProjects = (int)($proj['c'] ?? 0);
+
+        $areas = $db->fetch(
+            'SELECT COUNT(*) AS c
+               FROM areas a JOIN projects p ON p.id = a.project_id
+              WHERE p.organization_id = ?',
+            [$org]
+        );
+        $totalAreas = (int)($areas['c'] ?? 0);
+
+        $byType = $db->fetchAll(
+            'SELECT a.area_type AS k, COUNT(*) AS c
+               FROM areas a JOIN projects p ON p.id = a.project_id
+              WHERE p.organization_id = ?
+              GROUP BY a.area_type',
+            [$org]
+        );
+        $areasByType = [];
+        foreach ($byType as $r) $areasByType[$r['k']] = (int)$r['c'];
+
+        $byMode = $db->fetchAll(
+            'SELECT COALESCE(a.travel_mode, "—") AS k, COUNT(*) AS c
+               FROM areas a JOIN projects p ON p.id = a.project_id
+              WHERE p.organization_id = ? AND a.travel_mode IS NOT NULL
+              GROUP BY a.travel_mode',
+            [$org]
+        );
+        $travelMode = [];
+        foreach ($byMode as $r) $travelMode[$r['k']] = (int)$r['c'];
+
+        // Pull demographics_cache JSON for ALL areas in the org. The cache
+        // is a small (~2KB) document per area; even at 1000 areas this is
+        // ~2MB streamed to PHP and aggregated in memory once per page load.
+        // Worth it to avoid teaching MySQL to do JSON math.
+        $cached = $db->fetchAll(
+            'SELECT a.id, a.name, a.demographics_cache, p.name AS project_name
+               FROM areas a JOIN projects p ON p.id = a.project_id
+              WHERE p.organization_id = ? AND a.demographics_cache IS NOT NULL',
+            [$org]
+        );
+        $totalPop = 0;
+        $totalSqKm = 0.0;
+        $incomeSum = 0; $incomeN = 0;
+        $densSum = 0.0; $densN = 0;
+        $unempSum = 0.0; $unempN = 0;
+        $topAreas = [];
+        foreach ($cached as $row) {
+            $d = json_decode($row['demographics_cache'] ?? 'null', true);
+            if (!is_array($d)) continue;
+            $pop = (int)($d['population']['total'] ?? 0);
+            $totalPop += $pop;
+            $sq = (float)($d['meta']['area_sq_km'] ?? 0);
+            $totalSqKm += $sq;
+            $inc = $d['income']['median_household'] ?? null;
+            if (is_numeric($inc) && $inc > 0) { $incomeSum += (float)$inc; $incomeN++; }
+            $den = $d['population']['density_per_sq_km'] ?? null;
+            if (is_numeric($den) && $den > 0) { $densSum += (float)$den; $densN++; }
+            $un = $d['employment']['unemployment_rate'] ?? null;
+            if (is_numeric($un)) { $unempSum += (float)$un; $unempN++; }
+            $topAreas[] = [
+                'id' => $row['id'],
+                'name' => $row['name'],
+                'project_name' => $row['project_name'],
+                'population' => $pop,
+                'area_sq_km' => $sq,
+            ];
+        }
+        usort($topAreas, fn($a, $b) => $b['population'] <=> $a['population']);
+        $topAreas = array_slice($topAreas, 0, 5);
+
+        $folders = $db->fetch(
+            'SELECT COUNT(*) AS c FROM folders f
+               JOIN projects p ON p.id = f.project_id
+              WHERE p.organization_id = ?',
+            [$org]
+        );
+        $reports = $db->fetch(
+            'SELECT COUNT(*) AS c FROM reports r
+               JOIN areas a ON a.id = r.area_id
+               JOIN projects p ON p.id = a.project_id
+              WHERE p.organization_id = ?',
+            [$org]
+        );
+        $shared = $db->fetch(
+            'SELECT COUNT(*) AS c FROM projects
+              WHERE organization_id = ? AND is_shared = 1',
+            [$org]
+        );
+
+        // Saved comparisons & analog searches — these are quick-link surfaces
+        // on the dashboard; the count tells the user they exist without
+        // making the request itself.
+        $comparisons = $db->fetch(
+            'SELECT COUNT(*) AS c FROM saved_comparisons WHERE organization_id = ?',
+            [$org]
+        );
+        $searches = $db->fetch(
+            'SELECT COUNT(*) AS c FROM saved_analog_searches WHERE organization_id = ?',
+            [$org]
+        );
+
+        // Recently updated areas — for "where you were working" surface.
+        $recentAreas = $db->fetchAll(
+            'SELECT a.id, a.name, a.area_type, a.updated_at,
+                    p.id AS project_id, p.name AS project_name
+               FROM areas a JOIN projects p ON p.id = a.project_id
+              WHERE p.organization_id = ?
+              ORDER BY a.updated_at DESC LIMIT 5',
+            [$org]
+        );
+
+        Response::success([
+            'totals' => [
+                'projects' => $totalProjects,
+                'areas' => $totalAreas,
+                'population' => $totalPop,
+                'area_sq_km' => round($totalSqKm, 1),
+                'folders' => (int)($folders['c'] ?? 0),
+                'reports' => (int)($reports['c'] ?? 0),
+                'shared_projects' => (int)($shared['c'] ?? 0),
+                'saved_comparisons' => (int)($comparisons['c'] ?? 0),
+                'saved_searches' => (int)($searches['c'] ?? 0),
+            ],
+            'averages' => [
+                'median_income' => $incomeN ? (int)round($incomeSum / $incomeN) : null,
+                'density_per_sq_km' => $densN ? (float)round($densSum / $densN, 1) : null,
+                'unemployment_rate' => $unempN ? (float)round($unempSum / $unempN, 2) : null,
+            ],
+            'areas_by_type' => $areasByType,
+            'travel_mode' => $travelMode,
+            'top_areas' => $topAreas,
+            'recent_areas' => $recentAreas,
+        ]);
+    }
 }

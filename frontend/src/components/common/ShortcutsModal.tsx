@@ -16,6 +16,7 @@ const GROUPS: { title: string; rows: { keys: string[]; label: string }[] }[] = [
       { keys: ['⌘/Ctrl', 'Z'], label: 'Undo last action' },
       { keys: ['⇧⌘/Ctrl', 'Z'], label: 'Redo' },
       { keys: ['⌘/Ctrl', 'S'], label: 'Save project snapshot' },
+      { keys: ['⇧⌘/Ctrl', 'S'], label: 'Screenshot the map (download PNG)' },
     ],
   },
   {
@@ -23,7 +24,11 @@ const GROUPS: { title: string; rows: { keys: string[]; label: string }[] }[] = [
     rows: [
       { keys: ['Esc'], label: 'Deselect / close panel' },
       { keys: ['D'], label: 'Open area creator' },
+      { keys: ['B'], label: 'Toggle population heatmap' },
+      { keys: ['F'], label: 'Favorites-only filter' },
+      { keys: ['L'], label: 'Toggle polygon labels' },
       { keys: ['Del', 'Backspace'], label: 'Delete selected area' },
+      { keys: ['⇧', 'click camera'], label: 'Copy screenshot to clipboard' },
     ],
   },
   {

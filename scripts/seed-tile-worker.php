@@ -39,8 +39,10 @@ $started = microtime(true);
 $processed = 0;
 $idleSleeps = 0;
 
+WorkerHeartbeat::start('seed-tile-worker', "max-tiles=$maxTiles max-seconds=$maxSeconds");
+
 while ($processed < $maxTiles && (microtime(true) - $started) < $maxSeconds) {
-    WorkerHeartbeat::beat('seed-tile-worker', "processed=$processed", "max-tiles=$maxTiles max-seconds=$maxSeconds");
+    WorkerHeartbeat::beat('seed-tile-worker', "processed=$processed");
     try {
         $r = $worker->runOne();
     } catch (\Throwable $e) {
@@ -83,3 +85,5 @@ if (!$quiet) {
     $elapsed = round(microtime(true) - $started, 1);
     echo "Processed $processed tile(s) in {$elapsed}s.\n";
 }
+
+WorkerHeartbeat::finish('seed-tile-worker', "processed=$processed");

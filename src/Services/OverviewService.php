@@ -111,7 +111,7 @@ class OverviewService
         $row = Database::getInstance()->fetch(
             'SELECT COUNT(DISTINCT pos_order_id) AS covers,
                     COALESCE(SUM(gross_cents), 0) AS revenue_cents,
-                    COUNT(*)                       AS lines,
+                    COUNT(*)                       AS `lines`,
                     MAX(sold_at)                   AS last_sale_at
                FROM pos_sales
               WHERE restaurant_id = ?
