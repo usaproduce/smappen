@@ -12,7 +12,6 @@ import ImportWizard from '../data/ImportWizard';
 import AdvancedPanel from '../advanced/AdvancedPanel';
 import TimeMachinePanel from '../map/TimeMachinePanel';
 import ShortcutsModal from '../common/ShortcutsModal';
-import CommandPalette from '../common/CommandPalette';
 import OnboardingChecklist from '../common/OnboardingChecklist';
 import WhatsNewModal from '../common/WhatsNewModal';
 import FirstRunWizard from '../onboarding/FirstRunWizard';
@@ -289,7 +288,9 @@ export default function AppLayout() {
         </ErrorBoundary>
       )}
       <ShortcutsModal />
-      <CommandPalette />
+      {/* CommandPalette is now mounted globally in App.tsx so Carafe
+          surfaces get it too. Keeping the import unused here would just
+          tree-shake away — left removed for clarity. */}
       <OnboardingChecklist />
       <WhatsNewModal />
       {wizardOpen && isLoaded && (

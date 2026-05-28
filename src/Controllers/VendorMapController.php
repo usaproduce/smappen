@@ -122,8 +122,11 @@ class VendorMapController
         $listings   = $this->vendors->listingsFor($id);
 
         foreach ($coverage as &$c) {
-            $c['geometry'] = $c['geom_json'] ? json_decode($c['geom_json'], true) : null;
-            unset($c['geom_json']);
+            $c['geometry']      = $c['geom_json']       ? json_decode($c['geom_json'], true)       : null;
+            $c['geometry_100m'] = $c['geom_100m_json']  ? json_decode($c['geom_100m_json'], true)  : null;
+            $c['geometry_1km']  = $c['geom_1km_json']   ? json_decode($c['geom_1km_json'], true)   : null;
+            $c['geometry_10km'] = $c['geom_10km_json']  ? json_decode($c['geom_10km_json'], true)  : null;
+            unset($c['geom_json'], $c['geom_100m_json'], $c['geom_1km_json'], $c['geom_10km_json']);
         }
 
         Response::success([

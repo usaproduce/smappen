@@ -34,8 +34,10 @@ function bestPinPosition(area: Area): { lat: number; lng: number } | null {
 }
 
 function pinSvg(color: string): string {
+  // viewBox is padded 1px on each side so the 2px center-aligned stroke
+  // doesn't get clipped at the tip/edges (path touches 0/22/28).
   const svg = `
-<svg xmlns="http://www.w3.org/2000/svg" width="22" height="28" viewBox="0 0 22 28">
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="30" viewBox="-1 -1 24 30">
   <path d="M11 0C5 0 0 4.5 0 10.3 0 18 11 28 11 28s11-10 11-17.7C22 4.5 17 0 11 0z"
         fill="${color}" stroke="#fff" stroke-width="2"/>
   <circle cx="11" cy="10.5" r="3.2" fill="#fff"/>
@@ -51,8 +53,8 @@ function PinMarker({ area, onClick }: { area: Area; onClick: () => void }) {
     if (typeof google === 'undefined' || !google.maps) return undefined;
     return {
       url: pinSvg(area.fill_color || '#7848BB'),
-      scaledSize: new google.maps.Size(22, 28),
-      anchor: new google.maps.Point(11, 28),
+      scaledSize: new google.maps.Size(24, 30),
+      anchor: new google.maps.Point(12, 29),
     };
   }, [area.fill_color]);
 

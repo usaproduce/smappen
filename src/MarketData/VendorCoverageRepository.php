@@ -38,10 +38,19 @@ class VendorCoverageRepository
 
     public function listForVendor(string $vendorId): array
     {
+        // Pull the full geom plus the three Douglas-Peucker tiers populated
+        // by VendorGeometryService::reSimplify. Frontend picks a tier by
+        // map zoom: 100m for street, 1km for city, 10km for metro. When a
+        // simplified column is NULL (older row that hasn't been resimplified
+        // yet) the frontend falls back to the next available tier.
         return Database::getInstance()->fetchAll(
-            'SELECT id, vendor_id, location_id, coverage_type, ST_AsGeoJSON(geom, 4) AS geom_json,
+            "SELECT id, vendor_id, location_id, coverage_type,
+                    ST_AsGeoJSON(geom, 4)             AS geom_json,
+                    ST_AsGeoJSON(simplified_100m, 4)  AS geom_100m_json,
+                    ST_AsGeoJSON(simplified_1km, 4)   AS geom_1km_json,
+                    ST_AsGeoJSON(simplified_10km, 4)  AS geom_10km_json,
                     travel_mode, travel_minutes, radius_miles, confidence, source
-               FROM vendor_coverage WHERE vendor_id = ?',
+               FROM vendor_coverage WHERE vendor_id = ?",
             [$vendorId]
         );
     }

@@ -193,6 +193,34 @@ class MenuController
         Response::success(['flags' => $rows, 'note' => 'Phase 1: surfaces items with computed cost. Full overpay-vs-invoice comparison ships when restaurant invoice ingestion lands.']);
     }
 
+    /**
+     * Carafe "Money found this month" PDF — spec §5.10. Streams the PDF
+     * inline so the browser triggers a download. Hero figure must equal
+     * RoiService::monthlySummary exactly (the PDF and the war-room ROI
+     * tile read from the same method) — see PdfReportService::generateMoneyFound.
+     */
+    public function moneyFoundReport(Request $request): void
+    {
+        $r = $this->verifyOwnedRestaurant($request);
+        $month = $request->getQuery('month'); // optional ISO month — defaults to this month
+        try {
+            $svc = new \App\Services\PdfReportService();
+            $path = $svc->generateMoneyFound((string) $r['id'], $month ? ['month' => (string) $month] : []);
+            $monthLabel = $month
+                ? date('Y-m', strtotime((string) $month))
+                : date('Y-m');
+            $slug = preg_replace('/[^a-z0-9-]+/i', '-', (string) ($r['name'] ?? 'restaurant'));
+            $fname = strtolower($slug) . '-carafe-money-found-' . $monthLabel . '.pdf';
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: attachment; filename="' . $fname . '"');
+            readfile($path);
+            exit;
+        } catch (\Throwable $e) {
+            error_log('Money-found PDF failed: ' . $e->getMessage());
+            Response::error('PDF generation failed', 500);
+        }
+    }
+
     public function recomputePlateCosts(Request $request): void
     {
         $r = $this->verifyOwnedRestaurant($request);

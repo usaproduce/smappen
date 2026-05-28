@@ -48,7 +48,22 @@ export interface VendorDetail {
     last_verified_at: string | null;
   };
   locations: Array<{ id: string; label: string | null; address: string | null; lat: number; lng: number; phone: string | null; is_primary: number; source: string }>;
-  coverage: Array<{ id: string; location_id: string; coverage_type: string; geometry: any; radius_miles: number | null; confidence: number; source: string }>;
+  coverage: Array<{
+    id: string;
+    location_id: string;
+    coverage_type: string;
+    /** Full-precision GeoJSON geometry (Polygon or MultiPolygon). */
+    geometry: any;
+    /** Douglas-Peucker simplified tiers. Null if the row pre-dates the
+     *  simplification migration; frontend falls back to the next available
+     *  level (or `geometry`) so old data still renders. */
+    geometry_100m?: any | null;
+    geometry_1km?: any | null;
+    geometry_10km?: any | null;
+    radius_miles: number | null;
+    confidence: number;
+    source: string;
+  }>;
   categories: Array<{ category: string; source: string }>;
   listings: Array<{ category: string; region: string | null; service_radius_mi: number | null; min_order_cents: number | null; notes: string | null; source: string }>;
 }

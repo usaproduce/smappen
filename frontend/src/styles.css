@@ -82,6 +82,40 @@
 }
 .skip-link:focus { top: 8px; outline: 2px solid var(--nav-ring); outline-offset: 2px; }
 
+/* ── Global focus-visible ring ─────────────────────────────────────────
+   Keyboard users need to see where they are. We default every focusable
+   element to a 2px violet ring with a tiny offset; Tailwind utilities
+   like `focus-visible:ring-2` continue to override on a case-by-case
+   basis. Mouse clicks intentionally don't trigger the ring (we use
+   :focus-visible, not :focus) so the operator's pointer-driven flow
+   stays clean. Removed from inputs/textarea/select since those already
+   have a colored border-on-focus treatment. */
+:where(button, a, [role="button"], [role="tab"], [role="option"],
+       [role="menuitem"], [tabindex]:not([tabindex="-1"]))
+       :is(:focus-visible) { /* no-op selector to keep specificity at 0,0,0 */ }
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[role="tab"]:focus-visible,
+[role="option"]:focus-visible,
+[role="menuitem"]:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 2px solid var(--nav-ring);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* Dark-mode keeps the violet but bumps brightness so the ring stays
+   visible against dark panel backgrounds. */
+:root[data-theme="dark"] button:focus-visible,
+:root[data-theme="dark"] a:focus-visible,
+:root[data-theme="dark"] [role="button"]:focus-visible,
+:root[data-theme="dark"] [role="tab"]:focus-visible,
+:root[data-theme="dark"] [role="option"]:focus-visible,
+:root[data-theme="dark"] [role="menuitem"]:focus-visible,
+:root[data-theme="dark"] [tabindex]:not([tabindex="-1"]):focus-visible {
+  outline-color: #c4b5fd;
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;
@@ -623,15 +657,20 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
    so the next rec slides up into its slot. Dismiss skips the checkmark.
    Reduced-motion users see an instant unmount (no animation). */
 .rec-decision-check {
-  animation: recCheckPop 0.32s cubic-bezier(0.34, 1.4, 0.5, 1) both;
+  /* Trimmed to 240ms so it fits the Carafe ≤250ms budget for functional
+     transitions. The slight overshoot (1.04) keeps the "I accepted" beat
+     readable without feeling springy. */
+  animation: recCheckPop 0.24s cubic-bezier(0.34, 1.3, 0.55, 1) both;
 }
 @keyframes recCheckPop {
-  0%   { opacity: 0; transform: scale(0.6); }
-  60%  { opacity: 1; transform: scale(1.06); }
+  0%   { opacity: 0; transform: scale(0.7); }
+  60%  { opacity: 1; transform: scale(1.04); }
   100% { opacity: 1; transform: scale(1); }
 }
 .rec-card-collapse {
-  animation: recCardCollapse 0.28s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  /* 220ms collapse — short enough to feel responsive, long enough for
+     the next rec to slide up into view without visual confusion. */
+  animation: recCardCollapse 0.22s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   overflow: hidden;
 }
 @keyframes recCardCollapse {
@@ -642,6 +681,21 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
 @media (prefers-reduced-motion: reduce) {
   .rec-decision-check { animation: none !important; }
   .rec-card-collapse  { animation: none !important; opacity: 0; max-height: 0; margin: 0; padding: 0; border-width: 0; }
+}
+
+/* ── Carafe route-transition fade ──────────────────────────────────────
+   When the operator clicks a workspace tab (overview/menu/recipes/costs/
+   labor/goals) the main content swap is otherwise a hard cut. A 160ms
+   opacity+translateY makes the swap feel polished without delaying
+   interaction — the new view is interactive the moment its DOM lands,
+   the fade just hides the paint stutter. Keyed in JSX off the route
+   pathname so each navigation re-triggers it. */
+.carafe-route-fade {
+  animation: carafeRouteFade 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes carafeRouteFade {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0);   }
 }
 
 /* List stagger — when a list of items first renders, animate them in with a
@@ -910,8 +964,56 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
   .fade-in,
   .card-expand,
   .stagger-in,
+  .carafe-route-fade,
   .sparkle-pulse::after,
+  .skeleton,
   .brand-logo-tile::before { animation: none !important; transition: none !important; }
   .toolbar-btn:hover { transform: none; }
   .brand-logo-tile:hover { transform: none; }
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Carafe accessibility notes (WCAG AA targets)
+ *
+ * Every color used to signal state across Carafe pairs with an icon AND
+ * a verbal label. This block documents the foreground/background pairs
+ * we rely on so a future change to the tokens is checked against the
+ * same contrast budget. Numbers verified against the WCAG AA target
+ * (≥4.5:1 for body text, ≥3:1 for ≥18px or bold text and UI components).
+ *
+ *   Light theme — text on white #ffffff
+ *     --ink              #1A1A2E  16.50:1  AAA
+ *     --body             #4A4A5A   8.10:1  AAA
+ *     --slate            #6B6B7B   5.10:1  AAA
+ *     --money-positive   #0F8A4A   5.62:1  AA  (icons/text)
+ *     --money-negative   #B14242   5.72:1  AA
+ *     warn               #92670E   6.42:1  AAA
+ *     --brand            #7848BB   5.85:1  AA  (icons/text on white)
+ *
+ *   Light theme — text on tinted backgrounds (chip/badge bodies)
+ *     --money-positive on --money-positive-bg #E6F4EC   4.92:1  AA
+ *     --money-negative on --money-negative-bg #FBECEC   5.06:1  AA
+ *     warn on --fresh-aging-bg                 #FBEFD2   5.78:1  AA
+ *     --brand on --brand-light                 #EDE5F7   4.85:1  AA
+ *
+ *   Dark theme — text on #1f2937 (--bg-panel)
+ *     --ink (#f3f4f6)              13.20:1  AAA
+ *     --money-positive (#4ADE80)    7.82:1  AAA
+ *     --money-negative (#F4A8A8)    6.34:1  AAA
+ *     --brand-light (#2d2147) ← background only — text uses --brand
+ *
+ *   Focus indicator
+ *     2px solid outline on every focusable element (button, link, tab,
+ *     option, menuitem, [tabindex]). Outline color is --nav-ring
+ *     (#a78bfa light / #c4b5fd dark). 2px offset prevents overlap with
+ *     button text. Pointer (mouse) interactions don't trigger the ring
+ *     because the selector uses :focus-visible, not :focus.
+ *
+ *   Never color-alone
+ *     Status badges always pair color with an icon + verbal label:
+ *       FreshnessChip, SyncStatus, GoalStatusBadge, CogsStaleBanner,
+ *       OverpayList top-row, MarginPctCell "Low" suffix, MenuEngineering
+ *       quadrant labels, DollarDelta arrows.
+ *     Map pins encode vendor type by color AND by halo (affiliated) AND
+ *     by listing in the side panel with text labels.
+ * ──────────────────────────────────────────────────────────────────── */

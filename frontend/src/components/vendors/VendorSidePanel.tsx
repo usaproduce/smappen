@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { X, ShieldCheck, Star, Heart, ExternalLink, Send } from 'lucide-react';
+import { X, Star, Heart, Send } from 'lucide-react';
 import {
   vendorMapApi, vendorReviewsApi, savedVendorsApi,
   type VendorDetail, type VendorReview, type VendorReviewAggregate,
 } from '../../api/vendorMap';
 import { leadsApi } from '../../api/vendors';
 import { useAuthStore } from '../../stores/authStore';
+import AffiliatedBadge from './AffiliatedBadge';
 
 /**
  * Right-side panel that opens when a vendor is selected — either by
@@ -63,25 +64,41 @@ export default function VendorSidePanel({ vendorId, onClose }: { vendorId: strin
   }
 
   return (
-    <aside className="absolute top-4 left-4 w-[420px] max-h-[calc(100%-2rem)] overflow-hidden bg-white border border-slate-200 rounded-xl shadow-lg flex flex-col z-30">
-      <header className="flex items-start justify-between px-4 py-3 border-b border-slate-200">
+    <aside
+      className="panel-slide-left absolute top-3 left-3 sm:top-4 sm:left-4 w-[min(96vw,420px)] max-h-[calc(100%-1.5rem)] overflow-hidden rounded-xl shadow-float flex flex-col z-30"
+      style={{ background: 'white', border: '1px solid var(--line-soft)' }}
+    >
+      <header
+        className="flex items-start justify-between px-4 py-3 border-b gap-2"
+        style={{ borderColor: 'var(--line-soft)' }}
+      >
         <div className="min-w-0">
           {loading ? (
             <div className="skeleton h-6 w-48" />
           ) : (
-            <div className="font-extrabold text-base truncate flex items-center gap-2" style={{ color: '#1A1A2E' }}>
+            <div className="font-extrabold text-base truncate" style={{ color: 'var(--ink)' }}>
               {detail?.vendor.name}
-              {!!detail?.vendor.is_affiliated && <ShieldCheck size={14} className="text-violet-700 flex-shrink-0" />}
             </div>
           )}
-          {detail?.vendor.is_affiliated ? (
-            <div className="text-[10px] font-bold uppercase tracking-wider text-violet-700">USA Produce — affiliated supplier</div>
-          ) : detail?.vendor.type ? (
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{detail.vendor.type.replace('_', ' ')}</div>
-          ) : null}
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
+            {detail?.vendor.type && (
+              <span
+                className="text-[10px] font-bold uppercase tracking-wider"
+                style={{ color: 'var(--slate)' }}
+              >
+                {detail.vendor.type.replace('_', ' ')}
+              </span>
+            )}
+            {!!detail?.vendor.is_affiliated && <AffiliatedBadge variant="pill" />}
+          </div>
         </div>
-        <button className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-50" onClick={onClose}>
-          <X size={14} />
+        <button
+          aria-label="Close"
+          className="inline-flex items-center justify-center w-11 h-11 rounded-lg hover:bg-slate-50 flex-shrink-0"
+          style={{ color: 'var(--slate)' }}
+          onClick={onClose}
+        >
+          <X size={16} />
         </button>
       </header>
 

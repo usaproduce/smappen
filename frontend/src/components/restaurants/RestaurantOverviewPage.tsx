@@ -1,37 +1,36 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
-  Sparkles, ChevronRight, Check, X, MapPin, Loader2, RefreshCw,
-  Plug, Mail, Info,
+  Sparkles, ChevronRight, MapPin, Loader2, Mail, TrendingUp, FileText,
 } from 'lucide-react';
+import { api } from '../../api/client';
 import {
-  overviewApi, recommendationsApi,
+  overviewApi,
   type OverviewPayload, type OverviewTopMove, type OverviewGoals,
 } from '../../api/restaurants';
+import type { Recommendation } from '../../stores/restaurantStore';
 import RestaurantWorkspaceLayout from './RestaurantWorkspaceLayout';
-import AnimatedNumber from '../common/AnimatedNumber';
+import {
+  MoneyStat, DollarDelta, FreshnessChip, RecommendationCard,
+  SyncStatus, CogsStaleBanner,
+} from '../carafe';
 import { studyTradeAreaForRestaurant } from '../../utils/studyTradeArea';
 
 /**
- * War-room dashboard — spec §1.6 / §9, audit item 7.
+ * War-room — mobile-first one-handed pre-service screen.
  *
- * One screen the operator opens every morning during pre-service. Every
- * tile is a dollar number, a freshness chip, and (where possible) a one-
- * tap action — no chart-heavy filler. Hierarchy from top:
+ * Hierarchy from top:
+ *   1. ROI hero — MoneyStat with the 6-month sparkline below.
+ *   2. Top Move — unified <RecommendationCard density="hero"> with big
+ *      Accept/Dismiss/Why-this. Optimistic + undoable via useRecommendationAction.
+ *   3. Today's service — three tiles tinted against operator goals.
+ *   4. Digest callout — 48h after the Monday send.
+ *   5. POS state — actionable when disconnected.
+ *   6. Study trade area — secondary footer link.
  *
- *   1. ROI hero: animated "Carafe found you $X this month" + 6-month
- *      sparkline so the trend is one glance away.
- *   2. Today's service: covers, $/cover, food-cost % to date, color-
- *      coded against the operator's goal (or industry defaults).
- *   3. Digest callout (only for 48h after the Monday send): "this is
- *      what we sent you" with a one-click jump back to those recs.
- *   4. Top Move: single highest-dollar suggested rec with Accept /
- *      Dismiss / Why this. Advances locally on decision — no refetch.
- *   5. POS connection state + Study trade area as secondary actions.
- *
- * Lighthouse target: desktop ≥ 90. Single GET /overview round-trip,
- * skeleton on load, sparkline rendered as inline SVG (no chart lib).
+ * Above the fold at 390×844: tiles 1 + 2 fit before any scroll.
+ * Desktop reflows 1+2 into a 5/7 column row; remainder stacked below.
  */
 
 export default function RestaurantOverviewPage() {
@@ -41,14 +40,9 @@ export default function RestaurantOverviewPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<OverviewPayload | null>(null);
   const [studying, setStudying] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [, setTick] = useState(0);
 
-  // Local Top Move queue — populated from overview.top_move + next_moves
-  // so Accept/Dismiss can advance the card without a refetch (acceptance
-  // criterion: "a different rec without a full page reload").
   const [queue, setQueue] = useState<OverviewTopMove[]>([]);
-  const [whyOpen, setWhyOpen] = useState(false);
-  const [deciding, setDeciding] = useState(false);
 
   useEffect(() => {
     if (!restaurantId) return;
@@ -68,8 +62,7 @@ export default function RestaurantOverviewPage() {
     return () => { cancelled = true; };
   }, [restaurantId]);
 
-  // Re-render every 60s so the "12 min ago" chips stay accurate without
-  // a network round-trip.
+  // Re-render once a minute so freshness chips roll without a network hit.
   useEffect(() => {
     const t = window.setInterval(() => setTick((n) => n + 1), 60_000);
     return () => window.clearInterval(t);
@@ -77,28 +70,9 @@ export default function RestaurantOverviewPage() {
 
   const current: OverviewTopMove | null = queue[0] ?? null;
 
-  async function decideAndAdvance(action: 'accept' | 'dismiss') {
-    if (!current || deciding) return;
-    const decided = current;
-    setDeciding(true);
-    setWhyOpen(false);
-    // Optimistic advance — pop the current card immediately.
+  function advanceQueue() {
     setQueue((q) => q.slice(1));
-    try {
-      if (action === 'accept') {
-        await recommendationsApi.accept(decided.id);
-        toast.success('Accepted — measuring impact');
-      } else {
-        await recommendationsApi.dismiss(decided.id);
-      }
-      setData((d) => (d ? { ...d, open_recs_count: Math.max(0, d.open_recs_count - 1) } : d));
-    } catch (e: any) {
-      // Roll back: put the card back at the front.
-      setQueue((q) => [decided, ...q]);
-      toast.error(e?.response?.data?.error ?? 'Could not save decision');
-    } finally {
-      setDeciding(false);
-    }
+    setData((d) => (d ? { ...d, open_recs_count: Math.max(0, d.open_recs_count - 1) } : d));
   }
 
   async function studyArea() {
@@ -116,126 +90,71 @@ export default function RestaurantOverviewPage() {
     return (
       <RestaurantWorkspaceLayout>
         <div className="space-y-3" aria-busy="true">
-          <div className="skeleton h-28" />
-          <div className="skeleton h-24" />
+          <div className="skeleton h-32" />
           <div className="skeleton h-44" />
-          <div className="skeleton h-20" />
+          <div className="skeleton h-28" />
         </div>
       </RestaurantWorkspaceLayout>
     );
   }
 
-  const digestRecent = !!data.digest;
-  const showDigestCallout = digestRecent;
+  const showDigestCallout = !!data.digest;
   const digestHighlights = new Set(data.digest?.rec_ids ?? []);
-  const isFromDigest = current && digestHighlights.has(current.id);
+  const isFromDigest = !!current && digestHighlights.has(current.id);
 
   return (
     <RestaurantWorkspaceLayout>
-      {/* data-tick keeps the 60s re-render hook alive so FreshnessChip
-          can recompute "12m ago" without a network call. */}
-      <div className="space-y-5" data-tick={tick}>
-        {/* ───────────────── ROI hero ───────────────── */}
-        <RoiHero
-          foundCents={data.roi.found_cents}
-          measuredCents={data.roi.measured_cents}
-          pendingCents={data.roi.pending_cents}
-          acceptedCount={data.roi.accepted_count}
-          lastUpdatedAt={data.roi.last_updated_at}
-          trend={data.roi_trend.map((p) => p.found_cents)}
-        />
+      <div className="space-y-4 sm:space-y-5">
+        {/* ── Above-the-fold pair (ROI + Top Move) ──────────────────── */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-5">
+          <section className="md:col-span-5">
+            <RoiHero data={data} restaurantId={restaurantId} />
+          </section>
+          <section className="md:col-span-7">
+            <TopMoveSection
+              current={current}
+              openRecsCount={data.open_recs_count}
+              restaurantId={restaurantId}
+              isFromDigest={isFromDigest}
+              onAfterDecide={advanceQueue}
+            />
+          </section>
+        </div>
 
-        {/* ───────────────── Today's service ───────────────── */}
         <TodayServiceTile data={data} />
 
-        {/* ───────────────── Digest callout ───────────────── */}
         {showDigestCallout && data.digest && (
-          <section
-            className="border rounded-xl p-3.5 flex items-start gap-3"
-            style={{ background: 'linear-gradient(135deg,#faf5ff 0%,#fff 100%)', borderColor: '#ddd6fe' }}
-          >
-            <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg flex-shrink-0" style={{ background: '#ede9fe', color: '#7848BB' }}>
-              <Mail size={16} />
-            </span>
-            <div className="flex-1 min-w-0">
-              <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#7848BB' }}>
-                From your Monday digest
-              </div>
-              <div className="font-extrabold text-sm mt-0.5" style={{ color: '#1A1A2E' }}>
-                {data.digest.rec_count} move{data.digest.rec_count === 1 ? '' : 's'} we sent you — {formatUsd(data.digest.total_cents)}/mo on the table
-              </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">
-                Sent {relativeTime(data.digest.sent_at)} · we've highlighted them below
-              </div>
-            </div>
-            <Link
-              to={`/app/restaurants/${restaurantId}/menu?source=digest`}
-              className="text-xs font-semibold text-violet-700 hover:underline whitespace-nowrap pt-1"
-            >
-              See all →
-            </Link>
-          </section>
+          <DigestCallout digest={data.digest} restaurantId={restaurantId} />
         )}
 
-        {/* ───────────────── Top Move ───────────────── */}
-        <section>
-          <div className="flex items-baseline justify-between mb-2">
-            <h2 className="font-extrabold text-base flex items-center gap-2" style={{ color: '#1A1A2E' }}>
-              <Sparkles size={16} style={{ color: '#7848BB' }} />
-              Top move
-              {isFromDigest && (
-                <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: '#ede9fe', color: '#7848BB' }}>
-                  From digest
-                </span>
-              )}
-            </h2>
-            {data.open_recs_count > 1 && (
-              <Link to={`/app/restaurants/${restaurantId}/menu`} className="text-xs font-semibold text-violet-700 hover:underline">
-                See all {data.open_recs_count} →
-              </Link>
-            )}
-          </div>
-          {!current ? (
-            <div className="bg-white border border-slate-200 rounded-xl p-6 text-center text-sm text-slate-500">
-              {data.open_recs_count === 0
-                ? 'No moves on the table right now — margins look healthy.'
-                : 'You’re caught up. Next batch lands Monday morning.'}
-            </div>
-          ) : (
-            <TopMoveCard
-              rec={current}
-              whyOpen={whyOpen}
-              setWhyOpen={setWhyOpen}
-              onAccept={() => decideAndAdvance('accept')}
-              onDismiss={() => decideAndAdvance('dismiss')}
-              deciding={deciding}
-            />
-          )}
-        </section>
-
-        {/* ───────────────── POS connection state ───────────────── */}
         <PosCard data={data} restaurantId={restaurantId} />
 
-        {/* ───────────────── Secondary: Study trade area ───────────────── */}
         <section>
           <button
             type="button"
             onClick={studyArea}
             disabled={studying}
-            className="w-full text-left flex items-center justify-between bg-white border border-slate-200 rounded-xl p-3 hover:border-violet-300 hover:shadow-sm transition disabled:opacity-60 disabled:cursor-wait"
+            className="w-full min-h-[44px] text-left flex items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl px-3 py-2.5 hover:border-violet-300 hover:shadow-sm transition disabled:opacity-60 disabled:cursor-wait"
           >
-            <div className="flex items-center gap-3">
-              <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-50" style={{ color: '#64748b' }}>
-                <MapPin size={14} />
+            <div className="flex items-center gap-3 min-w-0">
+              <span
+                className="inline-flex items-center justify-center w-10 h-10 rounded-lg flex-shrink-0"
+                style={{ background: 'var(--bg-panel)', color: 'var(--slate)' }}
+              >
+                <MapPin size={16} />
               </span>
-              <div>
-                <div className="font-semibold text-sm" style={{ color: '#334155' }}>Study trade area</div>
-                <div className="text-[11px] text-slate-500">15-min drive · demographics, foot traffic, competitors</div>
+              <div className="min-w-0">
+                <div className="font-semibold text-sm truncate" style={{ color: 'var(--ink)' }}>
+                  Study trade area
+                </div>
+                <div className="text-[11px] truncate" style={{ color: 'var(--slate)' }}>
+                  15-min drive · demographics, competitors, projected covers &amp; margin
+                </div>
               </div>
             </div>
             {studying
-              ? <Loader2 size={14} className="text-slate-400 animate-spin" />
-              : <ChevronRight size={14} className="text-slate-400" />}
+              ? <Loader2 size={16} className="animate-spin flex-shrink-0" style={{ color: 'var(--slate)' }} />
+              : <ChevronRight size={16} className="flex-shrink-0" style={{ color: 'var(--slate)' }} />}
           </button>
         </section>
       </div>
@@ -243,64 +162,114 @@ export default function RestaurantOverviewPage() {
   );
 }
 
-/* ──────────────────────────────────────────────────────────────────────
- * ROI hero — animated headline + inline SVG sparkline.
- *
- * Inline SVG rather than ECharts because (a) Lighthouse target ≥ 90 and
- * the chart lib is ~600KB gzipped, (b) the sparkline has no axes / no
- * legend / no tooltips — pixel-perfect inline path beats a config blob.
- * ────────────────────────────────────────────────────────────────────── */
-function RoiHero({
-  foundCents, measuredCents, pendingCents, acceptedCount, lastUpdatedAt, trend,
-}: {
-  foundCents: number; measuredCents: number; pendingCents: number;
-  acceptedCount: number; lastUpdatedAt: string | null; trend: number[];
-}) {
-  const hasMoney = foundCents > 0;
+/* ── ROI hero ────────────────────────────────────────────────────────── */
+function RoiHero({ data, restaurantId }: { data: OverviewPayload; restaurantId: string }) {
+  const foundDollars = Math.round(data.roi.found_cents / 100);
+  const measuredDollars = Math.round(data.roi.measured_cents / 100);
+  const pendingDollars = Math.round(data.roi.pending_cents / 100);
+  const trend = data.roi_trend.map((p) => p.found_cents);
+  const lastMonthDollars = useMemo(() => {
+    if (trend.length < 2) return null;
+    return Math.round(trend[trend.length - 2] / 100);
+  }, [trend]);
+  const monthOverMonth = lastMonthDollars != null ? foundDollars - lastMonthDollars : null;
+  const [downloading, setDownloading] = useState(false);
+
+  async function downloadReport() {
+    if (downloading) return;
+    setDownloading(true);
+    const t = toast.loading('Generating report…');
+    try {
+      // The endpoint is auth-protected — a naive window.open() strips
+      // the Authorization header. Fetch as a Blob and save via the
+      // download-attribute pattern (same as components/data/ReportButton).
+      const resp = await api.get(
+        `/api/restaurants/${restaurantId}/reports/money-found.pdf`,
+        { responseType: 'blob' },
+      );
+      const blob = new Blob([resp.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `carafe-money-found-${new Date().toISOString().slice(0, 7)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Report downloaded', { id: t });
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error ?? 'Report failed', { id: t });
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   return (
-    <section
-      className="border rounded-xl p-5 flex items-stretch gap-5"
-      style={{
-        background: hasMoney
-          ? 'linear-gradient(135deg,#ecfdf5 0%,#fff 60%,#f5f3ff 100%)'
-          : '#f8fafc',
-        borderColor: hasMoney ? '#a7f3d0' : '#e2e8f0',
-      }}
+    <article
+      className="border rounded-xl p-4 sm:p-5 h-full flex flex-col gap-3"
+      style={{ background: 'white', borderColor: 'var(--line-soft)' }}
     >
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: hasMoney ? '#047857' : '#64748b' }}>
-            This month
-          </span>
-          {lastUpdatedAt && <FreshnessChip iso={lastUpdatedAt} label="last move" />}
-        </div>
-        <div className="mt-1 flex items-baseline gap-1.5" style={{ color: '#1A1A2E' }}>
-          <span className="text-3xl font-extrabold tabular-nums">
-            Carafe found you <AnimatedNumber value={Math.round(foundCents / 100)} format={(n) => '$' + Math.round(n).toLocaleString()} />
-          </span>
-        </div>
-        <div className="text-xs text-slate-600 mt-1.5 leading-snug">
-          {hasMoney ? (
-            <>
-              {formatUsd(measuredCents)} already measured against your sales · {formatUsd(pendingCents)} pending from{' '}
-              {acceptedCount} accepted move{acceptedCount === 1 ? '' : 's'}
-            </>
-          ) : (
-            <>Once you accept your first move, we measure the dollar impact against your sales here.</>
-          )}
-        </div>
+      <MoneyStat
+        label="Carafe found you this month"
+        value={foundDollars}
+        size="xl"
+        tone={foundDollars > 0 ? 'positive' : 'neutral'}
+        timestamp={data.roi.last_updated_at ?? undefined}
+        freshnessLabel="last move"
+        icon={<TrendingUp size={11} strokeWidth={2.5} />}
+        footer={monthOverMonth != null && (
+          <DollarDelta value={monthOverMonth} comparison="vs last month" size="sm" />
+        )}
+      />
+
+      {/* Download report — surfaced only once there's something worth
+          showing. The PDF uses the exact same RoiService::monthlySummary
+          numbers as the figure above, so the two can't drift. */}
+      {foundDollars > 0 && (
+        <button
+          type="button"
+          onClick={downloadReport}
+          disabled={downloading}
+          aria-label={`Download money-found report for ${new Date().toLocaleString('default', { month: 'long' })}`}
+          className="inline-flex items-center gap-1.5 self-start px-3 min-h-[36px] rounded-lg text-xs font-bold disabled:opacity-60"
+          style={{
+            background: 'var(--brand-light)',
+            color: 'var(--brand)',
+            border: '1px solid var(--brand-light)',
+          }}
+        >
+          {downloading ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+          {downloading ? 'Generating…' : 'Download report'}
+        </button>
+      )}
+
+      <div className="text-xs leading-snug" style={{ color: 'var(--body)' }}>
+        {foundDollars > 0 ? (
+          <>
+            <strong style={{ color: 'var(--ink)' }}>${measuredDollars.toLocaleString()}</strong> already measured against your sales ·{' '}
+            <strong style={{ color: 'var(--ink)' }}>${pendingDollars.toLocaleString()}</strong> pending from{' '}
+            {data.roi.accepted_count} accepted move{data.roi.accepted_count === 1 ? '' : 's'}
+          </>
+        ) : (
+          <>Once you accept your first move, we measure the dollar impact against your sales here.</>
+        )}
       </div>
-      <div className="hidden sm:flex flex-col items-end justify-between min-w-[140px]">
-        <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Last 6 months</div>
-        <Sparkline values={trend} height={42} width={140} />
-      </div>
-    </section>
+
+      {trend.length > 0 && (
+        <div className="flex items-end justify-between gap-3 mt-auto pt-1">
+          <div className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--slate)' }}>
+            Last 6 months
+          </div>
+          <Sparkline values={trend} height={36} width={120} />
+        </div>
+      )}
+    </article>
   );
 }
 
 function Sparkline({ values, width, height }: { values: number[]; width: number; height: number }) {
   if (!values || values.length === 0) {
-    return <div style={{ width, height }} className="text-[10px] text-slate-400 flex items-end">no history yet</div>;
+    return <div style={{ width, height, color: 'var(--muted)' }} className="text-[10px] flex items-end">no history yet</div>;
   }
   const padY = 4;
   const max = Math.max(1, ...values);
@@ -316,50 +285,164 @@ function Sparkline({ values, width, height }: { values: number[]; width: number;
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
       <path d={area} fill="rgba(120,72,187,0.12)" />
-      <path d={path} fill="none" stroke="#7848BB" strokeWidth={1.75} strokeLinejoin="round" strokeLinecap="round" />
-      {last && <circle cx={last[0]} cy={last[1]} r={2.75} fill="#7848BB" />}
+      <path d={path} fill="none" stroke="var(--brand)" strokeWidth={1.75} strokeLinejoin="round" strokeLinecap="round" />
+      {last && <circle cx={last[0]} cy={last[1]} r={2.75} fill="var(--brand)" />}
     </svg>
   );
 }
 
-/* ──────────────────────────────────────────────────────────────────────
- * Today's service tile — color-coded against operator goals.
- * ────────────────────────────────────────────────────────────────────── */
-function TodayServiceTile({ data }: { data: OverviewPayload }) {
-  const t = data.today_service;
+/* ── Top Move section — uses the unified <RecommendationCard> ────────── */
+function TopMoveSection({
+  current, openRecsCount, restaurantId, isFromDigest, onAfterDecide,
+}: {
+  current: OverviewTopMove | null;
+  openRecsCount: number;
+  restaurantId: string;
+  isFromDigest: boolean;
+  onAfterDecide: () => void;
+}) {
   return (
-    <section className="bg-white border border-slate-200 rounded-xl p-4">
-      <div className="flex items-baseline justify-between">
-        <h2 className="font-extrabold text-sm" style={{ color: '#1A1A2E' }}>Today's service</h2>
-        {t && t.last_sale_at && <FreshnessChip iso={t.last_sale_at} label="last sale" />}
-        {(!t || !t.last_sale_at) && data.pos.connected && (
-          <FreshnessChip iso={data.pos.last_synced_at} label="POS synced" mutedIfNull />
+    <div className="h-full flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-2 min-w-0">
+        <h2 className="font-extrabold text-base flex items-center gap-2 min-w-0" style={{ color: 'var(--ink)' }}>
+          <Sparkles size={16} style={{ color: 'var(--brand)' }} />
+          <span className="truncate">Top move</span>
+        </h2>
+        {openRecsCount > 1 && (
+          <Link
+            to={`/app/restaurants/${restaurantId}/menu`}
+            className="text-xs font-semibold whitespace-nowrap min-h-[44px] flex items-center"
+            style={{ color: 'var(--brand)' }}
+          >
+            See all {openRecsCount} →
+          </Link>
         )}
       </div>
-      {t && t.note ? (
-        <div className="mt-2 text-xs text-slate-500">{t.note}</div>
-      ) : null}
-      <div className="grid grid-cols-3 gap-3 mt-3">
-        <NumberCell
-          label="Covers"
-          value={t ? t.covers.toLocaleString() : '—'}
-          tone="neutral"
+
+      {!current ? (
+        <div
+          className="border rounded-xl p-6 text-center text-sm flex-1 flex items-center justify-center"
+          style={{ background: 'white', borderColor: 'var(--line-soft)', color: 'var(--slate)' }}
+        >
+          {openRecsCount === 0
+            ? 'No moves on the table right now — margins look healthy.'
+            : "You're caught up. Next batch lands Monday morning."}
+        </div>
+      ) : (
+        <RecommendationCard
+          key={current.id}
+          rec={topMoveToRec(current)}
+          itemName={current.menu_item_name}
+          fallbackPrice={current.menu_item_price_cents}
+          fallbackPlateCost={current.plate_cost_cents}
+          density="hero"
+          badge={isFromDigest ? (
+            <span
+              className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+              style={{ background: 'var(--brand-light)', color: 'var(--brand)' }}
+            >
+              From digest
+            </span>
+          ) : undefined}
+          onAfterDecide={onAfterDecide}
         />
-        <NumberCell
-          label="$ / cover"
-          value={t?.revenue_per_cover_cents != null ? formatUsd(t.revenue_per_cover_cents) : '—'}
-          tone="neutral"
-        />
-        <NumberCell
+      )}
+    </div>
+  );
+}
+
+/* OverviewTopMove → minimal Recommendation shape for the unified card.
+   Fields the card needs: id, kind, payload, narrative, dollar_estimate_cents,
+   created_at, status. The rest are filled with safe defaults. */
+function topMoveToRec(t: OverviewTopMove): Recommendation {
+  return {
+    id: t.id,
+    menu_item_id: t.menu_item_id,
+    kind: t.kind,
+    payload: t.payload,
+    narrative: t.narrative,
+    dollar_estimate_cents: t.dollar_estimate_cents,
+    status: 'suggested',
+    measured_impact_cents: null,
+    created_at: t.created_at,
+    decided_at: null,
+    measured_at: null,
+  };
+}
+
+/* ── Today's service ─────────────────────────────────────────────────── */
+function TodayServiceTile({ data }: { data: OverviewPayload }) {
+  const t = data.today_service;
+  const tone = foodCostTone(t?.food_cost_pct ?? null, data.goals);
+  const lastSaleTs = t?.last_sale_at ?? null;
+  return (
+    <section
+      className="rounded-xl p-4 sm:p-5 border"
+      style={{ background: 'white', borderColor: 'var(--line-soft)' }}
+    >
+      <div className="flex items-baseline justify-between gap-2 mb-3">
+        <h2 className="font-extrabold text-base truncate" style={{ color: 'var(--ink)' }}>
+          Today's service
+        </h2>
+        {lastSaleTs ? (
+          <FreshnessChip timestamp={lastSaleTs} label="last sale" />
+        ) : data.pos.connected && data.pos.last_synced_at ? (
+          <FreshnessChip timestamp={data.pos.last_synced_at} label="POS" />
+        ) : null}
+      </div>
+      {t?.note && (
+        <div className="mb-3 text-xs" style={{ color: 'var(--slate)' }}>{t.note}</div>
+      )}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <ServiceCell label="Covers"     value={t ? t.covers.toLocaleString() : '—'} />
+        <ServiceCell label="$ / cover"  value={t?.revenue_per_cover_cents != null ? formatUsd(t.revenue_per_cover_cents) : '—'} />
+        <ServiceCell
           label="Food cost"
           value={t?.food_cost_pct != null ? formatPct(t.food_cost_pct) : '—'}
-          tone={foodCostTone(t?.food_cost_pct ?? null, data.goals)}
+          tone={tone}
           hint={data.goals.food_cost_pct_target != null
             ? `goal ${formatPct(data.goals.food_cost_pct_target)}`
             : 'no goal set'}
+          className="col-span-2 sm:col-span-1"
         />
       </div>
     </section>
+  );
+}
+
+function ServiceCell({ label, value, hint, tone = 'neutral', className }: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: 'good' | 'warn' | 'bad' | 'neutral';
+  className?: string;
+}) {
+  const color = {
+    good: 'var(--money-positive)',
+    warn: '#92670E',
+    bad: 'var(--money-negative)',
+    neutral: 'var(--ink)',
+  }[tone];
+  const bg = {
+    good: 'var(--money-positive-bg)',
+    warn: 'var(--fresh-aging-bg)',
+    bad: 'var(--money-negative-bg)',
+    neutral: 'var(--bg-panel)',
+  }[tone];
+  return (
+    <div className={'rounded-lg p-3 ' + (className ?? '')} style={{ background: bg }}>
+      <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--slate)' }}>
+        {label}
+      </div>
+      <div className="text-2xl font-extrabold tabular-nums mt-1 leading-none" style={{ color }}>
+        {value}
+      </div>
+      {hint && (
+        <div className="text-[11px] font-semibold mt-1.5" style={{ color: 'var(--slate)' }}>
+          {hint}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -370,228 +453,72 @@ function foodCostTone(pct: number | null, goals: OverviewGoals): 'good' | 'warn'
   return 'bad';
 }
 
-function NumberCell({ label, value, hint, tone }: {
-  label: string; value: string; hint?: string; tone: 'good' | 'warn' | 'bad' | 'neutral';
-}) {
-  const color = { good: '#047857', warn: '#b45309', bad: '#b91c1c', neutral: '#1A1A2E' }[tone];
+/* ── Digest callout ──────────────────────────────────────────────────── */
+function DigestCallout({ digest, restaurantId }: { digest: NonNullable<OverviewPayload['digest']>; restaurantId: string }) {
   return (
-    <div className="bg-slate-50 rounded-lg p-2.5">
-      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</div>
-      <div className="text-xl font-extrabold tabular-nums mt-0.5" style={{ color }}>{value}</div>
-      {hint && <div className="text-[10px] font-semibold mt-0.5" style={{ color: '#475569' }}>{hint}</div>}
-    </div>
-  );
-}
-
-/* ──────────────────────────────────────────────────────────────────────
- * Top Move card — single highest-dollar rec, big controls.
- * ────────────────────────────────────────────────────────────────────── */
-function TopMoveCard({ rec, whyOpen, setWhyOpen, onAccept, onDismiss, deciding }: {
-  rec: OverviewTopMove;
-  whyOpen: boolean;
-  setWhyOpen: (b: boolean) => void;
-  onAccept: () => void;
-  onDismiss: () => void;
-  deciding: boolean;
-}) {
-  return (
-    <article className="bg-white border-2 rounded-xl p-4" style={{ borderColor: '#ddd6fe' }}>
-      <div className="flex items-start gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{rec.kind.replace('_', ' ')}</div>
-          <div className="text-3xl font-extrabold tabular-nums leading-tight mt-1" style={{ color: '#1A1A2E' }}>
-            {formatUsd(rec.dollar_estimate_cents)}<span className="text-base font-bold text-slate-500">/mo</span>
-          </div>
-          {rec.menu_item_name && (
-            <div className="font-semibold text-sm mt-1.5" style={{ color: '#334155' }}>{rec.menu_item_name}</div>
-          )}
-          {rec.narrative && (
-            <p className="text-sm mt-1.5 leading-snug" style={{ color: '#475569' }}>{rec.narrative}</p>
-          )}
+    <section
+      className="border rounded-xl p-3 sm:p-3.5 flex items-start gap-3"
+      style={{ background: 'var(--brand-50)', borderColor: 'var(--brand-light)' }}
+    >
+      <span
+        className="inline-flex items-center justify-center w-10 h-10 rounded-lg flex-shrink-0"
+        style={{ background: 'var(--brand-light)', color: 'var(--brand)' }}
+      >
+        <Mail size={16} />
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--brand)' }}>
+          From your Monday digest
         </div>
-        <FreshnessChip iso={rec.created_at} label="found" />
-      </div>
-
-      <div className="flex items-center gap-2 mt-3.5">
-        <button
-          type="button"
-          onClick={onAccept}
-          disabled={deciding}
-          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 h-10 rounded-lg text-sm font-bold text-white disabled:opacity-60 disabled:cursor-wait"
-          style={{ background: '#059669' }}
-        >
-          <Check size={16} /> Accept
-        </button>
-        <button
-          type="button"
-          onClick={onDismiss}
-          disabled={deciding}
-          className="inline-flex items-center justify-center gap-1.5 px-3 h-10 rounded-lg text-sm font-semibold border border-slate-200 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-wait"
-          style={{ color: '#475569' }}
-        >
-          <X size={14} /> Dismiss
-        </button>
-        <button
-          type="button"
-          onClick={() => setWhyOpen(!whyOpen)}
-          aria-expanded={whyOpen}
-          className="inline-flex items-center justify-center gap-1.5 px-3 h-10 rounded-lg text-sm font-semibold border border-slate-200 hover:bg-slate-50"
-          style={{ color: '#475569' }}
-        >
-          <Info size={14} /> Why this?
-        </button>
-      </div>
-
-      {whyOpen && (
-        <div className="mt-3 bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs leading-relaxed" style={{ color: '#334155' }}>
-          <WhyExplanation rec={rec} />
+        <div className="font-extrabold text-sm mt-0.5" style={{ color: 'var(--ink)' }}>
+          {digest.rec_count} move{digest.rec_count === 1 ? '' : 's'} we sent you — {formatUsd(digest.total_cents)}/mo on the table
         </div>
-      )}
-    </article>
-  );
-}
-
-function WhyExplanation({ rec }: { rec: OverviewTopMove }) {
-  const payload = rec.payload ?? {};
-  const priceDelta = num(payload['price_delta_cents']);
-  const baselinePrice = num(payload['baseline_price_cents']) ?? rec.menu_item_price_cents;
-  const newPrice = num(payload['new_price_cents']) ?? (baselinePrice != null && priceDelta != null ? baselinePrice + priceDelta : null);
-  const monthlyQty = num(payload['est_monthly_qty']);
-  const plateCost = num(payload['plate_cost_cents']) ?? rec.plate_cost_cents;
-  return (
-    <>
-      <div className="font-bold text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">How we got to {formatUsd(rec.dollar_estimate_cents)}/mo</div>
-      <ul className="space-y-0.5">
-        {baselinePrice != null && (
-          <li>Current price: <strong>{formatUsd(baselinePrice)}</strong></li>
-        )}
-        {newPrice != null && (
-          <li>Suggested price: <strong>{formatUsd(newPrice)}</strong>{priceDelta != null && <> ({priceDelta >= 0 ? '+' : ''}{formatUsd(priceDelta)})</>}</li>
-        )}
-        {plateCost != null && (
-          <li>Plate cost: <strong>{formatUsd(plateCost)}</strong></li>
-        )}
-        {monthlyQty != null && (
-          <li>Recent sales pace: <strong>{monthlyQty.toLocaleString()}/mo</strong> (from your POS)</li>
-        )}
-        {priceDelta != null && monthlyQty != null && (
-          <li className="pt-1 mt-1 border-t border-slate-200" style={{ color: '#1A1A2E' }}>
-            {formatUsd(priceDelta)} × {monthlyQty}/mo = <strong>{formatUsd(rec.dollar_estimate_cents)}/mo</strong>
-          </li>
-        )}
-      </ul>
-      <div className="mt-2 text-[11px] text-slate-500">
-        We don't claim measured impact until we've watched 14 days of sales after you accept.
-      </div>
-    </>
-  );
-}
-
-function num(v: any): number | null {
-  if (v === null || v === undefined) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-/* ──────────────────────────────────────────────────────────────────────
- * POS connection card — actionable when disconnected, freshness chip
- * + last-sale chip when connected.
- * ────────────────────────────────────────────────────────────────────── */
-function PosCard({ data, restaurantId }: { data: OverviewPayload; restaurantId: string }) {
-  const { pos, usda_prices } = data;
-  return (
-    <section className="bg-white border border-slate-200 rounded-xl p-4">
-      <div className="flex items-start gap-3">
-        <span className="inline-flex items-center justify-center w-10 h-10 rounded-lg flex-shrink-0"
-              style={{ background: pos.connected ? '#ecfdf5' : '#fef3c7', color: pos.connected ? '#047857' : '#b45309' }}>
-          <Plug size={18} />
-        </span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <div className="font-bold text-sm" style={{ color: '#1A1A2E' }}>
-              {pos.connected ? `Square connected` : 'Connect Square to find moves'}
-            </div>
-            {pos.connected && pos.last_synced_at && (
-              <FreshnessChip iso={pos.last_synced_at} label="POS synced" />
-            )}
-            {pos.connected && pos.last_sale_at && (
-              <FreshnessChip iso={pos.last_sale_at} label="last sale" />
-            )}
-          </div>
-          <div className="text-xs text-slate-500 mt-1">
-            {pos.connected
-              ? <>We pull every line item — that's the basis for the dollar moves below.</>
-              : <>Without a POS feed we can't see what's selling. Connect once, then forget about it.</>}
-            {usda_prices && (
-              <> · <span className="whitespace-nowrap">USDA prices as of {formatDateShort(usda_prices.as_of)}</span></>
-            )}
-          </div>
+        <div className="text-[11px] mt-0.5" style={{ color: 'var(--slate)' }}>
+          Sent <RelTime iso={digest.sent_at} /> · we've highlighted them below
         </div>
-        {!pos.connected && (
-          <Link
-            to={`/app/restaurants/${restaurantId}/menu`}
-            className="inline-flex items-center justify-center gap-1 px-3 h-9 rounded-lg text-xs font-bold text-white"
-            style={{ background: '#7848BB' }}
-          >
-            Connect <ChevronRight size={14} />
-          </Link>
-        )}
       </div>
+      <Link
+        to={`/app/restaurants/${restaurantId}/menu?source=digest`}
+        className="text-xs font-semibold whitespace-nowrap min-h-[44px] flex items-center px-2 -mr-2"
+        style={{ color: 'var(--brand)' }}
+      >
+        See all →
+      </Link>
     </section>
   );
 }
 
-/* ──────────────────────────────────────────────────────────────────────
- * Freshness chip — "12m ago", "14h ago", "Mar 4". Hover surfaces ISO.
- * The acceptance criterion is strict: every visible number on this
- * page must carry a last_updated_at. The chip is the visible token.
- * ────────────────────────────────────────────────────────────────────── */
-function FreshnessChip({ iso, label, mutedIfNull }: { iso: string | null; label: string; mutedIfNull?: boolean }) {
-  if (!iso) {
-    if (mutedIfNull) {
-      return (
-        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded"
-              style={{ background: '#f1f5f9', color: '#64748b' }}>
-          <RefreshCw size={9} /> {label}: never
-        </span>
-      );
-    }
-    return null;
-  }
-  const rel = relativeTime(iso);
-  const stale = isStale(iso);
+/* ── POS card ────────────────────────────────────────────────────────── */
+function PosCard({ data, restaurantId }: { data: OverviewPayload; restaurantId: string }) {
+  const { pos, usda_prices } = data;
+  const navigate = useNavigate();
   return (
-    <span
-      title={`${label}: ${iso}`}
-      className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap"
-      style={{
-        background: stale ? '#fef3c7' : '#f1f5f9',
-        color: stale ? '#92400e' : '#475569',
-      }}
-    >
-      <RefreshCw size={9} /> {label} {rel}
-    </span>
+    <div className="space-y-2">
+      <SyncStatus
+        provider="Square"
+        lastSyncedAt={pos.connected ? pos.last_synced_at : null}
+        lastSaleAt={pos.connected ? pos.last_sale_at : null}
+        onPrimary={() => navigate(`/app/restaurants/${restaurantId}/menu`)}
+      />
+      {usda_prices && (
+        <CogsStaleBanner asOf={usda_prices.as_of} region={null} />
+      )}
+    </div>
   );
 }
 
-function relativeTime(iso: string): string {
+function RelTime({ iso }: { iso: string }) {
   const ts = Date.parse(iso.replace(' ', 'T'));
-  if (!Number.isFinite(ts)) return 'unknown';
+  if (!Number.isFinite(ts)) return <>unknown</>;
   const diff = Math.max(0, Date.now() - ts);
   const m = Math.floor(diff / 60_000);
-  if (m < 1)   return 'just now';
-  if (m < 60)  return `${m}m ago`;
+  if (m < 1) return <>just now</>;
+  if (m < 60) return <>{m}m ago</>;
   const h = Math.floor(m / 60);
-  if (h < 24)  return `${h}h ago`;
+  if (h < 24) return <>{h}h ago</>;
   const d = Math.floor(h / 24);
-  if (d < 14)  return `${d}d ago`;
-  return formatDateShort(iso);
-}
-
-function isStale(iso: string): boolean {
-  const ts = Date.parse(iso.replace(' ', 'T'));
-  if (!Number.isFinite(ts)) return false;
-  return Date.now() - ts > 24 * 60 * 60 * 1000;
+  if (d < 14) return <>{d}d ago</>;
+  return <>{formatDateShort(iso)}</>;
 }
 
 function formatDateShort(iso: string): string {

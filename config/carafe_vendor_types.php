@@ -31,8 +31,12 @@ return [
         // STRICT B2B only — `food_store` removed because it pulled in
         // 7-Eleven, Starbucks-adjacent retail. `wholesaler` is the only
         // Places (New) type that's reliably B2B.
+        // Brand-name text queries (Sysco, US Foods, PFG, Gordon Food
+        // Service, Reinhart) pruned — they're caught at classify time
+        // via VendorClassifierService::BRAND_MAP, and their places come
+        // back through the `wholesaler` includedTypes call anyway.
         'places_types'    => ['wholesaler'],
-        'text_queries'    => ['foodservice distributor', 'food service distributor', 'Sysco', 'US Foods', 'PFG', 'Gordon Food Service', 'Reinhart Foodservice'],
+        'text_queries'    => ['foodservice distributor', 'food service distributor'],
         'category'        => 'broadline',
         'priority_enrich' => true,
     ],
@@ -41,9 +45,12 @@ return [
         // `warehouse_store` catches Restaurant Depot + Costco Business —
         // legitimate B2B targets. But it ALSO catches Sam's Club / BJ's,
         // which are consumer-wholesale. Filter is at insert (see
-        // VendorUpsertService::isLikelyJunk).
+        // VendorUpsertService::isLikelyJunk). Brand-name text queries
+        // (Restaurant Depot, Chef's Warehouse, Jetro) pruned — all three
+        // come back through the warehouse_store / wholesaler includedTypes
+        // calls, and BRAND_MAP catches them at classify time.
         'places_types'    => ['warehouse_store', 'wholesaler'],
-        'text_queries'    => ['restaurant depot', "Chef's Warehouse", 'Jetro Cash and Carry'],
+        'text_queries'    => ['cash and carry foodservice'],
         'category'        => 'broadline',
         'priority_enrich' => true,
     ],
@@ -51,8 +58,9 @@ return [
     'produce' => [
         // `farm` removed — catches U-pick / agritourism retail.
         // The text queries pull in the actual produce wholesalers.
+        // 'produce wholesalers' dropped — near-duplicate of 'produce wholesale'.
         'places_types'    => ['wholesaler'],
-        'text_queries'    => ['produce wholesale', 'produce distributor', 'produce wholesalers', 'terminal market'],
+        'text_queries'    => ['produce wholesale', 'produce distributor', 'terminal market'],
         'category'        => 'produce',
         'priority_enrich' => true,
     ],

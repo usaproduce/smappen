@@ -37,7 +37,17 @@ use App\Core\Database;
  */
 class VendorClassifierService
 {
-    public const CONFIDENCE_REVIEW_THRESHOLD = 60;
+    /**
+     * Confidence floor for auto-approve. Below this, the vendor goes
+     * into the review queue (vendors.classification_needs_review = 1).
+     *
+     * Raised 60 → 75 on 2026-05-28 because tier 3 ("generic primaryType
+     * + name keyword", confidence 70) was auto-approving things like
+     * "All Meat Trucking LLC" (a hauler, not a vendor) and "City Fish
+     * Market" (retail). 75 keeps brand hits (95) and strong primaryType
+     * (85) on auto-approve while pushing every weaker signal to review.
+     */
+    public const CONFIDENCE_REVIEW_THRESHOLD = 75;
 
     /**
      * Strong primary-type → vendor_type. Google's own classification

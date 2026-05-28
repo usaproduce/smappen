@@ -2,14 +2,19 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
-  RefreshCw, Sparkles, Check, X, ExternalLink, AlertCircle, MapPin, Loader2,
+  Sparkles, ExternalLink, AlertCircle, AlertTriangle, MapPin, Loader2,
 } from 'lucide-react';
 import {
-  posApi, menuApi, recommendationsApi, roiApi, type RoiMonthly,
+  posApi, menuApi, recommendationsApi, roiApi, overviewApi, engineeringApi,
+  type RoiMonthly, type MenuEngineeringPayload,
 } from '../../api/restaurants';
-import { useRestaurantStore, type MenuItem, type Recommendation } from '../../stores/restaurantStore';
+import { useRestaurantStore, type MenuItem } from '../../stores/restaurantStore';
 import RestaurantWorkspaceLayout from './RestaurantWorkspaceLayout';
 import { studyTradeAreaForRestaurant } from '../../utils/studyTradeArea';
+import {
+  RecommendationCard, MenuEngineeringChart, SyncStatus, CogsStaleBanner,
+  SkeletonBlock, SkeletonCard, SkeletonChart, SkeletonRecCard, SkeletonTable,
+} from '../carafe';
 
 /**
  * Carafe menu workspace — the entire Phase 1 vertical slice lives here.
@@ -27,7 +32,6 @@ export default function MenuPage() {
   const setMenuItems = useRestaurantStore((s) => s.setMenuItems);
   const recommendations = useRestaurantStore((s) => s.recommendations);
   const setRecommendations = useRestaurantStore((s) => s.setRecommendations);
-  const updateRecStatus = useRestaurantStore((s) => s.updateRecommendationStatus);
 
   const [loading, setLoading] = useState(true);
   const [posIntegrations, setPosIntegrations] = useState<Array<{ provider: string; last_synced_at: string | null }>>([]);
@@ -35,6 +39,9 @@ export default function MenuPage() {
   const [busy, setBusy] = useState(false);
   const [roi, setRoi] = useState<RoiMonthly | null>(null);
   const [studying, setStudying] = useState(false);
+  const [engineering, setEngineering] = useState<MenuEngineeringPayload | null>(null);
+  const [cogsAsOf, setCogsAsOf] = useState<string | null>(null);
+  const currentRestaurant = useRestaurantStore((s) => s.currentRestaurant);
   const navigate = useNavigate();
 
   async function studyArea() {
@@ -53,17 +60,22 @@ export default function MenuPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [items, recs, pos, roiMonthly] = await Promise.all([
+        const [items, recs, pos, roiMonthly, classify, overview] = await Promise.all([
           menuApi.listItems(restaurantId),
           recommendationsApi.list(restaurantId, 'suggested'),
           posApi.listIntegrations(restaurantId).catch(() => []),
           roiApi.monthly(restaurantId).catch(() => null),
+          engineeringApi.classify(restaurantId).catch(() => null),
+          // overview gives us USDA as_of for the COGS attribution chip
+          overviewApi.get(restaurantId).catch(() => null),
         ]);
         if (cancelled) return;
         setMenuItems(items);
         setRecommendations(recs);
         setPosIntegrations(pos);
         setRoi(roiMonthly);
+        setEngineering(classify);
+        setCogsAsOf(overview?.usda_prices?.as_of ?? null);
       } catch (e: any) {
         if (!cancelled) toast.error(e?.response?.data?.error ?? 'Failed to load menu');
       } finally {
@@ -104,12 +116,14 @@ export default function MenuPage() {
     try {
       await menuApi.recomputePlateCosts(restaurantId);
       await recommendationsApi.runForRestaurant(restaurantId);
-      const [items, recs] = await Promise.all([
+      const [items, recs, classify] = await Promise.all([
         menuApi.listItems(restaurantId),
         recommendationsApi.list(restaurantId, 'suggested'),
+        engineeringApi.classify(restaurantId).catch(() => null),
       ]);
       setMenuItems(items);
       setRecommendations(recs);
+      setEngineering(classify);
       toast.success('Recomputed plate costs + recommendations');
     } catch (e: any) {
       toast.error(e?.response?.data?.error ?? 'Refresh failed');
@@ -118,34 +132,22 @@ export default function MenuPage() {
     }
   }
 
-  async function acceptRec(rec: Recommendation) {
-    updateRecStatus(rec.id, 'accepted');
-    try {
-      await recommendationsApi.accept(rec.id);
-      // Optionally apply the suggested price right away — for the slice we
-      // just record acceptance; Chunk 3 will push the price back to POS.
-      toast.success('Recommendation accepted');
-    } catch (e: any) {
-      toast.error(e?.response?.data?.error ?? 'Failed to accept');
-    }
-  }
-
-  async function dismissRec(rec: Recommendation) {
-    updateRecStatus(rec.id, 'dismissed');
-    try {
-      await recommendationsApi.dismiss(rec.id);
-    } catch (e: any) {
-      toast.error(e?.response?.data?.error ?? 'Failed to dismiss');
-    }
-  }
-
   if (loading) {
     return (
       <RestaurantWorkspaceLayout>
-        <div className="space-y-3">
-          <div className="skeleton h-8 w-64" />
-          <div className="skeleton h-32 w-full" />
-          <div className="skeleton h-64 w-full" />
+        <div className="space-y-6" aria-busy="true" aria-live="polite">
+          {/* POS connection strip */}
+          <SkeletonCard minH={72} />
+          {/* Menu-engineering chart */}
+          <SkeletonChart height={300} />
+          {/* Recommendation card */}
+          <div className="space-y-2">
+            <SkeletonBlock className="h-4 w-56" />
+            <SkeletonRecCard />
+            <SkeletonRecCard />
+          </div>
+          {/* Menu items table */}
+          <SkeletonTable rows={6} />
         </div>
       </RestaurantWorkspaceLayout>
     );
@@ -169,44 +171,59 @@ export default function MenuPage() {
           </section>
         )}
 
-        {/* POS strip */}
-        <section className="bg-slate-50 rounded-xl p-4 mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span
-              className="inline-flex items-center justify-center w-10 h-10 rounded-lg font-bold text-white"
-              style={{ background: squareConnected ? '#22c55e' : '#94a3b8' }}
-            >
-              SQ
-            </span>
-            <div>
-              <div className="font-bold text-sm" style={{ color: '#1A1A2E' }}>
-                Square {squareConnected ? '— connected' : '— not connected'}
-              </div>
-              <div className="text-xs text-slate-500">
-                {squareConnected
-                  ? `Last sync: ${posIntegrations.find((p) => p.provider === 'square')?.last_synced_at ?? 'never'}`
-                  : 'Connect Square to auto-pull your menu items.'}
-              </div>
-            </div>
+        {/* POS sync status — drives every state of the Square integration
+            (not connected / connecting / syncing / synced / stale / error). */}
+        <section className="mb-6 flex items-stretch gap-2 flex-wrap">
+          <div className="flex-1 min-w-[260px]">
+            <SyncStatus
+              provider="Square"
+              lastSyncedAt={posIntegrations.find((p) => p.provider === 'square')?.last_synced_at ?? null}
+              isSyncing={syncing}
+              isConnecting={busy && !squareConnected}
+              onPrimary={squareConnected ? syncNow : connectSquare}
+            />
           </div>
-          <div className="flex items-center gap-2">
-            {!squareConnected && (
-              <button className="btn btn-primary h-9 px-3 text-sm" onClick={connectSquare} disabled={busy}>
-                Connect Square <ExternalLink size={12} />
-              </button>
-            )}
-            {squareConnected && (
-              <button className="btn h-9 px-3 text-sm" onClick={syncNow} disabled={syncing}>
-                <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} /> Sync now
-              </button>
-            )}
-            <button className="btn h-9 px-3 text-sm" onClick={refreshAll} disabled={busy}>
-              <Sparkles size={12} /> Recompute
-            </button>
-          </div>
+          <button
+            type="button"
+            className="inline-flex items-center justify-center gap-1.5 px-3 min-h-[44px] rounded-lg text-xs font-bold flex-shrink-0"
+            style={{ background: 'white', border: '1px solid var(--line)', color: 'var(--ink)' }}
+            onClick={refreshAll}
+            disabled={busy}
+          >
+            <Sparkles size={14} /> Recompute
+          </button>
         </section>
 
         {/* Recommendations strip — only when there's something to act on */}
+        {/* COGS freshness banner — graceful degradation when USDA prices
+            are aging/stale. Sits ABOVE the chart so the operator reads the
+            caveat first, not after they've trusted the math. */}
+        <CogsStaleBanner
+          asOf={cogsAsOf}
+          region={currentRestaurant?.region ?? null}
+          className="mb-3"
+        />
+
+        {/* Menu-engineering 2×2 — the screenshot moment.
+            Always renders when we have a classify payload; if zero items
+            qualify (no recipes yet) the chart shows its own coverage
+            empty state instead of being hidden. */}
+        {engineering && (
+          <section className="mb-6">
+            <MenuEngineeringChart
+              payload={engineering}
+              totalActiveItems={menuItems.filter((m) => m.is_active === 1).length || engineering.items.length}
+              cogsSource={{
+                region: currentRestaurant?.region ?? null,
+                asOf: cogsAsOf,
+              }}
+              findRec={(itemId) =>
+                recommendations.find((r) => r.menu_item_id === itemId && r.status === 'suggested') ?? null
+              }
+            />
+          </section>
+        )}
+
         {recommendations.length > 0 && (
           <section className="mb-6">
             <h2 className="font-extrabold text-base mb-3 flex items-center gap-2" style={{ color: '#1A1A2E' }}>
@@ -214,15 +231,26 @@ export default function MenuPage() {
               Money you're leaving on the table
             </h2>
             <ul className="space-y-2">
-              {recommendations.map((rec) => (
-                <RecommendationCard
-                  key={rec.id}
-                  rec={rec}
-                  item={menuItems.find((m) => m.id === rec.menu_item_id) ?? null}
-                  onAccept={() => acceptRec(rec)}
-                  onDismiss={() => dismissRec(rec)}
-                />
-              ))}
+              {recommendations
+                .filter((rec) => rec.status === 'suggested')
+                .map((rec, i) => {
+                  const item = menuItems.find((m) => m.id === rec.menu_item_id) ?? null;
+                  return (
+                    <li
+                      key={rec.id}
+                      className="stagger-in"
+                      style={{ ['--stagger-i' as any]: i }}
+                    >
+                      <RecommendationCard
+                        rec={rec}
+                        itemName={item?.name ?? null}
+                        fallbackPrice={item?.price_cents ?? null}
+                        fallbackPlateCost={item?.true_cost_cents ?? null}
+                        density="comfortable"
+                      />
+                    </li>
+                  );
+                })}
             </ul>
           </section>
         )}
@@ -291,11 +319,14 @@ function MenuTable({ items }: { items: MenuItem[] }) {
               <td className="px-3 py-2 text-right tabular-nums">
                 {it.true_cost_cents !== null ? formatUsd(it.true_cost_cents) : <NoCostHint coverage={it.coverage_pct} />}
               </td>
-              <td className="px-3 py-2 text-right font-semibold tabular-nums" style={{ color: it.margin_pct !== null && it.margin_pct < 0.6 ? '#dc2626' : '#1A1A2E' }}>
+              <td
+                className="px-3 py-2 text-right font-semibold tabular-nums"
+                style={{ color: it.margin_pct !== null && it.margin_pct < 0.6 ? 'var(--money-negative)' : 'var(--ink)' }}
+              >
                 {it.margin_cents !== null ? formatUsd(it.margin_cents) : '—'}
               </td>
               <td className="px-3 py-2 text-right tabular-nums">
-                {it.margin_pct !== null ? `${Math.round(it.margin_pct * 100)}%` : '—'}
+                {it.margin_pct === null ? '—' : <MarginPctCell pct={it.margin_pct} />}
               </td>
             </tr>
           ))}
@@ -312,40 +343,28 @@ function NoCostHint({ coverage }: { coverage: number | null }) {
   return <span className="text-amber-600 text-xs">{coverage}% covered</span>;
 }
 
-function RecommendationCard({
-  rec,
-  item,
-  onAccept,
-  onDismiss,
-}: {
-  rec: Recommendation;
-  item: MenuItem | null;
-  onAccept: () => void;
-  onDismiss: () => void;
-}) {
-  const usd = formatUsd(rec.dollar_estimate_cents) + '/mo';
+/* Margin % cell — pairs color with an explicit icon + verbal "low" tag
+ * for items below the 60% target margin, so the warning isn't carried by
+ * color alone. */
+function MarginPctCell({ pct }: { pct: number }) {
+  const low = pct < 0.6;
+  const text = `${Math.round(pct * 100)}%`;
+  if (!low) return <span style={{ color: 'var(--ink)' }}>{text}</span>;
   return (
-    <li className="bg-white border border-slate-200 rounded-xl p-3 flex items-start gap-3">
-      <span className="inline-flex items-center justify-center w-10 h-10 rounded-lg font-bold text-white flex-shrink-0" style={{ background: '#7848BB' }}>
-        +
+    <span
+      className="inline-flex items-center justify-end gap-1 font-semibold"
+      style={{ color: 'var(--money-negative)' }}
+      aria-label={`${text} — below 60% margin target`}
+    >
+      <AlertTriangle size={11} strokeWidth={2.5} aria-hidden />
+      <span>{text}</span>
+      <span
+        className="text-[9px] font-bold uppercase tracking-wider ml-0.5 px-1 rounded"
+        style={{ background: 'var(--money-negative-bg)' }}
+      >
+        Low
       </span>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-3">
-          <span className="font-extrabold text-lg tabular-nums" style={{ color: '#1A1A2E' }}>{usd}</span>
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">{rec.kind.replace('_', ' ')}</span>
-        </div>
-        {item && <div className="text-xs text-slate-500 mt-0.5">{item.name}</div>}
-        {rec.narrative && <p className="text-sm text-slate-700 mt-1.5 leading-snug">{rec.narrative}</p>}
-      </div>
-      <div className="flex items-center gap-1 flex-shrink-0">
-        <button className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded" onClick={onAccept} title="Accept">
-          <Check size={16} />
-        </button>
-        <button className="p-1.5 text-slate-500 hover:bg-slate-50 rounded" onClick={onDismiss} title="Dismiss">
-          <X size={16} />
-        </button>
-      </div>
-    </li>
+    </span>
   );
 }
 

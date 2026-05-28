@@ -38,6 +38,39 @@ class TileSweepWorker
     /** Don't subdivide below this edge length — diminishing returns + cost spiral. */
     private const MIN_SUBDIVIDE_KM = 1.0;
 
+    /**
+     * Places (New) types passed as `excludedTypes` on every searchNearby
+     * call. Places with ANY of these types are dropped server-side, so
+     * we never pay for them and never have to filter them in
+     * VendorUpsertService::isLikelyJunk.
+     *
+     * Carafe targets B2B foodservice wholesale ONLY — consumer retail,
+     * QSR, and convenience are pure pollution. The list is intentionally
+     * broad on the retail side and conservative on B2B-adjacent types
+     * (we keep `bakery` and `butcher_shop` outside this list because
+     * some are legit commercial suppliers).
+     *
+     * NOTE: Places (New) `searchText` does NOT support excludedTypes —
+     * exclusion is searchNearby only. Text-query results still flow
+     * through the upsert-time name filter.
+     */
+    private const RETAIL_EXCLUDED_TYPES = [
+        'grocery_store',
+        'supermarket',
+        'convenience_store',
+        'liquor_store',
+        'gas_station',
+        'pharmacy',
+        'drugstore',
+        'restaurant',
+        'cafe',
+        'coffee_shop',
+        'bar',
+        'meal_delivery',
+        'meal_takeaway',
+        'food_court',
+    ];
+
     private Database $db;
     private PlacesClient $places;
     private VendorUpsertService $upserts;
@@ -362,6 +395,7 @@ class TileSweepWorker
                 ],
             ],
             'includedTypes'  => [$placesType],
+            'excludedTypes'  => self::RETAIL_EXCLUDED_TYPES,
             'maxResultCount' => 20,
         ]);
         $places    = $resp['places'] ?? [];

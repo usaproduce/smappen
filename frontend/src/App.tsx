@@ -43,6 +43,7 @@ import SeedCampaignBuilderPage   from './components/admin/SeedCampaignBuilderPag
 import SeedCampaignDetailPage    from './components/admin/SeedCampaignDetailPage';
 import ReviewQueuePage           from './components/admin/ReviewQueuePage';
 import CogsHealthPage            from './components/admin/CogsHealthPage';
+import CommandPalette            from './components/common/CommandPalette';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useAuthStore } from './stores/authStore';
 import { useTheme } from './hooks/useTheme';
@@ -57,6 +58,11 @@ export default function App() {
   return (
     <ErrorBoundary>
       <CarafeOnboardingGate />
+      {/* Global keyboard palette — mounted once so every authed surface
+          (map, Carafe restaurant workspace, vendor map, settings…) shares
+          the same Ctrl/Cmd+/ shortcut. Reads route via useLocation so it
+          offers the right commands per surface. */}
+      <CommandPalette />
       <Routes>
         <Route path="/" element={isAuthed ? <Navigate to="/dashboard" replace /> : <HomePage />} />
         <Route path="/blog" element={<BlogPage />} />

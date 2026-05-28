@@ -387,6 +387,7 @@ return function (Router $r) {
     $r->get('/api/ingredient-catalog/coverage',                 [MenuController::class, 'ingredientCatalogCoverage'], $auth);
     $r->post('/api/restaurants/{id}/plate-costs/recompute',     [MenuController::class, 'recomputePlateCosts'],   $auth);
     $r->get('/api/restaurants/{id}/cogs/overpay',               [MenuController::class, 'overpayFlags'],          $auth);
+    $r->get('/api/restaurants/{id}/reports/money-found.pdf',    [MenuController::class, 'moneyFoundReport'],      $auth);
     $r->post('/api/restaurants/{id}/recipes/paste/preview',     [MenuController::class, 'previewPaste'],          $auth);
     $r->post('/api/restaurants/{id}/recipes/paste/commit',      [MenuController::class, 'commitPaste'],           $auth);
     $r->post('/api/restaurants/{id}/recipes/suggest',           [MenuController::class, 'suggestRecipe'],         $auth);

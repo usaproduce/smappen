@@ -489,3 +489,32 @@ export const recommendationsApi = {
     await api.post(`/api/recommendations/${id}/dismiss`);
   },
 };
+
+// ── Menu engineering 2x2 classification ───────────────────────────────────
+// Returns each active item with a plate cost (price + true_cost present)
+// stamped with its quadrant against the restaurant-median split. Items with
+// no plate cost are excluded — the chart's empty-state quotes coverage.
+export type MenuQuadrant = 'star' | 'puzzle' | 'plowhorse' | 'dog';
+
+export interface MenuEngineeringItem {
+  id: string;
+  name: string;
+  category: string | null;
+  price_cents: number;
+  true_cost_cents: number;
+  margin_cents: number;
+  volume_monthly: number;
+  quadrant: MenuQuadrant;
+}
+
+export interface MenuEngineeringPayload {
+  items: MenuEngineeringItem[];
+  medians: { margin_cents: number; volume_monthly: number } | null;
+}
+
+export const engineeringApi = {
+  async classify(restaurantId: string): Promise<MenuEngineeringPayload> {
+    const { data } = await api.get(`/api/restaurants/${restaurantId}/menu/classify`);
+    return data.data;
+  },
+};

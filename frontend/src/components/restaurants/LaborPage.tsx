@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Users2, AlertTriangle, AlertCircle, Lightbulb, Plus } from 'lucide-react';
+import { Users2, Lightbulb, Plus } from 'lucide-react';
 import { laborApi, type LaborAnalysis } from '../../api/restaurants';
+import type { Recommendation } from '../../stores/restaurantStore';
 import RestaurantWorkspaceLayout from './RestaurantWorkspaceLayout';
+import {
+  SkeletonBlock, SkeletonCard, SkeletonList, SkeletonChart,
+  LaborDemandChart, RecommendationCard, FreshnessChip,
+} from '../carafe';
 
 /**
  * Labor + Daypart — spec §5.6 + §5.7.
@@ -82,50 +87,83 @@ export default function LaborPage() {
         )}
 
         {loading ? (
-          <div className="space-y-2"><div className="skeleton h-20" /><div className="skeleton h-40" /></div>
-        ) : !data ? null : (
+          <div className="space-y-4" aria-busy="true" aria-live="polite">
+            <SkeletonCard minH={96} />
+            <SkeletonChart height={260} />
+            <div className="space-y-2">
+              <SkeletonBlock className="h-4 w-48" />
+              <SkeletonList rows={3} rowHeight={88} />
+            </div>
+          </div>
+        ) : !data ? (
+          <LaborEmptyState />
+        ) : (
           <>
-            <section className="bg-white border border-slate-200 rounded-xl p-4">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Median revenue per cover this window</div>
-              <div className="text-2xl font-extrabold tabular-nums mt-1" style={{ color: '#1A1A2E' }}>
-                ${(data.median_rpc / 100).toFixed(2)} <span className="text-sm font-semibold text-slate-500">/ shift hour</span>
+            <section
+              className="rounded-xl border p-4"
+              style={{ background: 'white', borderColor: 'var(--line-soft)' }}
+            >
+              <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--slate)' }}>
+                  Median revenue per cover this window
+                </div>
+                <FreshnessChip
+                  timestamp={`${data.window.end}T23:59:59`}
+                  label="through"
+                  freshUntilMinutes={36 * 60}
+                  staleAfterMinutes={7 * 24 * 60}
+                />
               </div>
-              <p className="text-xs text-slate-600 mt-1">
-                Hours where revenue-per-cover deviates 2× from this median are flagged below. If most hours show no covers, add some shifts using the button above.
+              <div className="text-2xl font-extrabold tabular-nums mt-1" style={{ color: 'var(--ink)' }}>
+                ${(data.median_rpc / 100).toFixed(2)}{' '}
+                <span className="text-sm font-semibold" style={{ color: 'var(--slate)' }}>/ shift hour</span>
+              </div>
+              <p className="text-xs mt-1" style={{ color: 'var(--body)' }}>
+                The chart below overlays staffing against demand by hour-of-day. Tinted bands flag windows
+                running over- or under-staffed; the slow-window suggestions sit below as rec cards.
               </p>
             </section>
 
-            <FlagList
-              title="Under-staffed hours (revenue/cover too high)"
-              icon={<AlertCircle size={14} className="text-amber-600" />}
-              rows={data.understaffed}
-            />
-            <FlagList
-              title="Over-staffed hours (revenue/cover too low)"
-              icon={<AlertTriangle size={14} className="text-rose-600" />}
-              rows={data.overstaffed}
-            />
+            <LaborDemandChart analysis={data} />
 
             <section>
-              <h2 className="font-extrabold text-base mb-3 flex items-center gap-2" style={{ color: '#1A1A2E' }}>
-                <Lightbulb size={16} style={{ color: '#7848BB' }} />
-                Slow windows — daypart suggestions
+              <h2 className="font-extrabold text-base mb-3 flex items-center gap-2" style={{ color: 'var(--ink)' }}>
+                <Lightbulb size={16} style={{ color: 'var(--brand)' }} />
+                Slow-window suggestions
               </h2>
               {data.slow_windows.length === 0 ? (
-                <div className="bg-slate-50 rounded-xl p-6 text-center text-sm text-slate-500">No slow windows in this period.</div>
+                <div
+                  className="rounded-xl p-6 text-center text-sm flex flex-col items-center gap-2"
+                  style={{ background: 'var(--money-positive-bg)', color: 'var(--money-positive)' }}
+                >
+                  <Lightbulb size={20} />
+                  <div className="font-semibold">No slow windows in this period</div>
+                  <div style={{ color: 'var(--slate)' }}>
+                    Every hour with sales pulled its weight against the median.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowShiftForm(true)}
+                    className="inline-flex items-center gap-1.5 mt-1 px-3 min-h-[40px] rounded-lg font-bold text-xs"
+                    style={{ background: 'var(--brand)', color: 'white' }}
+                  >
+                    <Plus size={14} /> Add another shift
+                  </button>
+                </div>
               ) : (
                 <ul className="space-y-2">
-                  {data.slow_windows.slice(0, 12).map((s, i) => (
-                    <li key={i} className="bg-white border border-slate-200 rounded-xl p-3 flex items-start gap-3">
-                      <span className="inline-flex items-center justify-center w-12 h-12 bg-violet-50 rounded-lg font-bold" style={{ color: '#7848BB' }}>
-                        {String(s.hour).padStart(2, '0')}
-                      </span>
-                      <div className="flex-1">
-                        <div className="font-semibold text-sm" style={{ color: '#1A1A2E' }}>
-                          {s.date} · {s.hour}:00 — ${(s.revenue_cents / 100).toFixed(0)} revenue
-                        </div>
-                        <p className="text-sm text-slate-700 mt-1">{s.suggestion}</p>
-                      </div>
+                  {data.slow_windows.slice(0, 8).map((s, i) => (
+                    <li
+                      key={`${s.date}-${s.hour}`}
+                      className="stagger-in"
+                      style={{ ['--stagger-i' as any]: i }}
+                    >
+                      <RecommendationCard
+                        rec={slowWindowToRec(s, data.median_rpc)}
+                        itemName={null}
+                        density="comfortable"
+                        readonly
+                      />
                     </li>
                   ))}
                 </ul>
@@ -138,25 +176,62 @@ export default function LaborPage() {
   );
 }
 
-function FlagList({ title, icon, rows }: { title: string; icon: React.ReactNode; rows: any[] }) {
-  if (rows.length === 0) return null;
+function LaborEmptyState() {
   return (
-    <section>
-      <h2 className="font-extrabold text-sm mb-2 flex items-center gap-2" style={{ color: '#1A1A2E' }}>{icon} {title}</h2>
-      <ul className="space-y-1.5">
-        {rows.slice(0, 8).map((row, i) => (
-          <li key={i} className="bg-white border border-slate-200 rounded p-2 text-xs flex items-center gap-3">
-            <span className="font-bold tabular-nums" style={{ color: '#1A1A2E' }}>{row.date} · {row.hour}:00</span>
-            <span className="text-slate-500">{row.covers} cover{row.covers === 1 ? '' : 's'}</span>
-            <span className="text-slate-500">${(row.revenue_cents / 100).toFixed(0)} rev</span>
-            <span className="text-slate-500">$/cover: ${(row.revenue_per_cover / 100).toFixed(2)}</span>
-            <span className="flex-1" />
-            <span className="text-slate-700 truncate max-w-[40%]">{row.note}</span>
-          </li>
-        ))}
-      </ul>
+    <section
+      className="rounded-xl border-2 border-dashed p-6 sm:p-10 text-center flex flex-col items-center gap-4"
+      style={{ background: 'white', borderColor: 'var(--brand-light)' }}
+    >
+      <span
+        aria-hidden
+        className="inline-flex items-center justify-center w-14 h-14 rounded-2xl"
+        style={{ background: 'var(--brand-light)', color: 'var(--brand)' }}
+      >
+        <Users2 size={26} strokeWidth={2.2} />
+      </span>
+      <div className="space-y-1.5 max-w-md">
+        <h2 className="font-extrabold text-lg" style={{ color: 'var(--ink)' }}>
+          No labor data for this window
+        </h2>
+        <p className="text-sm" style={{ color: 'var(--body)' }}>
+          Labor analysis needs at least one shift (or a POS feed with timecards) to compare
+          against revenue. Add a shift to start finding slow-window opportunities.
+        </p>
+      </div>
+      <p className="text-[11px]" style={{ color: 'var(--slate)' }}>
+        Use the <strong>+ Shift</strong> button in the header to record your first one.
+      </p>
     </section>
   );
+}
+
+/* Synthesizes a Recommendation-shaped object from a daypart slow-window
+ * so it can render through the unified <RecommendationCard>. The dollar
+ * anchor is the gap between this hour's revenue and the median revenue
+ * pace — i.e. the addressable upside if this hour ran like a normal one.
+ * The server-side slow-window endpoint isn't in the recommendations table
+ * yet, so the card is shown in readonly mode (no Accept/Dismiss). */
+function slowWindowToRec(
+  s: { date: string; hour: number; revenue_cents: number; suggestion: string },
+  medianRpc: number,
+): Recommendation {
+  // For the dollar estimate we use the slow-window's own revenue as the
+  // addressable spend — honest framing of "this hour is on your books
+  // generating $X; here's how to lift it." medianRpc enriches the payload
+  // for the why-this expander.
+  return {
+    id: `slow-${s.date}-${s.hour}`,
+    menu_item_id: null,
+    kind: 'reposition',
+    payload: { date: s.date, hour: s.hour, median_rpc_cents: medianRpc },
+    narrative: `${s.date} · ${s.hour}:00 — ${s.suggestion}`,
+    dollar_estimate_cents: s.revenue_cents,
+    status: 'suggested',
+    measured_impact_cents: null,
+    created_at: new Date().toISOString(),
+    decided_at: null,
+    measured_at: null,
+  };
 }
 
 function ShiftForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (input: { starts_at: string; ends_at?: string; employee_label?: string; role?: string; hourly_wage_cents?: number }) => void }) {
