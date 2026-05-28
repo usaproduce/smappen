@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { DollarSign } from 'lucide-react';
-import { foodCostApi, type FoodCostTheoretical } from '../../api/restaurants';
+import { foodCostApi, type CogsBenchmarkFreshness, type FoodCostTheoretical } from '../../api/restaurants';
 import RestaurantWorkspaceLayout from './RestaurantWorkspaceLayout';
 
 /**
@@ -82,6 +82,11 @@ export default function CostsPage() {
 
             <p className="text-xs text-slate-500 italic">{data.note}</p>
 
+            <CogsBenchmarkFreshnessFooter
+              isLive={data.benchmark_is_live ?? false}
+              entries={data.benchmark_freshness ?? []}
+            />
+
             <section>
               <h2 className="font-extrabold text-base mb-3" style={{ color: '#1A1A2E' }}>Top cost contributors</h2>
               {data.top_contributors.length === 0 ? (
@@ -137,3 +142,85 @@ function Tile({ label, value, tone = 'neutral' }: { label: string; value: string
 
 function firstOfMonth(): string { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; }
 function today(): string { return new Date().toISOString().slice(0, 10); }
+
+/**
+ * Mirrors the DataFreshnessFooter pattern used on the Demographics panel:
+ * tells the operator where each price came from and how long ago we
+ * pulled it. Quiet when fresh, amber when stale (>48h or no entries).
+ *
+ * "USDA Mid-Atlantic, refreshed 14 hours ago" — one line per
+ * (source, region) the restaurant's plate-cost lookups can hit.
+ */
+function CogsBenchmarkFreshnessFooter({
+  isLive,
+  entries,
+}: {
+  isLive: boolean;
+  entries: CogsBenchmarkFreshness[];
+}) {
+  if (!isLive && entries.length === 0) {
+    return (
+      <div className="text-[10px] flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
+        <span className="font-semibold">Source:</span>
+        <span>Stub prices only — USDA + GreenDock ingest not yet run.</span>
+      </div>
+    );
+  }
+
+  const sortedEntries = [...entries].sort((a, b) =>
+    a.last_ingested_at < b.last_ingested_at ? 1 : -1,
+  );
+
+  return (
+    <div className="text-[10px] rounded-md border border-slate-200 bg-slate-50/60 px-2 py-1.5 space-y-0.5">
+      <div className="font-semibold text-slate-600">Benchmark provenance</div>
+      {sortedEntries.length === 0 ? (
+        <div className="text-slate-500">No non-stub batches in last 30 days.</div>
+      ) : (
+        sortedEntries.map((e) => {
+          const ageHrs = ageHours(e.last_ingested_at);
+          const stale = ageHrs > 48;
+          return (
+            <div
+              key={`${e.source}|${e.region ?? 'null'}`}
+              className={`flex items-center gap-1.5 ${stale ? 'text-amber-800' : 'text-slate-500'}`}
+            >
+              <span className="font-semibold">{sourceLabel(e.source)}</span>
+              <span>{e.region ?? 'national'}</span>
+              <span>·</span>
+              <span>{e.rows} rows</span>
+              <span>·</span>
+              <span>refreshed {formatAge(ageHrs)}</span>
+              {stale && (
+                <span className="ml-auto font-bold uppercase tracking-wider">stale</span>
+              )}
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+function sourceLabel(source: string): string {
+  switch (source) {
+    case 'usda':             return 'USDA';
+    case 'greendock':        return 'GreenDock';
+    case 'usa_produce':      return 'USA Produce';
+    case 'foundation_foods': return 'Foundation Foods';
+    case 'stub':             return 'Stub';
+    default:                 return source;
+  }
+}
+
+function ageHours(iso: string): number {
+  const t = new Date(iso.replace(' ', 'T')).getTime();
+  if (Number.isNaN(t)) return 9999;
+  return (Date.now() - t) / 3_600_000;
+}
+
+function formatAge(h: number): string {
+  if (h < 1)   return `${Math.round(h * 60)} min ago`;
+  if (h < 48)  return `${Math.round(h)} hours ago`;
+  return `${Math.round(h / 24)} days ago`;
+}

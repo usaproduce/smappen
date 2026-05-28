@@ -65,6 +65,10 @@ export const restaurantsApi = {
   async archive(id: string): Promise<void> {
     await api.delete(`/api/restaurants/${id}`);
   },
+  async cloneSample(): Promise<{ id: string }> {
+    const { data } = await api.post('/api/onboarding/clone-sample-restaurant');
+    return data.data;
+  },
 };
 
 export const posApi = {
@@ -143,6 +147,89 @@ export const roiApi = {
   },
 };
 
+// War-room aggregate — bundles ROI, today's service, POS, freshness,
+// the highest-dollar Top Move, and the recent-digest callout into a
+// single round-trip so RestaurantOverviewPage can hit Lighthouse ≥ 90.
+export interface OverviewRoi extends RoiMonthly {
+  last_updated_at: string | null;
+}
+
+export interface OverviewTrendPoint {
+  month_start: string;
+  found_cents: number;
+}
+
+export interface OverviewTodayService {
+  date: string;
+  covers: number;
+  revenue_cents: number;
+  revenue_per_cover_cents: number | null;
+  food_cost_pct: number | null;
+  last_sale_at: string | null;
+  note: string | null;
+}
+
+export interface OverviewPos {
+  connected: boolean;
+  provider: string | null;
+  connected_at: string | null;
+  last_synced_at: string | null;
+  last_sale_at: string | null;
+  integrations: Array<{ provider: string; connected_at?: string; last_synced_at: string | null }>;
+}
+
+export interface OverviewUsdaPrices {
+  as_of: string;
+  updated_at: string | null;
+}
+
+export interface OverviewDigest {
+  sent_at: string;
+  week_start: string;
+  rec_count: number;
+  total_cents: number;
+  rec_ids: string[];
+}
+
+export interface OverviewTopMove {
+  id: string;
+  menu_item_id: string | null;
+  menu_item_name: string | null;
+  kind: Recommendation['kind'];
+  payload: Record<string, any> | null;
+  narrative: string | null;
+  dollar_estimate_cents: number;
+  created_at: string;
+  menu_item_price_cents: number | null;
+  plate_cost_cents: number | null;
+}
+
+export interface OverviewGoals {
+  food_cost_pct_target: number | null;
+  food_cost_pct_warn: number;
+  food_cost_pct_good: number;
+}
+
+export interface OverviewPayload {
+  roi: OverviewRoi;
+  roi_trend: OverviewTrendPoint[];
+  today_service: OverviewTodayService | null;
+  pos: OverviewPos;
+  usda_prices: OverviewUsdaPrices | null;
+  digest: OverviewDigest | null;
+  top_move: OverviewTopMove | null;
+  next_moves: OverviewTopMove[];
+  open_recs_count: number;
+  goals: OverviewGoals;
+}
+
+export const overviewApi = {
+  async get(restaurantId: string): Promise<OverviewPayload> {
+    const { data } = await api.get(`/api/restaurants/${restaurantId}/overview`);
+    return data.data;
+  },
+};
+
 export type GoalMetric = 'food_cost_pct' | 'avg_check_cents' | 'margin_pct' | 'weekly_revenue_cents';
 export type GoalCadence = 'weekly' | 'monthly' | 'quarterly';
 
@@ -175,6 +262,14 @@ export const goalsApi = {
   },
 };
 
+export interface CogsBenchmarkFreshness {
+  source: string;
+  region: string | null;
+  as_of: string;
+  last_ingested_at: string;
+  rows: number;
+}
+
 export interface FoodCostTheoretical {
   period_start: string;
   period_end: string;
@@ -184,6 +279,8 @@ export interface FoodCostTheoretical {
   coverage_pct: number;
   top_contributors: Array<{ menu_item_id: string; name: string; qty_sold: number; cost_cents: number; revenue_cents: number }>;
   note: string;
+  benchmark_freshness?: CogsBenchmarkFreshness[];
+  benchmark_is_live?: boolean;
 }
 
 export const foodCostApi = {
