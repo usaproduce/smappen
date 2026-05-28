@@ -234,6 +234,11 @@ return function (Router $r) {
     $r->delete('/api/saved-comparisons/{id}', [OpsController::class, 'deleteSavedComparison'], $auth);
     $r->get('/api/activity',           [OpsController::class, 'activityFeed'],        $auth);
     $r->get('/api/stats/dashboard',    [OpsController::class, 'dashboardStats'],      $auth);
+    $r->get('/api/stats/restaurants-overview', [OpsController::class, 'restaurantsOverview'], $auth);
+    $r->get('/api/dashboard/briefing', [OpsController::class, 'dashboardBriefing'],   $auth);
+    $r->get('/api/dashboard/alerts',   [OpsController::class, 'listDashboardAlerts'], $auth);
+    $r->post('/api/dashboard/alerts',  [OpsController::class, 'createDashboardAlert'],$auth);
+    $r->delete('/api/dashboard/alerts/{id}', [OpsController::class, 'deleteDashboardAlert'], $auth);
     $r->get('/api/webhooks/deliveries',[OpsController::class, 'webhookDeliveries'],   $auth);
     $r->get('/api/tags',               [OpsController::class, 'listTags'],            $auth);
     $r->post('/api/tags',              [OpsController::class, 'createTag'],           $auth);
