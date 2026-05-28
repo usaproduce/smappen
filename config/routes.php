@@ -48,6 +48,7 @@ use App\Controllers\PosController;
 use App\Controllers\MenuController;
 use App\Controllers\MenuEngineeringController;
 use App\Controllers\RoiController;
+use App\Controllers\OverviewController;
 use App\Controllers\PlanningController;
 use App\Controllers\GoalController;
 use App\Controllers\FoodCostController;
@@ -322,8 +323,10 @@ return function (Router $r) {
     // Onboarding — first-run wizard + sample clone + activation funnel stamps
     $r->post('/api/onboarding/use-case',    [OnboardingController::class, 'setUseCase'], $auth);
     $r->post('/api/onboarding/seen',        [OnboardingController::class, 'markSeen'],   $auth);
+    $r->post('/api/onboarding/reset',       [OnboardingController::class, 'reset'],      $auth);
     $r->get('/api/onboarding/state',        [OnboardingController::class, 'state'],      $auth);
     $r->post('/api/onboarding/clone-sample',[OnboardingController::class, 'cloneSample'],$auth);
+    $r->post('/api/onboarding/clone-sample-restaurant', [RestaurantController::class, 'cloneSample'], $auth);
     $r->post('/api/onboarding/activate',    [OnboardingController::class, 'activate'],   $auth);
 
     // Alerts — generic threshold/event rules + delivery digest
@@ -391,6 +394,9 @@ return function (Router $r) {
     // ROI ledger — Carafe-found-you-$X-this-month.
     $r->get('/api/restaurants/{id}/roi/monthly',                [RoiController::class, 'monthly'], $auth);
     $r->post('/api/restaurants/{id}/roi/measure',               [RoiController::class, 'measure'], $auth);
+
+    // War-room overview — single fetch behind RestaurantOverviewPage.
+    $r->get('/api/restaurants/{id}/overview',                   [OverviewController::class, 'show'], $auth);
 
     // Planning sandbox — model a menu change / new location before committing.
     $r->get('/api/sandbox',                                     [PlanningController::class, 'index'],   $auth);

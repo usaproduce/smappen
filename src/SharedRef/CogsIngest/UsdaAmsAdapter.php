@@ -30,7 +30,7 @@ class UsdaAmsAdapter implements CogsIngestAdapter
 
     private string $apiKey;
 
-    private const ENDPOINT_FMT = 'https://marsapi.ams.usda.gov/services/v1.2/reports/%s/Report Details';
+    private const ENDPOINT_FMT = 'https://marsapi.ams.usda.gov/services/v1.2/reports/%s/Report%%20Details';
 
     /**
      * Average pounds per single bushel by commodity. USDA AMS reports

@@ -36,6 +36,7 @@ import SavedVendorsPage from './components/vendors/SavedVendorsPage';
 // Operators reach it by direct URL: /admin/carafe.
 import AdminOnlyRoute            from './components/admin/AdminOnlyRoute';
 import CarafeAdminLayout         from './components/admin/CarafeAdminLayout';
+import CarafeOnboardingGate      from './components/onboarding/CarafeOnboardingGate';
 import CarafeAdminHome           from './components/admin/CarafeAdminHome';
 import SeedCampaignsListPage     from './components/admin/SeedCampaignsListPage';
 import SeedCampaignBuilderPage   from './components/admin/SeedCampaignBuilderPage';
@@ -54,6 +55,7 @@ export default function App() {
   useOrphanOverlayCleanup();
   return (
     <ErrorBoundary>
+      <CarafeOnboardingGate />
       <Routes>
         <Route path="/" element={isAuthed ? <Navigate to="/dashboard" replace /> : <HomePage />} />
         <Route path="/blog" element={<BlogPage />} />

@@ -78,6 +78,16 @@ export default function ProfileSettings() {
     }
   }
 
+  async function resetOnboarding() {
+    if (!confirm('Reset onboarding? The first-run wizards (Smappen and Carafe) will re-appear on your next page load.')) return;
+    try {
+      await api.post('/api/onboarding/reset');
+      toast.success('Onboarding reset — wizards will reappear on next page load');
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error ?? 'Failed');
+    }
+  }
+
   return (
     <div className="space-y-6 max-w-2xl">
       <Card title="Profile">
@@ -132,6 +142,17 @@ export default function ProfileSettings() {
         <div className="flex justify-end">
           <button className="btn btn-secondary" onClick={changePassword} disabled={pwdSaving}>
             {pwdSaving ? 'Saving…' : 'Update password'}
+          </button>
+        </div>
+      </Card>
+
+      <Card title="Onboarding">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm text-slate-600">
+            Reset the first-run wizards. The next time you visit Smappen or Carafe, the welcome modal will appear again.
+          </div>
+          <button className="btn btn-secondary flex-shrink-0" onClick={resetOnboarding}>
+            Reset onboarding
           </button>
         </div>
       </Card>

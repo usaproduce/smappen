@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import { useJsApiLoader } from '@react-google-maps/api';
 import Header from './Header';
 import AppNav from './AppNav';
@@ -149,11 +150,15 @@ export default function AppLayout() {
                 onImport={() => setImportOpen(true)}
               />
             </ErrorBoundary>
-            {selectedAreaId && (
-              <ErrorBoundary scope="Area details" inline>
-                <RightPanel />
-              </ErrorBoundary>
-            )}
+            {/* AnimatePresence so the panel's exit (spring back into the
+                icon rail) actually plays before unmount. */}
+            <AnimatePresence>
+              {selectedAreaId && (
+                <ErrorBoundary scope="Area details" inline>
+                  <RightPanel />
+                </ErrorBoundary>
+              )}
+            </AnimatePresence>
             <RightToolbar
               onCreateArea={() => setCreatorOpen(true)}
               onImport={() => setImportOpen(true)}

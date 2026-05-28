@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { X, MapPin, Car, Bike, Footprints, Clock, Info, Users, Building2, Database, Columns2, Camera, Pencil } from 'lucide-react';
 import StreetViewModal from '../map/StreetViewModal';
 import { useMapStore } from '../../stores/mapStore';
@@ -36,6 +37,7 @@ const modeLabel: Record<string, string> = {
 export default function RightPanel() {
   const { selectedAreaId, selectArea, openTimeMachine, rightPanelTab, setRightPanelTab, openAreaEditor } = useMapStore();
   const { areas } = useProjectStore();
+  const reduceMotion = useReducedMotion();
   // Tab state lives in mapStore so the right-toolbar Demographics/Businesses
   // buttons can deep-link into a specific tab when an area is selected.
   const tab = rightPanelTab as Tab;
@@ -63,19 +65,29 @@ export default function RightPanel() {
   // have no travel_mode, instead of the old Hexagon which looked unrelated.
   const ModeIcon = modeIcon[area.travel_mode ?? ''] ?? MapPin;
 
-  // right-16 = 64px from edge. RightToolbar sits at right-4 w-12, so its
-  // left edge is at vw-64. Setting the panel's right to 64px makes them
-  // share a seam with no gap.
-  //
-  // Visual seam treatment (so the two cards read as ONE shape):
-  //   - rounded-l-xl rounded-r-none on this panel (flat right side)
-  //   - border-r-0 (no border between panel and toolbar)
-  //   - matching rounded-l-none on the toolbar's left side
-  //   - the panel's right-edge shadow is suppressed below in styles.css
-  //     (.panel-flush-toolbar) so the blob morph reveals a clean continuous
-  //     shape, not two shadowed cards bumping into each other.
+  // Standard panel enter/exit: short fade + small translate from the right.
+  // Reduced-motion users get fade-only. Nothing fancy.
+  const shellMotion = reduceMotion
+    ? {
+        initial: { opacity: 0 },
+        animate: { opacity: 1 },
+        exit: { opacity: 0 },
+        transition: { duration: 0.12 },
+      }
+    : {
+        initial: { opacity: 0, x: 12 },
+        animate: { opacity: 1, x: 0 },
+        exit: { opacity: 0, x: 12 },
+        transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const },
+      };
+
+  // right-20 (80px) puts the panel 16px clear of the 64px-wide toolbar block
+  // (toolbar = right-4 + w-12 → occupies right 64px). The two cards float
+  // independently with their own shadows and rounded corners.
   return (
-    <aside className="absolute top-4 right-16 w-[300px] md:w-[340px] lg:w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-l-xl rounded-r-none border border-r-0 border-slate-200 flex flex-col overflow-hidden z-20 panel-blob-open panel-flush-toolbar">
+    <motion.aside
+      {...shellMotion}
+      className="absolute top-4 right-20 w-[300px] md:w-[340px] lg:w-[360px] max-h-[calc(100%-2rem)] bg-white rounded-xl border border-slate-200 shadow-float flex flex-col overflow-hidden z-20">
       {/* Header */}
       <div className="px-4 pt-3 pb-3 border-b border-slate-100">
         {/* VT13 — breadcrumb so context is always visible. Truncates the
@@ -173,11 +185,17 @@ export default function RightPanel() {
         </div>
       </div>
 
-      {/* Body — keyed by tab so React remounts on every tile click and the
-          panel-body-blob-morph animation replays. The 2-second clip-path
-          + border-radius interpolation makes each tab look like it's blobbing
-          out of the toolbar tile that triggered it. */}
-      <div key={tab} className="flex-1 overflow-y-auto panel-body-blob-morph">
+      {/* Body — tabs cross-fade inside the persistent shell. Short, standard
+          opacity + 4px slide; nothing flashy. */}
+      <div className="flex-1 overflow-y-auto relative">
+       <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={tab}
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
+          animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -2 }}
+          transition={{ duration: reduceMotion ? 0.12 : 0.18, ease: [0.22, 1, 0.36, 1] as const }}
+        >
         {tab === 'overview' && (
           <div className="p-4 space-y-3">
             {/* Tweak #11 — four colored stat tiles instead of two plain cards.
@@ -253,6 +271,8 @@ export default function RightPanel() {
             Import a CSV via the toolbar to see your points inside this area.
           </div>
         )}
+        </motion.div>
+       </AnimatePresence>
       </div>
       {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} areaId={area.id} />}
       {streetViewOpen && area.center_lat != null && area.center_lng != null && (
@@ -299,7 +319,7 @@ export default function RightPanel() {
       {compareWith && (
         <ComparisonView areaIds={[area.id, compareWith]} onClose={() => setCompareWith(null)} />
       )}
-    </aside>
+    </motion.aside>
   );
 }
 

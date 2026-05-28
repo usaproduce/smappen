@@ -128,4 +128,35 @@ class RoiService
             'found_cents'      => (int) ($row['measured_cents'] ?? 0) + (int) ($row['pending_cents'] ?? 0),
         ];
     }
+
+    /**
+     * Trailing N-month ROI series — drives the sparkline next to the
+     * hero number on the war-room. Returns oldest → newest so the
+     * SVG can render left-to-right without re-sorting in the browser.
+     *
+     * Includes the current (partial) month at the end. Months with no
+     * activity emit a zero value so the sparkline keeps its baseline.
+     */
+    public function trend(string $restaurantId, int $months = 6): array
+    {
+        $months = max(1, min(24, $months));
+        $out = [];
+        for ($i = $months - 1; $i >= 0; $i--) {
+            $monthStart = date('Y-m-01 00:00:00', strtotime("-{$i} months"));
+            $monthEnd   = date('Y-m-t 23:59:59',  strtotime($monthStart));
+            $row = Database::getInstance()->fetch(
+                'SELECT
+                    COALESCE(SUM(CASE WHEN status = "measured"  AND measured_at BETWEEN ? AND ? THEN measured_impact_cents END), 0) AS measured,
+                    COALESCE(SUM(CASE WHEN status = "accepted" AND decided_at  BETWEEN ? AND ? THEN dollar_estimate_cents END), 0) AS pending
+                   FROM recommendations
+                  WHERE restaurant_id = ?',
+                [$monthStart, $monthEnd, $monthStart, $monthEnd, $restaurantId]
+            );
+            $out[] = [
+                'month_start' => substr($monthStart, 0, 10),
+                'found_cents' => (int) ($row['measured'] ?? 0) + (int) ($row['pending'] ?? 0),
+            ];
+        }
+        return $out;
+    }
 }

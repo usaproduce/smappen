@@ -54,6 +54,21 @@ class OnboardingController
         Response::success(['flags' => $flags]);
     }
 
+    /**
+     * Clear every onboarding flag for the caller — reopens the first-run
+     * wizards on next page-load. Used by the "Reset onboarding" button in
+     * profile settings. Doesn't touch use_case or activation_metrics:
+     * those are funnel events, not dismissable prompts.
+     */
+    public function reset(Request $request): void
+    {
+        Database::getInstance()->query(
+            'UPDATE users SET onboarding_flags = NULL WHERE id = ?',
+            [$request->user['id']]
+        );
+        Response::success(['flags' => []], 'Onboarding reset — wizards will re-appear on next load');
+    }
+
     public function state(Request $request): void
     {
         $row = Database::getInstance()->fetch(

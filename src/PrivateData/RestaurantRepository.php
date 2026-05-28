@@ -22,6 +22,35 @@ class RestaurantRepository
         return $row;
     }
 
+    public function findSampleByCuisine(string $cuisine): ?array
+    {
+        return self::normalize(Database::getInstance()->fetch(
+            'SELECT * FROM restaurants WHERE is_sample = 1 AND cuisine = ? LIMIT 1',
+            [$cuisine]
+        ));
+    }
+
+    /** True if the caller's org already has a sample-cloned demo restaurant. */
+    public function findExistingDemoForOrg(string $organizationId): ?array
+    {
+        return self::normalize(Database::getInstance()->fetch(
+            "SELECT * FROM restaurants
+              WHERE organization_id = ? AND archived_at IS NULL AND name LIKE 'Demo: %'
+              ORDER BY created_at DESC LIMIT 1",
+            [$organizationId]
+        ));
+    }
+
+    /** Count of non-archived restaurants in the org — used by the wizard gate. */
+    public function countByOrg(string $organizationId): int
+    {
+        $row = Database::getInstance()->fetch(
+            'SELECT COUNT(*) AS n FROM restaurants WHERE organization_id = ? AND archived_at IS NULL',
+            [$organizationId]
+        );
+        return (int) ($row['n'] ?? 0);
+    }
+
     public function findById(string $id, string $organizationId): ?array
     {
         return self::normalize(Database::getInstance()->fetch(
@@ -55,9 +84,9 @@ class RestaurantRepository
         $id = Database::uuid();
         Database::getInstance()->query(
             'INSERT INTO restaurants
-                (id, organization_id, name, address, lat, lng, timezone, region,
+                (id, organization_id, name, address, lat, lng, timezone, region, cuisine,
                  google_place_id, phone, website, is_sample, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())',
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())',
             [
                 $id, $organizationId,
                 $data['name'],
@@ -66,6 +95,7 @@ class RestaurantRepository
                 $data['lng'] ?? null,
                 $data['timezone'] ?? null,
                 $data['region'] ?? null,
+                $data['cuisine'] ?? null,
                 $data['google_place_id'] ?? null,
                 $data['phone'] ?? null,
                 $data['website'] ?? null,

@@ -1,97 +1,96 @@
-# Smappen — Platform Audit (v4)
+# Smappen — Platform Audit (v5)
 
-*Snapshot as of 2026-05-24, post-deploy `a21b00a`. Supersedes the v3 audit. Captures every surface, controller, table, animation, palette swatch, scaffolded feature, deployed bug fix, and operational tweak currently in the repo + on the droplet.*
+*Snapshot as of 2026-05-27, post-deploy `e667348`. Supersedes the v4 audit. Captures every surface, controller, table, animation, palette swatch, scaffolded feature, deployed bug fix, and operational tweak currently in the repo + on the droplet — including the entire **Carafe Vendor Network** sub-product that landed since v4.*
 
 ---
 
 ## Table of Contents
 
-1. [TL;DR + what changed since v3](#tldr--what-changed-since-v3)
+1. [TL;DR + what changed since v4](#tldr--what-changed-since-v4)
 2. [Tech stack](#tech-stack)
 3. [Architecture & data flow](#architecture--data-flow)
-4. [Database schema (16 migrations)](#database-schema-16-migrations)
-5. [Backend surface — controllers + endpoints (172 routes, 42 controllers)](#backend-surface--controllers--endpoints)
-6. [Services layer (22 services)](#services-layer)
+4. [Database schema (35 migrations)](#database-schema-35-migrations)
+5. [Backend surface — controllers + endpoints (61 controllers, ~250 routes)](#backend-surface--controllers--endpoints)
+6. [Services layer (54 services)](#services-layer)
 7. [Background jobs + operator scripts](#background-jobs--operator-scripts)
 8. [Frontend surface](#frontend-surface)
-9. [Feature catalog](#feature-catalog)
-10. [Plan enforcement + freemium scaffolding](#plan-enforcement--freemium-scaffolding)
-11. [Onboarding + activation funnel](#onboarding--activation-funnel)
-12. [Visual design system](#visual-design-system)
-13. [Animation system](#animation-system)
-14. [Dark mode end-to-end](#dark-mode-end-to-end)
-15. [Performance & caching](#performance--caching)
-16. [Security & auth](#security--auth)
-17. [Reliability & deploy resilience](#reliability--deploy-resilience)
-18. [Infrastructure & deploy](#infrastructure--deploy)
-19. [Testing](#testing)
-20. [Scaffolded but not yet wired](#scaffolded-but-not-yet-wired)
-21. [Known issues / open punch list](#known-issues--open-punch-list)
-22. [Bug-fix history (audit cycles)](#bug-fix-history-audit-cycles)
+9. [Feature catalog — Smappen core](#feature-catalog--smappen-core)
+10. [Carafe — restaurant workspace (Phase 1)](#carafe--restaurant-workspace-phase-1)
+11. [Carafe — vendor network (Phase 2)](#carafe--vendor-network-phase-2)
+12. [Carafe — seeding pipeline + admin](#carafe--seeding-pipeline--admin)
+13. [Carafe — GreenDock outbox](#carafe--greendock-outbox)
+14. [Plan enforcement + freemium scaffolding](#plan-enforcement--freemium-scaffolding)
+15. [Onboarding + activation funnel](#onboarding--activation-funnel)
+16. [Visual design system](#visual-design-system)
+17. [Animation system](#animation-system)
+18. [Dark mode end-to-end](#dark-mode-end-to-end)
+19. [Performance & caching](#performance--caching)
+20. [Security & auth](#security--auth)
+21. [Reliability & deploy resilience](#reliability--deploy-resilience)
+22. [Infrastructure & deploy](#infrastructure--deploy)
+23. [Testing](#testing)
+24. [Scaffolded but not yet wired](#scaffolded-but-not-yet-wired)
+25. [Known issues / open punch list](#known-issues--open-punch-list)
+26. [Bug-fix history (audit cycles)](#bug-fix-history-audit-cycles)
 
 ---
 
-## TL;DR + what changed since v3
+## TL;DR + what changed since v4
 
-Smappen is a multi-tenant territory mapping + demographics + competitive-intelligence platform for retail, franchise, and sales-territory planners. Live at **https://smappen.mygreendock.com**.
+Smappen is a multi-tenant territory mapping + demographics + competitive-intelligence platform for retail, franchise, and sales-territory planners. Since v4 it has grown a second product surface: **Carafe**, a restaurant-operations + B2B vendor-network platform that shares the same backend, JWT, and styling but owns its own routes, navigation, data wall, and seeding pipeline. Live at **https://smappen.mygreendock.com**.
 
-The product surface is split across four persistent surfaces around a Google Maps canvas:
-- **Left panel (360px)** — area list, sticky filter/sort/group chips, area thumbnails, drag-reorder, bulk select, visibility toggles
-- **Right panel** — opens on area selection; tabs are an icon+label segmented control (Overview / People / Businesses / Data); includes Street View button + compare button + breadcrumb
-- **Right toolbar** — vertical 40px icon strip; collapses to 3-button minimum, has 3D-tilt toggle, screenshot, advanced ✨ sparkle, etc.
-- **Advanced panel (10 lazy tabs)** — Territories, Analogs, Analytics (drive-time matrix + rebalancer + forecast), Cannibalize, Traffic, Optimize, Segments, Comments, Versions, Competitors, Field notes
+The product surface is now split across **two top-level products** sharing one auth and one chrome:
 
-Plus floating chrome:
-- **Heatmap panel** + animated loading pill + truncation hint
-- **Map style picker** (Detailed / Clean / Mono / Dark / Satellite) bottom-left
-- **Daypart panel** (24-hour traffic animation) docked along the bottom
-- **Command palette** (Ctrl+/) — global jump to project/area/action
-- **Onboarding checklist** — 5-step gamified intro for new accounts
-- **First-run wizard** — 3-step modal on first /app visit (use-case → address → auto-isochrone preview)
-- **What's New modal** — once-per-deploy release notes
-- **Quick-stats strip** — Areas / Reach / Favorites ribbon when ≥3 areas exist
-- **Presence cursors** — colored cursor pips for other users on the same project (SSE)
+- **Map app** (Smappen original) at `/app/*` — area drawing, demographics, advanced ✨ panel (Territories, Analogs, Analytics, Cannibalize, Traffic, Optimize, Segments, Comments, Versions, Competitors, Field notes), heatmap, daypart, presence cursors, command palette.
+- **Carafe restaurant workspace** at `/app/restaurants/*` — per-restaurant war-room dashboard, menu + plate-cost, recipe builder, theoretical food cost, labor + daypart, goals scorecard, POS integration (Square live, Toast/Clover scaffolded), recommendation accept/dismiss + ROI ledger, weekly digest email.
+- **Carafe vendor network** at `/app/vendors/*` — map-first vendor directory (drop-a-pin "who serves this point"), filtered list view, comparison + consolidation, saved vendors, vendor reviews, vendor claim workflow.
+- **Carafe admin** at `/admin/carafe/*` — seed-campaign builder + cost estimator, campaign control panel, dedupe + classify review queue.
 
-Outside `/app` there are now full **standalone pages**:
+Outside the apps there are still the **standalone surfaces** from v4:
 - `/` — marketing homepage (HomePage.tsx) — logged-in users redirect to `/dashboard`
 - `/dashboard` — three-column landing after login (projects + activity + usage)
 - `/projects` — full project gallery (grid + list views, search, sort, archive, rename)
 - `/blog` — blog index (3 seed posts)
-- `/pricing`, `/changelog` — pre-existing marketing
+- `/pricing`, `/changelog` — marketing
 - `/login`, `/register`, `/forgot-password`, `/reset-password`, `/verify-email` — auth
 - `/settings/*` — profile / team / integrations / api / webhooks / billing
 - `/share/:token` and `/embed/:token` — public surfaces
-- `/app/*` — the actual map application (was the catch-all in v3; now explicit)
 
-### Headline changes since v3
+Every authenticated surface mounts the unified **AppNav** (Dashboard / Restaurants / Vendors / Map / Settings) at the top.
 
-**Schema** — 14 → **16 migrations**. New tables:
-- `015_growth_features.sql` — `activation_metrics`, `alerts`, `alert_deliveries`, `custom_layers`, `embeds`, `integrations`, `da_boundaries_ca`, `demographics_cache_ca`, `demographics_history` + 6 new columns on `users`, `organizations`, `projects`
-- `016_bugfix_round.sql` — `stripe_webhook_events` (idempotency)
+### Headline changes since v4
 
-**8 new controllers** (31 → 42): `OnboardingController`, `AlertsController`, `CustomLayerController`, `EmbedController`, `PresenceController`, `DriveTimeMatrixController`, `TerritoryRebalancerController`, `ForecastController`. `CrmController` was rewritten from a stub into a real OAuth implementation with AES-256-CBC token storage. `MclpController` rewritten with spatial-index pre-filter.
+**Schema** — 16 → **35 migrations**. 19 new migrations, all numbered 017–035 (with one duplicate 029 for `restaurant_google_place`). All Carafe — the original Smappen schema is untouched.
 
-**2 new services** (20 → 22): `StatCanService` (Canadian Dissemination Areas, 2021 Census), `DemographicsHistoryService` (2019-2023 ACS vintages for the Trends sub-tab).
+**Controllers** — 42 → **61**. 19 net-new Carafe controllers across four batches:
+- Restaurants vertical (9): `RestaurantController`, `PosController`, `MenuController`, `MenuEngineeringController`, `RoiController`, `PlanningController`, `GoalController`, `FoodCostController`, `LaborController`
+- Vendor marketplace (5): `VendorController`, `VendorClaimController`, `ComparisonController`, `ConsolidationController`, `LeadController`
+- Vendor network map (3): `SavedVendorController`, `VendorMapController`, `VendorReviewController`
+- Carafe admin (2): `SeedCampaignController`, `ReviewQueueController`
 
-**Plan enforcement scaffolding** — `config/plans.php`, `App\Core\Middleware\PlanGate`, frontend `<UpgradeGate>` component. Flags currently all `true` per durable directive ("no restrictions on free tier"); cells flip per-feature later without code changes.
+**Services** — 22 → **54**. New service families: restaurant operations (`PlateCostService`, `MenuEngineeringService`, `RoiService`, `FoodCostService`, `LaborDemandService`, `PlanningService`, `GoalService`, `PosService`+adapters), vendor network (`VendorImportPipeline`, `VendorUpsertService`, `VendorDedupeService`, `VendorClassifierService`, `VendorGeometryService`, `VendorCacheService`, `VendorSearchService`, `VendorReviewService`, `VendorComparisonService`, `PlacesEnrichService`, `PlacesClient`, `PlacesRateLimiter`, `OrderConsolidationService`, `OSMAdapter`, `FoursquareAdapter`), seed campaigns (`SeedCampaignService`, `SeedEstimatorService`, `SeedDeltaService`, `TileSweepWorker`), benchmarking + lead funnel (`CogsBenchmarkService`, `LeadFunnelService`, `PlacesBenchmarkService`).
 
-**Visual upgrades** — full marketing homepage with gradient hero, dashboard, project gallery, radar chart in ComparisonView, Street View modal, 5 map style presets, "Made with Smappen" badge.
+**18 new background scripts** — the Carafe seeding pipeline (`seed-tile-worker.php`, `seed-dedupe.php`, `seed-classify.php`, `seed-enrich.php`, `seed-resweep.php`, `seed-coverage.php`, `seed-osm.php`, `seed-foursquare.php`), restaurant ops (`send-weekly-digest.php`, `measure-roi.php`, `compute-activation-metrics.php`), data seeding (`seed-vendor-chains.php`, `seed-vendors-manual.php`, `seed-sample-restaurant.php`, `seed-cogs-benchmark-stub.php`, `refresh-cogs-benchmark.php`), and operator utilities (`coverage-export-geojson.php`, `sweep-vendors-places.php`).
 
-**Reliability + ops fixes (multiple audit rounds today)**:
-- 6 spatial WKT axis-order bugs (POINT was lng-lat instead of lat-lng) — silent failures across imports, AI scoring, MCLP, analog search, field notes, competitor scans
-- 10 external curl calls now have `CURLOPT_CONNECTTIMEOUT => 3`
-- Heatmap memory exhaustion (10K → 3K tract cap, ST_AsGeoJSON precision per zoom, row buffer freed early)
-- PHP-FPM pool 5 → 20 workers
-- SSE presence stream short-circuits when no peers (was tying up workers)
-- Stripe webhook idempotency table
-- Stuck-job sweeper in cleanup-cron
-- Isochrone hard-capped at 60 min with friendly ORS error translation
-- Places search tiles past the 20-result cap
-- Territory generation returns 422 for "no census coverage" (was 500)
-- Service worker fully killed (was causing recurring stale-cache bugs)
-- Stale-chunk auto-recovery in `ErrorBoundary` + `main.tsx`
-- Orphan modal-backdrop sweeper on every navigation
-- Security headers (HSTS, X-Frame-Options, CSP frame-ancestors, etc.) on every API response
+**Frontend** — ~50 new components across `src/components/restaurants/`, `src/components/vendors/`, `src/components/admin/`. New stores: `restaurantStore`, `vendorMapStore`. New API clients: `restaurants.ts`, `vendors.ts`, `vendorMap.ts`, `carafe.ts`.
+
+**Navigation rewrite** — every authenticated surface now mounts exactly one **AppNav** (commits `ca34acf`, `6568eec`). Map-app, restaurants, vendors, admin, settings all share the same top bar. Old map-only chrome (the floating navbar in v4) was replaced with `AppNav` riding above the map canvas.
+
+**Carafe Vendor Network spec v3 phases 1–10 fully deployed**: cost-tracked Places sweep, deterministic dedupe + classify with review queue, three-tier enrichment cache, ORS-isochrone coverage geometry, OSM + Foursquare adapters, supplier_leads outbox to GreenDock, vendor claim workflow, vendor reviews. Worker pipeline is on the droplet; **no cron is scheduled yet** — campaigns currently rely on the "Run" button spawning a one-shot worker via `proc_open` (`0474c52`, `e667348`).
+
+**Places benchmark** (`c821e5f`) — `POST /api/places/benchmark` compares a user's POI search result against 10 similar-density US metros (Census-density-binned). Returns a "this category is dense / typical / sparse for your area type" verdict. Used by the POI panel to ground users.
+
+**Places saturation fix** (`b3769d2`, `6adff0f`) — POI text search now uses `locationRestriction` (bbox) and recursive tiling, so dense urban searches return the full set instead of stopping at 60. Caching layer (`3f3ac75`) prevents paying twice for the same query and survives a page reload.
+
+**Heatmap compact bar** (`0755a72`, `f5627d9`) — `HeatmapPanel` moved out of `LeftPanel` column, became a docked bottom-center compact bar with a settings tray, so it no longer collides with the side panels.
+
+**Areas full edit panel** (`bcb8875`, `9a11a00`) — `AreaCreator` now doubles as `AreaEditor`. Drive-time + mode + color + opacity + notes editable inline. One-button save (was a save + dismiss dance).
+
+**Restaurants: "Study trade area" auto-isochrone** (`c2b36cf`) — clicking the button on a restaurant pin auto-builds a 15-minute driving isochrone, opens the right panel on that area, and switches to the People tab.
+
+**RightPanel toolbar morph** (`0d1271a`, `817b64e`, `daeec3b`) — when the right panel opens, the card morphs out of the toolbar with a 2-second blob animation and Apple-glass bezier; clip-path inset prevents the seam. Re-fires on every tile/tab switch within the panel.
+
+**~30 Carafe bug-fix passes** — three labeled "Bug-fix pass" commits plus an OCD-tier series on B2B filtering (deny-list / brand whitelist) and worker spawn (PHP_BINARY resolves to php-fpm inside FPM; `e667348` fixed it to resolve `php` explicitly).
 
 ---
 
@@ -101,38 +100,43 @@ Outside `/app` there are now full **standalone pages**:
 - **PHP 8.3 FastCGI** behind Apache 2.4 (mod_proxy_fcgi to `/var/run/php/php8.3-fpm.sock`)
 - **MySQL 8.0.45** — strict SRID 4326 spatial mode, `axis-order=lat-long` enforced
 - Custom router + Request/Response in `App\Core\*` (no framework)
-- **PSR-4 autoload** under `App\*` → `src/`
+- **PSR-4 autoload** under `App\*` → `src/`, with sub-namespaces `App\PrivateData\*`, `App\MarketData\*`, `App\SharedRef\*` enforcing the Carafe data wall
 - **Composer deps**: `firebase/php-jwt`, `stripe/stripe-php`, `tecnickcom/tcpdf`, `vlucas/phpdotenv`, `phpmailer/phpmailer`, `monolog/monolog`, `predis/predis`, `aws/aws-sdk-php` (Spaces S3 SigV4)
 - **JWT** HS256 with `jti` claim, server-side revocation via `revoked_tokens` table, bulk revocation via `users.tokens_invalid_before`
-- **Sessions** for the CRM OAuth flow only (state token); everything else stateless JWT
+- **Sessions** for the CRM OAuth flow + POS OAuth state token only; everything else stateless JWT
 
 ### Frontend
 - **React 18 + TypeScript 5.5 + Vite 5**
 - **Tailwind v4** via `@tailwindcss/vite` (no build step at the project root — the `frontend/` workspace builds into `public/app/`)
-- **Zustand** for state (7 stores)
+- **Zustand** for state (**9 stores** now: auth, project, map, uiPrefs, cost, undo, saveStatus, restaurant, vendorMap)
 - **TanStack React Query v5** for server cache
 - **react-google-maps/api** with libraries: drawing, visualization, geometry, places
-- **Vite manualChunks**: `gmaps`, `charts` (recharts), `react-vendor`, `state` (zustand + RQ) split into stable cached vendor chunks; main bundle ~370KB gzipped 106KB
+- **Vite manualChunks**: `gmaps`, `charts` (recharts), `react-vendor`, `state` (zustand + RQ) split into stable cached vendor chunks
 - **Lucide React** for icons (single icon set across the app)
 - **react-hot-toast** for toasts
 - **Nunito** webfont (single family, weights 400-900)
-- **PWA** — manifest only (service worker disabled — see [Reliability section](#reliability--deploy-resilience))
+- **PWA** — manifest only (service worker disabled — see [Reliability](#reliability--deploy-resilience))
 
 ### External services
-- **Google Maps Platform** — Maps JS (map render), Geocoding API, Places API (New) — `searchNearby` + `searchText`, Static Maps API (PDF reports)
-- **OpenRouteService** (ORS) — driving + walking + cycling isochrones, traffic-aware matrix; 60-min hard cap
-- **US Census Bureau** — ACS 5-year (2023 vintage); migration script pulls all 50 states + DC (84,415 tracts)
-- **Statistics Canada (StatCan)** — 2021 Census of Population WDS API (scaffolded; operator script not yet run)
+- **Google Maps Platform** — Maps JS (map render), Geocoding API, Places API (New) — `searchNearby` + `searchText` + `placeDetails` + `placePhoto`, Static Maps API (PDF reports). Per-SKU pricing book in `config/google_places_pricing.php`.
+- **OpenRouteService** (ORS) — driving + walking + cycling isochrones, traffic-aware matrix; 60-min hard cap. Used by both the map app **and** the Carafe vendor network (vendor coverage polygons are ORS isochrones from each vendor location).
+- **OpenStreetMap Overpass** — free, unmetered vendor discovery via `OSMAdapter` (bulk import path for budget-friendly seeding)
+- **Foursquare Places API** — supplementary vendor discovery via `FoursquareAdapter` (~$0.0049 per call)
+- **Placekey** — cross-source vendor matching id (used as a shortcut in dedupe — identical placekey = auto-merge)
+- **US Census Bureau** — ACS 5-year (2023 vintage); 84,415 tracts. Also used for the new Places benchmark feature (matching user area to similar-density metros).
+- **Statistics Canada (StatCan)** — 2021 Census of Population WDS API (still scaffolded; operator script not yet run)
 - **Anthropic Claude** — `claude-haiku-4-5-20251001` for AI Site Scoring v2 (multi-dimensional with narrative). Falls back to deterministic local heuristic when `ANTHROPIC_API_KEY` is unset.
 - **Stripe** — checkout, customer portal, webhook signature verification, idempotency table
-- **Postmark / Resend** (whichever env is configured) — transactional email via `MailService`
-- **DigitalOcean Spaces** (S3-compatible) — file uploads (field-note photos, exports); SigV4 signing in `StorageService`
+- **Postmark / Resend** (whichever env is configured) — transactional email via `MailService` (now used by the Carafe weekly digest too)
+- **DigitalOcean Spaces** (S3-compatible) — file uploads (field-note photos, exports, vendor photos); SigV4 signing in `StorageService`
 - **Salesforce + HubSpot** — real OAuth in `CrmController`; tokens AES-256-CBC encrypted at rest in `integrations` table
+- **POS systems** — Square live (`Pos\SquareAdapter`); Toast + Clover are adapter-stubs awaiting their first OAuth credential
+- **USDA** + **GreenDock** — `cogs_benchmark` source backends (currently stubbed; refresh script `refresh-cogs-benchmark.php` exists for future ingest)
 
 ### Hosting
 - Single DigitalOcean droplet at **143.244.144.7** (`/var/www/smappen`)
 - **Apache 2.4** terminates TLS (Let's Encrypt via certbot), proxies `*.php` to PHP-FPM 8.3 sock
-- 4GB RAM, 2 vCPU
+- 4GB RAM, 2 vCPU (Carafe seeding has bumped peak memory; see infra section)
 - Subdomain: `smappen.mygreendock.com`
 - Same droplet also hosts `greendock` (separate vhost on PHP-FPM 8.2)
 
@@ -144,25 +148,16 @@ Outside `/app` there are now full **standalone pages**:
                         ┌────────────────────────────────────────────────┐
                         │   Browser  (React 18 SPA, /app/index.html)     │
                         │   ┌──────────────────────────────────────────┐ │
-                        │   │   AppLayout                              │ │
-                        │   │   ├─ Header (project switcher, save status,│ │
-                        │   │   │           undo/redo, cost widget,     │ │
-                        │   │   │           notifications, user menu)   │ │
-                        │   │   ├─ LeftPanel (areas, folders)           │ │
-                        │   │   ├─ MapCanvas (Google Maps)              │ │
-                        │   │   │   ├─ AreaPolygon × N                  │ │
-                        │   │   │   ├─ AreaCenterPins                   │ │
-                        │   │   │   ├─ POIMarkers, ImportedMarkers      │ │
-                        │   │   │   ├─ ChoroplethLayer (heatmap)        │ │
-                        │   │   │   ├─ PresenceCursors (SSE)            │ │
-                        │   │   │   └─ DrawingTools                     │ │
-                        │   │   ├─ RightToolbar (40px icons)            │ │
-                        │   │   ├─ RightPanel (area details, Street View)│ │
-                        │   │   ├─ AdvancedPanel (10 lazy tabs)         │ │
-                        │   │   ├─ HeatmapPanel                         │ │
-                        │   │   ├─ TimeMachinePanel (Daypart)           │ │
-                        │   │   ├─ FirstRunWizard (gated on flag)       │ │
-                        │   │   └─ OnboardingChecklist                  │ │
+                        │   │ AppNav (global, sticky, 48px)            │ │
+                        │   │   Dashboard · Restaurants · Vendors      │ │
+                        │   │   · Map · Settings  · user menu          │ │
+                        │   ├──────────────────────────────────────────┤ │
+                        │   │ Per-product surface (one of):            │ │
+                        │   │  • AppLayout (map app + advanced ✨)      │ │
+                        │   │  • RestaurantWorkspaceLayout (Carafe Ph1)│ │
+                        │   │  • VendorMapPage (Carafe vendor net)     │ │
+                        │   │  • CarafeAdminLayout (/admin/carafe)     │ │
+                        │   │  • SettingsLayout (/settings/*)          │ │
                         │   └──────────────────────────────────────────┘ │
                         └────────────────────────────────────────────────┘
                                           │ HTTPS / JWT in Authorization
@@ -178,22 +173,19 @@ Outside `/app` there are now full **standalone pages**:
                                           ▼
                         ┌────────────────────────────────────────────────┐
                         │   PHP-FPM 8.3 (pool: dynamic, max=20)          │
-                        │   public/index.php                             │
-                        │   ├─ Config::load → .env                       │
-                        │   ├─ Security headers (HSTS, X-Frame, CSP, …)  │
-                        │   ├─ CORS preflight short-circuit              │
-                        │   └─ Router::dispatch(Request)                 │
-                        │       ├─ Middleware::auth (JWT or X-Api-Key)   │
-                        │       ├─ Middleware::rateLimit (api_usage_log) │
-                        │       ├─ Middleware::requireRole               │
-                        │       ├─ PlanGate::feature (scaffold; off)     │
-                        │       └─ Controller::method(Request)           │
-                        │           ├─ Models / Services                 │
-                        │           ├─ CacheService (Redis or MySQL)     │
-                        │           ├─ Database (PDO, prepared)          │
-                        │           ├─ external HTTP (Google/ORS/Stripe/ │
-                        │           │   Anthropic/Postmark/Spaces/SF/HS) │
-                        │           └─ Response::success / ::error       │
+                        │   public/index.php → Router::dispatch          │
+                        │     ├─ Middleware::auth (JWT or X-Api-Key)     │
+                        │     ├─ Middleware::rateLimit (api_usage_log)   │
+                        │     ├─ Middleware::requireRole                 │
+                        │     ├─ PlanGate::feature (scaffold; off)       │
+                        │     └─ Controller::method(Request)             │
+                        │         ├─ Services (Smappen / Carafe)         │
+                        │         ├─ CacheService (Redis or MySQL)       │
+                        │         ├─ Database (PDO, prepared)            │
+                        │         ├─ external HTTP (Google/ORS/Stripe/   │
+                        │         │   Anthropic/Postmark/Spaces/SF/HS/   │
+                        │         │   OSM/Foursquare/POS providers)      │
+                        │         └─ Response::success / ::error         │
                         └────────────────────────────────────────────────┘
                                           │                            ▲
                                           ▼                            │
@@ -202,247 +194,414 @@ Outside `/app` there are now full **standalone pages**:
                               │  (smappen DB)    │         │  (optional —   │
                               │  + SPATIAL idxs  │         │   CacheService │
                               │                  │         │   falls back to│
-                              │                  │         │   `cache` row) │
-                              └──────────────────┘         └────────────────┘
+                              │  ── 3 reservoirs:│         │   `cache` row) │
+                              │  PRIVATE / MARKET│         └────────────────┘
+                              │  / SHARED_REF    │
+                              └──────────────────┘
                                           ▲
                                           │
-                              ┌──────────────────┐
-                              │  cron (root)     │
-                              │  scripts/cleanup-│
-                              │  cron.php hourly │
-                              │  scripts/run-    │
-                              │  competitor-     │
-                              │  scans.php daily │
-                              └──────────────────┘
+                              ┌────────────────────────────┐
+                              │  cron (root) + nohup spawns│
+                              │  Smappen:                  │
+                              │   • cleanup-cron.php (1h)  │
+                              │   • run-competitor-scans   │
+                              │     .php (daily)           │
+                              │  Carafe:                   │
+                              │   • job-worker.php (queue) │
+                              │   • seed-tile-worker.php   │
+                              │   • seed-dedupe.php        │
+                              │   • seed-classify.php      │
+                              │   • seed-enrich.php        │
+                              │   • seed-resweep.php       │
+                              │   • seed-coverage.php      │
+                              │   • seed-osm.php           │
+                              │   • seed-foursquare.php    │
+                              │   • send-weekly-digest.php │
+                              │  *** None of the Carafe    │
+                              │  workers have cron entries │
+                              │  yet — campaigns spawn one │
+                              │  via proc_open on "Run".   │
+                              └────────────────────────────┘
 ```
 
-**Multi-tenancy**: every business-scoped row carries `organization_id`. Every controller method that takes a resource ID must verify the resource's org matches `$request->user['organization_id']`. The audit-cycle on 2026-05-24 caught one drift (AlertsController accepting cross-org `area_id`) — now fixed.
+**Multi-tenancy**: every business-scoped row carries `organization_id`. Every controller method that takes a resource ID verifies the resource's org matches `$request->user['organization_id']`. The audit-cycle on 2026-05-24 caught one drift (`AlertsController` accepting cross-org `area_id`) — now fixed.
 
-**Tile cache layer**: heatmap viewport queries are quantized + cached for 7 days in `heatmap_tile_cache`. Per-area demographics cached on the `areas` row for 30 days. Reach calculations cached for 30 days in `reach_cache`. Places nearby + text cached 48h.
+**Carafe data wall**: `tests/DataWall/DataWallTest.php` greps the source tree to verify `App\MarketData\*` (cross-tenant vendor directory) never reads from `App\PrivateData\*` (restaurant POS, menus, costs). Repositories under those namespaces are the only callers permitted to touch their respective tables. `App\SharedRef\*` is the read-only middle reservoir (e.g., `cogs_benchmark` — market ingredient pricing).
+
+**Tile cache layer**: heatmap viewport queries are quantized + cached for 7 days in `heatmap_tile_cache`. Per-area demographics cached on the `areas` row for 30 days. Reach calculations cached for 30 days in `reach_cache`. Places nearby + text cached 48h, now with a coalesced-fetch lock so two concurrent users searching the same bbox don't pay twice (`3f3ac75`).
+
+**Carafe Places cost ledger**: every Places API call is recorded in `api_cost_events` (SKU + billable_units + unit_cost_usd + total_cost_usd + field_mask_hash). The shared rate limiter (`places_rate_buckets`) uses MySQL row-level locking to serialize callers across all PHP workers — intentionally low-tech, sufficient for current scale.
 
 ---
 
-## Database schema (16 migrations)
+## Database schema (35 migrations)
 
-All migrations live in `src/Migrations/`. Each is idempotent (CREATE TABLE IF NOT EXISTS + INFORMATION_SCHEMA guards on ALTERs).
+All migrations live in `src/Migrations/`. Each is idempotent (CREATE TABLE IF NOT EXISTS + INFORMATION_SCHEMA guards on ALTERs). One duplicate "029" exists (`029_carafe_restaurant_google_place.sql` + `029_carafe_seed_campaigns.sql`) — both run; the runner sorts by filename so they're deterministic.
+
+### Original Smappen schema (16, all from v4)
 
 | # | File | What it adds |
 |---|---|---|
 | 001 | `initial_schema.sql` | Core: `organizations`, `users`, `projects`, `folders`, `areas` (POLYGON geometry, SRID 4326), `imported_points`, `share_tokens` |
 | 002 | `cache_table.sql` | Generic `cache` table (key/value/expires_at) — fallback when Redis unavailable |
 | 003 | `demographics_indexes.sql` | `census_tracts` + `census_demographics` + SPATIAL INDEX on `geometry` |
-| 004 | `aggregated_geo_and_tile_cache.sql` | `census_counties` + `census_states` + `heatmap_tile_cache` (cache_key, response, hits) |
+| 004 | `aggregated_geo_and_tile_cache.sql` | `census_counties` + `census_states` + `heatmap_tile_cache` |
 | 005 | `advanced_features.sql` | `territory_generation_jobs`, `cannibalization_overlaps`, `mclp_runs`, `tract_segments`, `competitor_monitors`, `tracked_places`, `competitor_alerts`, `competitor_scans`, `field_notes`, `versions`, `comments`, `approvals`, `collaborators` |
-| 006 | `auth_and_jobs.sql` | `auth_tokens` (one-shot reset/verify), `revoked_tokens` (jti blacklist), `jobs` (queue), `webhook_deliveries`, `webhook_subscriptions`, `api_keys`, `api_usage_log` |
+| 006 | `auth_and_jobs.sql` | `auth_tokens`, `revoked_tokens`, `jobs`, `webhook_deliveries`, `webhook_subscriptions`, `api_keys`, `api_usage_log` |
 | 007 | `role_rename.sql` | Collaborator role enum drift fix (`approver` → `admin`) |
-| 008 | `bug_fixes.sql` | Idempotent INFORMATION_SCHEMA-guarded ALTERs for pre-MySQL-8.0.29 droplets |
+| 008 | `bug_fixes.sql` | Idempotent INFORMATION_SCHEMA-guarded ALTERs |
 | 009 | `api_cost_tracking.sql` | `api_usage_log.estimated_cost_usd` + `api_usage_log.endpoint` |
 | 010 | `area_favorites.sql` | `areas.is_favorite` |
-| 011 | `areas_geometry_type.sql` | `areas.geometry` POLYGON → GEOMETRY (so MultiPolygon territories can land cleanly) |
-| 012 | `areas_sort_order.sql` | `areas.sort_order` (persisted drag-reorder) |
+| 011 | `areas_geometry_type.sql` | `areas.geometry` POLYGON → GEOMETRY |
+| 012 | `areas_sort_order.sql` | `areas.sort_order` (drag-reorder) |
 | 013 | `ops_features.sql` | `saved_searches`, `saved_comparisons`, `activity_log`, `tags`, `area_tags`, `scheduled_reports` |
-| 014 | `data_scale_features.sql` | `data_scale_features` (tract-level demographic features for AnalogService), `data_scale_segments`, `import_batches` |
-| **015** | **`growth_features.sql`** | **`activation_metrics`, `alerts`, `alert_deliveries`, `custom_layers`, `embeds`, `integrations` (CRM tokens), `da_boundaries_ca`, `demographics_cache_ca`, `demographics_history`. Plus columns: `users.onboarding_flags JSON`, `users.use_case`, `users.signed_up_at`, `organizations.trial_ends_at`, `organizations.stripe_status`, `projects.is_sample`** |
-| **016** | **`bugfix_round.sql`** | **`stripe_webhook_events` (idempotency dedupe table; PK on event_id)** |
+| 014 | `data_scale_features.sql` | `data_scale_features` (tract feature vectors), `data_scale_segments`, `import_batches` |
+| 015 | `growth_features.sql` | `activation_metrics`, `alerts`, `alert_deliveries`, `custom_layers`, `embeds`, `integrations`, `da_boundaries_ca`, `demographics_cache_ca`, `demographics_history` + cols on users/orgs/projects |
+| 016 | `bugfix_round.sql` | `stripe_webhook_events` (idempotency dedupe) |
 
-Per the v4 audit: all 16 ran clean on the production droplet on 2026-05-24. Backup at `/var/www/smappen/backups/smappen-pre015-20260524T1838.sql.gz` (~600MB) taken before migration 015.
+### Carafe schema additions (19 new, 017–035)
+
+| # | File | What it adds |
+|---|---|---|
+| **017** | `carafe_scaffold.sql` | `cogs_benchmark` (shared market ingredient pricing, cross-tenant read; source ∈ usda/greendock/usa_produce/foundation_foods/stub) |
+| **018** | `carafe_vertical_slice.sql` | `restaurants` (org-scoped: name, address, lat/lng, timezone, region, is_sample, archived_at), `restaurant_locations` |
+| **019** | `carafe_pos_sales.sql` | `pos_integrations` (provider ∈ square/toast/clover, AES-encrypted access_token + refresh_token, expires_at), `menu_items` (synced from POS: name, category, price_cents, recipe_id, last_synced_at), `pos_sales` (transaction log with daypart_label) |
+| **020** | `carafe_planning_sandbox.sql` | `plans_sandbox` (hypothetical scenarios with payload JSON + projected JSON), `sandbox_snapshots` |
+| **021** | `carafe_activation_columns.sql` | Activation tracking columns on `restaurants` (first_recipe_at, first_recommendation_at, etc.) |
+| **022** | `carafe_goals.sql` | `goals` (metric ∈ food_cost_pct/avg_check_cents/margin_pct/weekly_revenue_cents; cadence ∈ weekly/monthly/quarterly), `goal_snapshots` (period actuals) |
+| **023** | `carafe_labor.sql` | `labor_shifts` (employee_label, role ∈ foh/boh/manager/prep, source ∈ square/toast/clover/manual, hourly_wage_cents), `labor_shift_snapshots`, `labor_demand_forecast` |
+| **024** | `carafe_vendors.sql` | `vendors` (canonical: name, brand, legal_name, hq_address, hq_lat/lng, type, primary_category, source, is_affiliated, claim_status, aggregate_rating, placekey, classification_confidence, classification_signals_json, classification_needs_review), `vendor_categories`, `vendor_search_index` |
+| **025** | `carafe_lead_funnel.sql` | `recommendations` (Carafe pricing/menu suggestions: kind, payload, dollar_estimate_cents, status), `recommendations_snapshots`, `recommendations_archive`, `comparison_requests` (audit trail), `supplier_leads` (HMAC outbox to GreenDock: status ∈ queued/emitted/acknowledged/closed_won/closed_lost, webhook_attempts) |
+| **026** | `carafe_vendor_network.sql` | `vendor_locations` (multi-location: address, google_place_id UNIQUE, lat/lng, POINT pt, is_primary, source, phone, zip5, state_code, name_soundex, name_prefix3, geohash6, placekey, dedupe_scanned_at), `vendor_coverage` (POLYGON geom + simplified_100m/1km/10km Douglas-Peucker tiers), `vendor_google_details`, `vendor_photos`, `vendor_categories`, `vendor_sources` (per-field provenance ledger), `vendor_listings`, `saved_vendors`, `vendor_searches` (alerts), `vendor_claims` |
+| **027** | `carafe_vendor_reviews.sql` | `vendor_reviews` (one per (org,vendor); operator scores on price/reliability/quality/accuracy/service; verification_strength ∈ restaurant_exists/pos_connected/manual_review), `vendor_review_aggregates`, `vendor_review_responses` |
+| **028** | `carafe_api_cost_events.sql` | `api_cost_events` indexes (sku, called_at, campaign_id, tile_id) |
+| **029a** | `carafe_restaurant_google_place.sql` | ALTER `restaurants` to add Google Place id + cached fields |
+| **029b** | `carafe_seed_campaigns.sql` | `seed_campaigns` (region_geojson, bbox, vendor_types, enrich_policy ∈ all/priority_types/on_demand, density_profile ∈ rural/suburban/dense/mixed, budget_cap_usd, status ∈ draft/estimating/approved/running/paused/done/failed/cancelled, estimate_low/expected/high_usd, spent_usd, tile_count, vendor_count), `seed_tiles` (FOR UPDATE SKIP LOCKED work queue with result_id_hash for re-sweep delta) |
+| **030** | `carafe_vendor_google_details.sql` | Full Google Places payload cache on `vendor_google_details` (atmosphere, status, primary_type, types_json, hours_json, attributes, raw_payload_json verbatim, field_mask_used, sku_cost_usd) + `vendor_google_reviews` + `vendor_google_photos` |
+| **031** | `carafe_places_rate_buckets.sql` | `places_rate_buckets` (shared token bucket: bucket ∈ places_search/places_details/places_photo; capacity, fill_rate_per_sec, tokens_available, last_refill_at — atomic via MySQL row lock) |
+| **032** | `carafe_dedupe_and_geocode.sql` | `vendor_dedupe_pairs` (left/right ordered UNIQUE pair, score, distance_m, shared_name_tokens, decision ∈ auto_merge/review/reject, block_key_hit, reviewed_at, review_outcome, applied_merge_at), `vendor_dedupe_decisions` |
+| **033** | `carafe_classification.sql` | Classification columns on `vendors` (confidence, signals_json audit trail, needs_review flag, classified_at, classification_reviewed_at) |
+| **034** | `carafe_coverage_simplification.sql` | Douglas-Peucker simplified geometry tiers on `vendor_coverage` (`simplified_100m`, `simplified_1km`, `simplified_10km`, `simplified_at`) for vector-tile rendering at different zoom levels |
+| **035** | `carafe_external_sources.sql` | `osm_id` UNIQUE + `foursquare_fsq_id` UNIQUE on `vendor_locations`; external source enum extended (`osm`, `foursquare`) on `vendor_locations.source` and `vendor_sources.source` |
+
+All 35 ran clean on the production droplet. Pre-migration backups at `/var/www/smappen/backups/`. Migration 016 was the last pre-Carafe checkpoint at `smappen-pre015-20260524T1838.sql.gz`.
 
 ---
 
 ## Backend surface — controllers + endpoints
 
-**42 controllers, 172 routes** in `config/routes.php`. Auth modes:
-- **Public** (no middleware) — health, public-share, webhook receivers, OpenAPI spec
-- **`Middleware::auth()`** — JWT in `Authorization: Bearer ...` OR `X-Api-Key` header OR `?token=` query param (the query-param fallback exists specifically for SSE EventSource, which can't set headers; the codebase only consults it when the header is absent)
-- **`Middleware::rateLimit()`** — per-api-name windowed quota tracked in `api_usage_log`. Adds `X-RateLimit-Limit/Remaining/Reset` headers and `Retry-After` on 429
-- **`Middleware::requireRole()`** — owner/admin/editor/viewer gates on team-admin routes
+**61 controllers, ~250 routes** in `config/routes.php`. Auth modes:
+- **Public** (no middleware) — health, public-share, webhook receivers, OpenAPI spec, POS OAuth callback (state-validated)
+- **`Middleware::auth()`** — JWT in `Authorization: Bearer ...` OR `X-Api-Key` header OR `?token=` query param (the query-param fallback exists for SSE EventSource, which can't set headers; the codebase only consults it when the header is absent)
+- **`Middleware::rateLimit(profile, limit, window_s)`** — per-api-name windowed quota tracked in `api_usage_log`. 14 profiles: `geocode 500/h`, `geocode_batch 20/h`, `import 20/h`, `places 300/h`, `territory_gen 30/h`, `mclp 30/h`, `traffic_iso 60/h`, `competitor_scan 60/h`, `reach 120/h`, `report 50/h`, `export 60/h`, `analog_finder 30/h`, `dtm 20/h`, `forecast 60/h`. Adds `X-RateLimit-Limit/Remaining/Reset` headers and `Retry-After` on 429
+- **`Middleware::requireRole(['admin','owner'])`** — gates the entire `/api/admin/*` surface and team-admin routes
 
-### Public (no auth)
+### Smappen core controllers (42, all from v4)
 
-- `GET /api/health` — DB ping, returns commit version + `connections` (current/max) for monitoring
-- `GET /api/openapi.json` — OpenAPI 3.1 spec covering all auth'd endpoints
-- `GET /api/docs` — Swagger UI
-- `GET /api/public/projects/{token}` — read-only project payload for `/share/:token`
-- `GET /api/public/projects/{token}/embed` — minimal embed-friendly payload for iframes
-- `POST /api/billing/webhook` — Stripe webhook receiver (verified by HMAC signature + idempotency via `stripe_webhook_events`)
-- `GET /robots.txt`, `/sitemap.xml` — SEO
+`HealthController`, `AuthController`, `ProjectController`, `FolderController`, `AreaController`, `DemographicsController`, `PlacesController`, `GeocodingController`, `HeatmapController`, `ReachController`, `IsochroneController`, `TrafficIsochroneController`, `ImportController`, `ExportController`, `ReportController`, `BillingController`, `UsageController`, `UploadController`, `CannibalizationController`, `AnalogController`, `DriveTimeMatrixController`, `ForecastController`, `TerritoryController`, `TerritoryRebalancerController`, `MclpController`, `PresenceController`, `CrmController`, `OpsController`, `SegmentationController`, `CollaborationController`, `NotificationController`, `CompetitorController`, `FieldNoteController`, `JobController`, `WebhookSubscriptionController`, `PublicShareController`, `AiScoringController`, `OpenApiController`, `OnboardingController`, `AlertsController`, `CustomLayerController`, `EmbedController`.
 
-### Auth (JWT or X-Api-Key)
+### Carafe controllers (19, new in v5)
 
-- `POST /api/auth/register` / `/login` — public
-- `POST /api/auth/refresh` / `/logout` — auth required
-- `GET /api/auth/me` — current user + plan
-- `POST /api/auth/request-reset` / `/reset` — password reset
-- `GET /api/auth/verify-email` / `POST /api/auth/resend-verification`
-- `PUT /api/auth/profile` / `POST /api/auth/change-password`
-- `GET /api/auth/api-key` / `POST /api/auth/api-key/regenerate` — long-lived API keys
+#### Restaurant operations (Phase 1)
 
-### Onboarding (new in v4)
+| Controller | Notes |
+|---|---|
+| `RestaurantController` | Org-scoped restaurant CRUD. Archive (soft-delete) instead of destroy. |
+| `PosController` | OAuth init + callback (state-validated) + sync for Square (Toast / Clover scaffolded). One row per (restaurant, provider) in `pos_integrations` with AES-256-CBC token storage. |
+| `MenuController` | Menu items, recipes, ingredients, plate-cost computation, COGS overpay flags. Recipes link to `cogs_benchmark` by ingredient_key. |
+| `MenuEngineeringService`'s controller — `MenuEngineeringController` | Recommendation engine — menu engineering matrix (stars/horses/puzzles/dogs), accept/dismiss ledger, dollar-quantified suggestions. |
+| `RoiController` | Monthly ROI summary; `measure()` runs A/B over POS sales pre vs. post recommendation accept; feeds the war-room "Carafe found you $X this month" tile. |
+| `PlanningController` | Planning sandbox — what-if scenarios (new location, menu change) without touching live data. |
+| `GoalController` | Operator scorecard — goals + snapshot trends per metric × cadence. |
+| `FoodCostController` | Theoretical food cost (POS sales × recipe-driven plate cost). Top 10 contributors. |
+| `LaborController` | Shift CRUD + analysis (over/under-staffed hours) + daypart suggestions (matches sales volume by hour-of-day to staffing). |
 
-- `POST /api/onboarding/use-case` — store `users.use_case`
-- `POST /api/onboarding/seen` — stamp a flag into `users.onboarding_flags JSON`
-- `GET /api/onboarding/state` — return flags + use_case + signed_up_at
-- `POST /api/onboarding/clone-sample` — copy the system-wide `is_sample` project (folders + areas with geometries) into the caller's workspace
-- `POST /api/onboarding/activate` — explicit activation-funnel stamps (`first_area`, `first_demographic`, etc.); most stamps fire automatically from controllers
+#### Vendor marketplace (Phase 2)
 
-### Core mapping
+| Controller | Notes |
+|---|---|
+| `VendorController` | Browse + show vendor directory. Cross-tenant read (MarketData reservoir). |
+| `VendorClaimController` | Vendor verification — claim → approve/reject → add listings. |
+| `ComparisonController` | Honest vendor comparison — flags affiliated vendors with disclosure badge. |
+| `ConsolidationController` | Order consolidation analysis — same basket across N vendors. |
+| `LeadController` | Funnel audit trail (`comparison_requests`) + outbox (`supplier_leads`) → GreenDock via HMAC webhook. |
 
-- `GET/POST/PUT/DELETE /api/projects/...` — CRUD + share + archive + bundle export
-- `GET /api/projects/{id}/folders` + folder CRUD
-- `GET/POST/PUT/DELETE /api/projects/{id}/areas` + reorder + `/areas/{id}/rebuild-boundary`
-- `GET /api/areas/{id}/demographics` — Census-backed (tract-overlap weighted)
-- **`GET /api/areas/{id}/demographics/trends`** — **new in v4**: per-vintage time series for any metric
-- `GET /api/areas/{id}/pois` — cached POIs for an area
-- `POST /api/demographics/compare` — multi-area comparison
-- `POST /api/areas/reach` / `POST /api/demographics/preview` — live area-sizing
-- `POST /api/isochrone/calculate` — drive/walk/cycle isochrones (capped at 60 min with friendly ORS error translation)
-- `POST /api/geocode` + `/geocode/batch`
-- `POST /api/places/nearby` (tiles past 20-result cap via 5 quadrant sub-calls) + `/places/search` (paginates up to 60 via nextPageToken) + `/places/{id}`
+#### Vendor network map (Phase 2)
 
-### Heatmap (choropleth)
+| Controller | Notes |
+|---|---|
+| `VendorMapController` | Bbox query, drop-a-pin "who serves this point" (PostGIS `ST_Contains` over `vendor_coverage`), detail with geometry. |
+| `VendorReviewController` | Submit (verified-operator only: must have a restaurant + matching POS connection OR manual review override), list, aggregate, vendor-response. |
+| `SavedVendorController` | User follow/shortlist. |
 
-- `GET /api/heatmap/tracts?bbox=lng1,lat1,lng2,lat2&metric=...&zoom=N&level=auto|state|county|tract`
-- Server tile cache + zoom-based LOD (state ≤7, county 8-9, tract ≥10)
-- Per-level row caps + ST_AsGeoJSON precision per zoom (state p=2, county p=3, tract p=4)
+#### Carafe admin (Phase 2)
 
-### Import / Export / Reports
+| Controller | Notes |
+|---|---|
+| `SeedCampaignController` | Cost estimator (pure math, zero API calls) + campaign CRUD + lifecycle (run/pause/resume/cancel/kick) + enrich + delta + resweep. Admin/owner role only. |
+| `ReviewQueueController` | Combined dedupe + classify review queue. Per-decision merge/reject/defer (dedupe) or approve/update (classify). |
 
-- `POST /api/projects/{id}/import/upload` → `/import/configure` → status
-- `GET /api/projects/{id}/export/areas|points` + `/api/areas/{id}/export/pois` (csv | xlsx | geojson | kml with per-color KML styles)
-- `POST /api/areas/{id}/report` / `/report.pdf` — TCPDF
-- `GET /api/report-templates` — **new in v4**: returns the template catalog (executive / site_selection / franchise_pitch / demographics_only)
+### Complete route map by namespace
 
-### Advanced (the ✨ sparkle panel)
+The full table below covers every route; auth column shows the middleware stack.
 
-- `POST /api/projects/{id}/territories/generate` (k-means balanced; 422 on no-coverage)
-- `POST /api/projects/{id}/optimize/locations` (MCLP greedy + local-search; spatial-indexed pre-filter; cap 500)
-- `POST /api/projects/{id}/rebalance` — sales-territory rebalancer
-- `POST /api/areas/{id}/analogs` — find demographically-similar tracts
-- `POST /api/drive-time-matrix` — N×M ORS matrix
-- `POST /api/areas/{id}/forecast` — demand forecasting from analogs
-- `GET /api/projects/{id}/cannibalization` — overlap risk tiers
-- `POST /api/isochrone/traffic` + `/grid` + `/day` — traffic-aware variants
-- `GET /api/projects/{id}/competitor-monitors` + CRUD + `/scan` + `/places` + `/alerts`
-- `GET /api/projects/{id}/field-notes` + CRUD + `/where-am-i`
-- `GET /api/segmentation/segments` + `/areas/{id}/segments` + `/projects/{id}/segments` + `/segmentation/recompute`
-- `POST /api/areas/{id}/ai-score` + `POST /api/projects/{id}/ai-rankings` (v2 with dimensions[reach, affluence, competition, segment_fit] + narrative)
+**`/api/auth/*`** (AuthController)
 
-### Collaboration
+| Method | Path | Auth |
+|---|---|---|
+| POST | `/auth/register` | public |
+| POST | `/auth/login` | public |
+| POST | `/auth/refresh` | auth |
+| POST | `/auth/logout` | auth |
+| GET | `/auth/me` | auth |
+| POST | `/auth/request-reset` | public |
+| POST | `/auth/reset` | public |
+| GET | `/auth/verify-email` | public |
+| POST | `/auth/resend-verification` | auth |
+| PUT | `/auth/profile` | auth |
+| POST | `/auth/change-password` | auth |
+| GET | `/auth/api-key` | auth |
+| POST | `/auth/api-key/regenerate` | auth |
 
-- `POST/GET /api/projects/{id}/versions` + `/api/versions/{id}` (snapshots)
-- `GET/POST /api/projects/{id}/comments` + resolve + delete
-- `GET /api/projects/{id}/changes` — change log
-- `GET/POST/DELETE /api/projects/{id}/collaborators/{userId}` (admin/editor/viewer roles)
-- `POST/GET /api/projects/{id}/approvals` + `/api/approvals/{id}/decide`
+**`/api/projects/*`** (ProjectController, FolderController, AreaController, CollaborationController, ImportController, ExportController, CompetitorController, FieldNoteController, CustomLayerController, EmbedController, PresenceController, OnboardingController, SegmentationController, TerritoryController, TerritoryRebalancerController, MclpController, AlertsController, AiScoringController, CannibalizationController, etc.)
 
-### Realtime presence (new — was scaffold in v3)
+Project CRUD: `GET/POST/PUT/DELETE /projects[/{id}]` + `archive` + `export` + `shared/{token}` (public).
+Folders: `GET/POST /projects/{id}/folders` + `PUT/DELETE /folders/{id}`.
+Areas: `GET/POST /projects/{id}/areas`, `reorder`, `GET/PUT/DELETE /areas/{id}`, `rebuild-boundary`, `bulk rebuild`.
+Demographics: `GET /areas/{id}/demographics` + `/trends` + `POST /demographics/compare`.
+POIs: `GET /areas/{id}/pois`.
+Heatmap: `GET /heatmap/tracts?bbox=...&metric=...&zoom=N&level=auto|state|county|tract`.
+Smart sizing: `POST /areas/reach` (rl-reach 120/h), `/demographics/preview`.
+Isochrone: `POST /isochrone/calculate` (capped 60m), `/isochrone/traffic[/grid|/day]` (rl-traffic 60/h).
+Geocode: `POST /geocode` (rl-geocode 500/h), `/geocode/batch` (rl-geocode-batch 20/h).
+Places (Smappen-side, distinct from Carafe vendor seeding): `POST /places/nearby` + `/places/search` + `POST /places/benchmark` (**new in v5**: compare user area POI count to 10 similar-density US metros) + `GET /places/{placeId}`. All rl-places 300/h.
+Reports: `POST /areas/{id}/report` + `/report.pdf` + `GET /report-templates` + `GET /reports[/{id}/download]`.
+Advanced: `POST /projects/{id}/territories/generate` + `optimize/locations` + `rebalance`; `POST /areas/{id}/analogs`; `POST /drive-time-matrix`; `POST /areas/{id}/forecast`; `GET /projects/{id}/cannibalization`; `GET/POST /projects/{id}/competitor-monitors` + scan + alerts; `GET/POST /projects/{id}/field-notes` + where-am-i; `GET /segmentation/segments` + per-area / per-project + recompute; `POST /areas/{id}/ai-score` + `POST /projects/{id}/ai-rankings`.
+Collaboration: versions, comments, change log, collaborators, approvals.
+Realtime: `POST /projects/{id}/presence/ping`, `GET /projects/{id}/presence/stream` (SSE; short-circuits to `retry: 30000` on empty peer list).
+Custom layers: `GET/POST /projects/{id}/custom-layers` + `PUT/DELETE /custom-layers/{id}` + `GET /custom-layers/{id}/points`.
+Embeds: `GET/POST /projects/{id}/embeds` + `PUT/DELETE /embeds/{id}`.
+Notifications: `GET /notifications`, `POST /notifications/{id}/read`, `read-all`.
+Alerts: 4-kind generic rules + test + recent-digest.
+Billing: `POST /billing/checkout`, `webhook` (public, HMAC + dedupe), `GET /subscription`, `POST /portal`, `cancel`.
+Usage: `GET /usage/today` + `/days` + `/pricing`, `POST /usage/log-map-load`.
+Jobs: `GET /jobs/{id}`, `POST /jobs/{id}/cancel`.
+Webhooks: `GET/POST/PUT/DELETE /webhooks/{id}`, `/test`, `/deliveries`, `/api/webhooks/deliveries` (recent log).
+Onboarding: `POST /onboarding/use-case`, `seen`, `GET /onboarding/state`, `POST /onboarding/clone-sample`, `activate`.
+Integrations (CRM): `POST /integrations/salesforce/connect` → `GET /integrations/salesforce/callback` (public) → `POST /integrations/salesforce/push`; same triplet for HubSpot.
+Public: `GET /public/projects/{token}` + `/public/projects/{token}/embed` + `/public/embeds/{token}` + `GET /openapi.json` + `/docs` + `robots.txt` + `sitemap.xml` + `POST /billing/webhook`.
 
-- `POST /api/projects/{id}/presence/ping` — broadcast mouse position
-- `GET /api/projects/{id}/presence/stream` — Server-Sent Events, short-circuits to `retry: 30000` when no peers (so a solo session doesn't pin a worker)
+**`/api/restaurants/*`** (Carafe Phase 1)
 
-### Operational tweaks
+| Method | Path | Controller@Method |
+|---|---|---|
+| GET | `/restaurants` | RestaurantController@index |
+| POST | `/restaurants` | RestaurantController@create |
+| GET | `/restaurants/{id}` | RestaurantController@show |
+| DELETE | `/restaurants/{id}` | RestaurantController@destroy (archive) |
+| GET | `/restaurants/{id}/pos` | PosController@listForRestaurant |
+| POST | `/restaurants/{id}/pos/{provider}/connect` | PosController@connect |
+| GET | `/integrations/pos/{provider}/callback` | PosController@callback (public, state-validated) |
+| POST | `/restaurants/{id}/pos/{provider}/sync` | PosController@sync |
+| GET | `/restaurants/{id}/menu` | MenuController@listMenu |
+| POST | `/restaurants/{id}/menu` | MenuController@createMenuItem |
+| PUT | `/menu-items/{id}/price` | MenuController@setPrice |
+| PUT | `/menu-items/{id}/recipe` | MenuController@setRecipe |
+| POST | `/restaurants/{id}/recipes` | MenuController@createRecipe |
+| GET | `/restaurants/{id}/recipes` | MenuController@listRecipes |
+| GET | `/recipes/{id}` | MenuController@showRecipe |
+| POST | `/recipes/{id}/ingredients` | MenuController@addIngredient |
+| DELETE | `/recipe-ingredients/{id}` | MenuController@removeIngredient |
+| GET | `/ingredient-catalog` | MenuController@listIngredientCatalog |
+| POST | `/restaurants/{id}/plate-costs/recompute` | MenuController@recomputePlateCosts |
+| GET | `/restaurants/{id}/cogs/overpay` | MenuController@overpayFlags |
+| POST | `/menu-items/{id}/recommend` | MenuEngineeringController@recommendForItem |
+| POST | `/restaurants/{id}/recommendations/run` | MenuEngineeringController@recommendForRestaurant |
+| GET | `/restaurants/{id}/recommendations` | MenuEngineeringController@listForRestaurant |
+| GET | `/restaurants/{id}/menu/classify` | MenuEngineeringController@classify |
+| POST | `/recommendations/{id}/accept` | MenuEngineeringController@accept |
+| POST | `/recommendations/{id}/dismiss` | MenuEngineeringController@dismiss |
+| GET | `/restaurants/{id}/roi/monthly` | RoiController@monthly |
+| POST | `/restaurants/{id}/roi/measure` | RoiController@measure |
+| GET/POST/GET/POST/DELETE | `/sandbox` / `/sandbox/{id}` / `/sandbox/{id}/compute` | PlanningController |
+| GET/POST/POST/DELETE | `/restaurants/{id}/goals` / `/goals/{id}/snapshot` / `/goals/{id}` | GoalController |
+| GET | `/restaurants/{id}/food-cost/theoretical` | FoodCostController@theoretical |
+| GET | `/restaurants/{id}/labor/analysis` | LaborController@analysis |
+| GET/POST | `/restaurants/{id}/labor/shifts` | LaborController |
 
-- Saved searches + comparisons + tags + scheduled reports + activity feed + webhook deliveries — small CRUD endpoints under `OpsController`
+**`/api/vendors/*`** (Carafe Phase 2)
 
-### Cost tracking
+| Method | Path | Controller@Method |
+|---|---|---|
+| GET | `/vendors` | VendorController@index |
+| GET | `/vendors/{id}` | VendorController@show |
+| GET | `/vendors/map/bbox` | VendorMapController@bbox |
+| GET | `/vendors/map/serves` | VendorMapController@serves |
+| GET | `/vendors/map/search` | VendorMapController@search |
+| GET | `/vendors/{id}/detail` | VendorMapController@detail |
+| GET | `/vendors/{id}/reviews` | VendorReviewController@list |
+| POST | `/vendors/{id}/reviews` | VendorReviewController@submit |
+| GET | `/vendors/{id}/reviews/aggregate` | VendorReviewController@aggregate |
+| POST | `/vendor-reviews/{id}/respond` | VendorReviewController@respond |
+| GET/POST/DELETE | `/saved-vendors` / `/vendors/{id}/save` | SavedVendorController |
+| POST | `/vendors/{id}/claims` | VendorClaimController@create |
+| GET | `/vendors/{id}/claims` | VendorClaimController@listForVendor |
+| POST | `/vendor-claims/{id}/approve` | VendorClaimController@approve |
+| POST | `/vendor-claims/{id}/reject` | VendorClaimController@reject |
+| POST | `/vendors/{id}/listings` | VendorClaimController@addListing |
+| POST | `/vendors/compare` | ComparisonController@compare |
+| POST | `/vendors/consolidate` | ConsolidationController@compare |
+| POST | `/vendors/compare/log` | LeadController@logComparison |
+| POST | `/leads` | LeadController@create |
+| GET | `/leads` | LeadController@index |
+| POST | `/leads/{id}/emit` | LeadController@emit |
 
-- `GET /api/usage/today` / `/days` / `/pricing` + `POST /api/usage/log-map-load`
-- `_meta.estimated_cost_usd` on every Google-fronting response; tile-aware count for Places nearby (5 sub-calls = 5× cost)
+**`/api/admin/*`** (Carafe admin — `Middleware::auth() + Middleware::requireRole(['admin','owner'])`)
 
-### CRM (real OAuth in v4 — was stub in v3)
-
-- `POST /api/integrations/salesforce/connect` → returns ORS auth URL; state token saved in session
-- `GET /api/integrations/salesforce/callback` — exchanges code for tokens, AES-256-CBC encrypts at rest in `integrations` table, redirects to `/settings/integrations?connected=salesforce`
-- `POST /api/integrations/salesforce/push` — upserts area demographics into SF Account custom fields
-- Same triplet for HubSpot. Token decryption refuses to run without `APP_KEY` in `.env` (32 random bytes base64).
-
-### Alerts (new in v4)
-
-- `GET/POST/PUT/DELETE /api/alerts` — generic rules (competitor_new / demographics_changed / ai_score_drop / metric_threshold)
-- `POST /api/alerts/{id}/test` — fire a synthetic delivery (sandbox)
-- `GET /api/alerts/digest/recent` — last 7 days of deliveries for the weekly email digest cron
-
-### Custom data layers (new in v4)
-
-- `GET/POST /api/projects/{id}/custom-layers` + `PUT/DELETE /api/custom-layers/{id}`
-- `GET /api/custom-layers/{id}/points` — resolves layer to its underlying `imported_points` rows
-
-### Embed builder (new in v4)
-
-- `GET/POST /api/projects/{id}/embeds` + `PUT/DELETE /api/embeds/{id}` — mints `embed_token`, returns iframe snippet HTML
-
-### Background jobs + webhooks
-
-- `GET /api/jobs/{id}` + `POST /api/jobs/{id}/cancel`
-- `GET/POST/PUT/DELETE /api/webhooks/{id}` + `/test` + `/deliveries`
-- `GET /api/webhooks/deliveries` — recent delivery log
-
-### Notifications
-
-- `GET /api/notifications` + `POST /api/notifications/{id}/read` + `/read-all`
-
-### Billing (Stripe)
-
-- `POST /api/billing/checkout` — creates a Checkout Session
-- `POST /api/billing/webhook` — receives + verifies + dedupes via `stripe_webhook_events`
-- `GET /api/billing/subscription` — current state
-- `POST /api/billing/portal` — Customer Portal session
-- `POST /api/billing/cancel` — cancel current sub
+| Method | Path | Controller@Method |
+|---|---|---|
+| POST | `/admin/seed-campaigns/estimate` | SeedCampaignController@estimate |
+| GET | `/admin/seed-campaigns` | SeedCampaignController@index |
+| POST | `/admin/seed-campaigns` | SeedCampaignController@create |
+| GET | `/admin/seed-campaigns/{id}` | SeedCampaignController@show |
+| POST | `/admin/seed-campaigns/{id}/run` | SeedCampaignController@run |
+| POST | `/admin/seed-campaigns/{id}/pause` | SeedCampaignController@pause |
+| POST | `/admin/seed-campaigns/{id}/resume` | SeedCampaignController@resume |
+| POST | `/admin/seed-campaigns/{id}/cancel` | SeedCampaignController@cancel |
+| POST | `/admin/seed-campaigns/{id}/kick` | SeedCampaignController@kick |
+| POST | `/admin/seed-campaigns/{id}/enrich` | SeedCampaignController@enrich |
+| POST | `/admin/vendors/{id}/enrich` | SeedCampaignController@enrichVendor |
+| GET | `/admin/seed-campaigns/{id}/delta` | SeedCampaignController@delta |
+| POST | `/admin/seed-campaigns/{id}/resweep` | SeedCampaignController@resweep |
+| GET | `/admin/review-queue` | ReviewQueueController@index |
+| POST | `/admin/review-queue/dedupe/{id}/merge` | ReviewQueueController@dedupeMerge |
+| POST | `/admin/review-queue/dedupe/{id}/reject` | ReviewQueueController@dedupeReject |
+| POST | `/admin/review-queue/dedupe/{id}/defer` | ReviewQueueController@dedupeDefer |
+| POST | `/admin/review-queue/classify/{id}/approve` | ReviewQueueController@classifyApprove |
+| POST | `/admin/review-queue/classify/{id}/update` | ReviewQueueController@classifyUpdate |
 
 ---
 
 ## Services layer
 
-22 services in `src/Services/`. The non-trivial ones:
+**54 services** in `src/Services/` (plus `App\PrivateData\*` and `App\MarketData\*` repositories under separate sub-namespaces). Grouped by domain.
+
+### Smappen core (22, all from v4 — unchanged)
+
+`GoogleMapsService`, `GooglePricing`, `CensusService`, `DemographicsHistoryService`, `StatCanService`, `IsochroneService`, `TrafficService`, `DriveTimeMatrixService`, `TerritoryGenerator`, `AnalogService`, `SegmentationService`, `CompetitorScanner`, `PdfReportService`, `StripeService`, `MailService`, `StorageService`, `WebhookDispatcher`, `CacheService`, `Permissions`, `GeoUtils`, `FootTrafficService`, `PermitsService`.
+
+### New: Carafe restaurant operations
 
 | Service | Purpose |
 |---|---|
-| `GoogleMapsService` | Geocoding + Places (new) — searchNearby tiles past 20-result cap, searchText paginates to 60. Per-call cost tracked via `$lastCallCount`. |
-| `GooglePricing` | API-name → USD/call mapping (geocode 0.005, places_nearby 0.032, place_details 0.020, static_map 0.002, etc.) |
-| `CensusService` | ACS 5-year v2023, 84,415 tracts. Tract-overlap-weighted aggregation with `ST_GeometryType IN ('Polygon','MultiPolygon')` guard against GEOMETRYCOLLECTION returns. |
-| `DemographicsHistoryService` | Per-vintage history (2019-2023). Operator script `ingest-demographics-history.php` hits the ACS API one (state × year) at a time. |
-| `StatCanService` | Canadian Dissemination Areas (2021 Census). Scaffolded; needs operator-run `import-statcan-da.php` to seed the 57K DAs. |
-| `IsochroneService` | ORS proxy. 60-min hard cap. |
-| `TrafficService` | Traffic-aware isochrone variants (`/grid`, `/day` for Daypart). |
-| `DriveTimeMatrixService` | N×M time matrix via ORS. |
-| `TerritoryGenerator` | k-means balanced + `ST_Union` over source tracts (no convex-hull shortcuts; 80-tract cap per cluster). Fallback to hull on union failure. |
-| `AnalogService` | Demographically + competitively-similar tract search. Pre-filters via tract id lookup; main query is flat `NOT IN (?, ?, ...)`. |
-| `SegmentationService` | Tract segment assignment + recompute. |
-| `CompetitorScanner` | Per-monitor scan, MOVE > 150m, RATING Δ > 0.3, REVIEWS Δ > 25%. Sends email + Slack via `MailService` + webhook. |
-| `PdfReportService` | TCPDF; accepts a template config (executive / site_selection / franchise_pitch / demographics_only). |
-| `StripeService` | Subscription state mutations. Idempotency now enforced in `BillingController` via `stripe_webhook_events`. |
-| `MailService` | Postmark/Resend wrapper (configurable). All curls now have `CURLOPT_CONNECTTIMEOUT => 3`. |
-| `StorageService` | DigitalOcean Spaces (S3 SigV4 virtual-hosted addressing). |
-| `WebhookDispatcher` | HMAC-signed outbound webhook delivery + retry. |
-| `CacheService` | Redis primary, MySQL `cache` table fallback. |
-| `Permissions` | Role-rank logic (owner > admin > editor > viewer). |
-| `GeoUtils` | bbox, point-in-polygon, haversine. |
-| `FootTrafficService` | Stub for future Placer.ai-style integration. |
-| `PermitsService` | Stub for future permits-API integration. |
+| `PlateCostService` | Computes `true_cost_cents` per menu item from `recipe_ingredients` × `cogs_benchmark` lookups. Unit conversion (oz/lb/each/cup/tbsp). Returns `coverage_pct` so the UI can warn "based on X of Y ingredients". |
+| `MenuEngineeringService` | Classifies items into menu engineering matrix (stars / plowhorses / puzzles / dogs); generates dollar-quantified pricing + repositioning + cut recommendations. `recommendForItem`, `recommendForRestaurant`, `layoutRecsForRestaurant` (UI grid hints). |
+| `RoiService` | A/B over POS sales pre vs. post-accept; idempotent monthly summary; populates the "Carafe found you $X this month" war-room tile. `measureOne`, `measurePending`, `monthlySummary`. |
+| `FoodCostService` | `theoretical(restaurantId, start, end)` returns theoretical $/revenue/cost%, top 10 contributors, and a coverage % gauge. |
+| `LaborDemandService` | Median revenue-per-cover, over/understaffed hour flags, daypart suggestions (cross-references `pos_sales.daypart_label` against `labor_shifts`). |
+| `PlanningService` | `compute()` runs what-if scenarios in `plans_sandbox` (new_location or menu_change kind). Returns projected JSON. |
+| `GoalService` | `snapshot(goal_id)` + `snapshotRestaurant(restaurant_id)`. Period-aware (weekly/monthly/quarterly), idempotent. |
+| `PosService` | Provider-agnostic orchestrator. `adapter(provider)`, `supportedProviders()`, `beginOAuth(restaurant, provider)`, `completeOAuth(state, code)`, `sync(restaurant, provider)`. |
+| `Pos\PosAdapter` (interface) | Contract: `key()`, `buildAuthUrl()`, `exchangeCode()`, `pullMenu()`, `pullSales()`. |
+| `Pos\SquareAdapter` | Live. Square API v2 with OAuth + Catalog + Orders APIs. |
+| `OrderConsolidationService` | Same basket across N vendors → comparison rows + savings projection. |
+| `CogsBenchmarkService` | `isConfigured()` returns true when at least one non-stub source has a row in the last 30 days; `ingest()` is the entry for the USDA + GreenDock pipelines (currently stubbed). |
+
+### New: Carafe vendor network
+
+| Service | Purpose |
+|---|---|
+| `VendorImportPipeline` | Single entry for any source (Places, OSM, Foursquare, manual). `importBatch`, `importOne`. |
+| `VendorUpsertService` | Idempotent INSERT ON DUPLICATE KEY UPDATE on `google_place_id` (or `osm_id`, `foursquare_fsq_id`). Hydrates multi-row (locations, categories, details). Owns the **B2B keep/deny filter** (`isLikelyJunk`, regex deny + regex keep + brand whitelist). |
+| `VendorDedupeService` | Block-key hashing (`zip5+name_prefix3`, `state+soundex`, `geohash6`) + Jaro-Winkler scoring + Placekey shortcut. Bands: ≥0.85 auto_merge, ≥0.60 review, <0.60 reject. Union-find clustering on auto_merge pairs; deterministic survivor (oldest created_at). |
+| `VendorClassifierService` | Deterministic cascade: brand_map (Sysco/US Foods/Restaurant Depot/...) → primary_type_strong (produce_market/butcher_shop) → primary_type_generic + name_keyword (wholesaler+meat) → fallback (broadline at 40% confidence, flag for review). Writes `classification_confidence`, `classification_signals_json` (audit trail), `classification_needs_review` if <60%. |
+| `VendorGeometryService` | Coverage polygons. `setIsochroneCoverage` (ORS), `setRadiusFallback` (circle from declared territory), `ensureCoverageForVendor`, `simplifyCoverage` (Douglas-Peucker → 100m/1km/10km tiers for vector tiles), `whoServesPoint` (PostGIS `ST_Contains` over `vendor_coverage`). |
+| `VendorCacheService` | Coalesced fetch + advisory lock — `isFreshFor`, `lock`, `unlock`, `withCoalescedFetch`, `staleForRefresh`. Prevents two concurrent users searching the same bbox from paying Places twice. |
+| `VendorSearchService` | Full-text + filter search across `vendors` × `vendor_locations` × `vendor_categories`. |
+| `VendorReviewService` | `submit` (verification-strength gated), `refreshAggregate` (rolling rating + count). |
+| `VendorComparisonService` | `compare(category, vendor_ids, basket)`, `priceBasket(basket, vendor_id)`. Honors affiliation disclosure. |
+| `PlacesClient` | The cost-accounting wrapper around Google Places (New). `setCampaignContext`/`clearCampaignContext` so every call gets tagged to a `seed_campaigns.id`. `searchNearby`, `searchText`, `placeDetails`, `placePhoto`. `record()` writes a row to `api_cost_events` after every call. `maskFor(tier)` → field mask; `skusForDetailsMask` → cost projection. `isStorageAllowed()` honors the Google Places storage grant gate. |
+| `PlacesEnrichService` | `enrichVendor(vendor_id, tier)` pulls Place Details at one of three tiers (hot 6h / warm 24h / cold 7d). `enrichCampaign(policy)` is the batch driver per campaign's `enrich_policy`. `refreshStaleTier` is the nightly worker driver. |
+| `PlacesRateLimiter` | Shared MySQL-row token bucket. `acquire(bucket)` blocks until token available; `tryConsume(bucket)` returns immediately; `inspect(bucket)` for diagnostics. Three buckets: `places_search` (capacity 30, 10/s refill), `places_details` (20, 5/s), `places_photo` (10, 2/s). |
+| `PlacesBenchmarkService` | The "this category is dense / typical / sparse for your area type" comparator. Bins US metros by Census density, returns user vs. peer counts. |
+| `OSMAdapter` | Overpass query wrapper — `discover(bbox, types)`. Free + unmetered; produces the same shape `VendorImportPipeline` consumes. |
+| `FoursquareAdapter` | Foursquare Places v3 wrapper — `discover(bbox, types, limit)`. ~$0.0049/call. |
+
+### New: Seed campaign orchestration
+
+| Service | Purpose |
+|---|---|
+| `SeedCampaignService` | Campaign lifecycle (draft → estimating → approved → running → paused/done/failed/cancelled). `create`, `run`, `pause`, `resume`, `cancel`, `findById`, `summary`, `index`, `materializeTiles` (grid generation), `subdivideTile` (auto-subdivide on saturation). |
+| `SeedEstimatorService` | Pure-math cost projection. `estimate` returns low/expected/high. `priceSweep` + `priceEnrich` use `google_places_pricing.php` (per-SKU tiered rates) and subtract `freeRemaining()` (current month's free tier budget). `bboxAreaKm2` for tile-count math. |
+| `SeedDeltaService` | `scheduleResweepForCampaign` (flip done tiles older than `--max-age-days` back to queued), `recoverStuckTiles` (running > N seconds → re-queued), `deltaSummary` (per-campaign), `deltaSummaryAll`. |
+| `TileSweepWorker` | The per-tile work unit. `runOne()` loads a queued tile (FOR UPDATE SKIP LOCKED), runs `searchNearby`/`searchText` for each vendor type, acquires rate-limit tokens, upserts vendors, writes `result_id_hash` (SHA256 of sorted place-id set — enables the §12.3 zero-cost re-sweep skip when nothing changed), checks budget cap, auto-subdivides on saturation (4 child tiles at radius/√2). |
+
+### New: Lead funnel
+
+| Service | Purpose |
+|---|---|
+| `LeadFunnelService` | The only service permitted to INSERT into `supplier_leads` (enforced by data wall grep test). `createLead` writes both the audit row (`comparison_requests`) and outbox row; `emit` dispatches HMAC webhook via `WebhookDispatcher::fanout`. |
+
+### Exception classes
+
+| Exception | Purpose |
+|---|---|
+| `BudgetCapExceededException` | Thrown by `TileSweepWorker` + `PlacesEnrichService` when campaign `spent_usd >= budget_cap_usd`. Caller pauses the campaign + re-queues the tile (does **not** mark as failed — operator can raise cap + resume). |
 
 ---
 
 ## Background jobs + operator scripts
 
-`scripts/` directory:
+`scripts/` directory. New scripts in v5 are bolded.
+
+### Cron-scheduled (or expected to be)
 
 | Script | Cadence | What it does |
 |---|---|---|
-| `cleanup-cron.php` | Hourly (cron) | Purges expired cache, auth_tokens, revoked_tokens, old jobs (>30d), webhook_deliveries (>30d), export files (>1h), upload temp (>24h). **New**: marks `jobs` and `territory_generation_jobs` `status='failed'` if running > 30 min (stuck-job sweeper). |
+| `cleanup-cron.php` | Hourly | Purges expired cache, auth_tokens, revoked_tokens, old jobs (>30d), webhook_deliveries (>30d), export files (>1h), upload temp (>24h). Stuck-job sweeper marks `jobs` / `territory_generation_jobs` `status='failed'` if running > 30 min. |
 | `run-competitor-scans.php` | Daily | Iterates `competitor_monitors`, scans each, fans alerts to email + Slack + in-app. |
-| `compute-tract-features.php` | Operator-run | Pre-computes the 18-dim feature vectors used by AnalogService. |
-| `compute-sri.php` | Operator-run | Computes Subresource Integrity hashes for the CDN-loaded assets. |
-| `verify-backup.php` | Operator-run | Smoke-tests the latest `mysqldump` backup. |
-| `seed-census.php` | Operator-run | Seeds census tracts + demographics for one state. |
-| `seed-all-states.sh` | Operator-run | Loops `seed-census.php` for all 50 states + DC. |
-| `aggregate-geographies.php` | Operator-run | Builds `census_counties` + `census_states` (aggregated polygons + demographics) used by the heatmap state/county zoom levels. |
-| `import-statcan-da.php` | **Not yet written** | Will seed `da_boundaries_ca`. |
-| `ingest-demographics-history.php` | **Not yet written** | Will backfill `demographics_history` for 2019-2023. |
-| `normalize-areas-geometry.php` | Operator-run | One-shot migration helper for areas stored with the old POLYGON-only column. |
-| `normalize-dmv-geometry.php` | Operator-run | DC/MD/VA tract polygon-axis normalization (one-shot). |
-| `debug-places.php` | Operator-run | Quick Places API smoke test. |
+| `job-worker.php` | Continuous (cron 1-2m or daemon) | Reads from `jobs` table with `SELECT ... FOR UPDATE SKIP LOCKED`. Used by territory gen + competitor scans + (now) Carafe POS sync + plate-cost recompute + menu engineering. |
+| **`seed-tile-worker.php`** | **Cron 1–5m (NOT YET SCHEDULED)** | Pop queued tiles from `seed_tiles`, sweep Places, upsert vendors. Multiple instances run in parallel via `FOR UPDATE SKIP LOCKED`. Args: `--max-tiles=50 --max-seconds=240 --quiet`. |
+| **`seed-dedupe.php`** | **After seed-tile (NOT YET SCHEDULED)** | Block-key + Jaro-Winkler + union-find merge of duplicates. Two phases: scan new rows + apply pending merges. Args: `--batch-size=5000 --quiet`. |
+| **`seed-classify.php`** | **After seed-dedupe (NOT YET SCHEDULED)** | `VendorClassifierService::classifyPending` cascade. Args: `--batch-size=5000 --quiet`. |
+| **`seed-enrich.php`** | **Nightly (NOT YET SCHEDULED)** | Three modes: `--campaign=ID` (sweep one), `--refresh-tier=cold|warm|hot` (nightly stale refresh), `--all-campaigns`. Args: `--batch-size=100/200 --quiet`. |
+| **`seed-resweep.php`** | **Cron 1–5m (NOT YET SCHEDULED)** | Two jobs: recover stuck tiles (running > `--stuck-after`s → back to queued), schedule re-sweeps (done tiles older than `--max-age-days` → back to queued). Args: `--campaign=ID --all-campaigns --max-age-days=30 --stuck-after=1800`. |
+| **`seed-coverage.php`** | **After seed-classify (NOT YET SCHEDULED)** | `VendorGeometryService` — ensures every vendor has delivery/drivetime/radius coverage; runs Douglas-Peucker simplification. Args: `--batch-size=200 --simplify-only --quiet`. |
+| **`seed-osm.php`** | **Weekly per region (manual)** | OSM Overpass bulk import. Modes: `--campaign=ID` (use campaign bbox) or `--bbox=lat1,lng1,lat2,lng2 --types=produce,meat`. Free + unmetered. |
+| **`seed-foursquare.php`** | **Weekly per region (manual)** | Foursquare bulk import. Same modes as OSM. ~$0.0049/call. |
+| **`send-weekly-digest.php`** | **Weekly Mon 13:00 UTC (NOT YET SCHEDULED)** | Emails top 3 dollar-impact recommendations per restaurant. Idempotent per (org_id, week_start). Args: `--dry`. |
+| Daily mysqldump → `/var/www/smappen/backups/smappen-$(date +%F).sql.gz` | Daily | Backup. |
 
-`job-worker.php` (PHP CLI long-runner) reads from the `jobs` table with `SELECT ... FOR UPDATE SKIP LOCKED`. Currently used by territory generation when the request exceeds the 60s sync budget. The 30-min stuck-job sweep is the safety net.
+### Operator scripts (manual)
+
+| Script | Purpose |
+|---|---|
+| `seed-census.php` | Seeds census tracts + demographics for one state (mode: `tracts <path>`, `demographics <fips>`, `all-states`). |
+| `seed-all-states.sh` | Loops `seed-census.php` for 50 states + DC. |
+| `aggregate-geographies.php` | Builds `census_counties` + `census_states` aggregated polygons. |
+| `compute-tract-features.php` | Pre-computes the 18-dim feature vectors for `AnalogService`. |
+| `compute-sri.php` | Computes Subresource Integrity hashes for CDN assets. |
+| `verify-backup.php` | Smoke-tests latest `mysqldump`. |
+| `import-statcan-da.php` | **Not yet written.** Will seed `da_boundaries_ca`. |
+| `ingest-demographics-history.php` | **Not yet written.** Will backfill `demographics_history` for 2019-2022. |
+| `normalize-areas-geometry.php` | One-shot fix for old POLYGON-only column. |
+| `normalize-dmv-geometry.sql` | DC/MD/VA tract-axis normalization (one-shot). |
+| `debug-places.php` | Smoke-tests Google Places client. |
+| `test-api.php` | Smoke-tests Places client (sandbox variant). |
+| `competitor-scan.php` | Manually triggers scan for a project/area. |
+| `refresh-census.php` | Refreshes Census data for a region. |
+| **`seed-sample-restaurant.php`** | Creates a sample restaurant for Carafe onboarding. |
+| **`seed-vendor-chains.php`** | Seeds vendor brands (Sysco, US Foods, Restaurant Depot, Gordon Food Service, etc.) with chain metadata so the classifier brand_map matches. |
+| **`seed-vendors-manual.php`** | CSV ingest of vendor records (operator path). |
+| **`seed-cogs-benchmark-stub.php`** | Populates `cogs_benchmark` with stub data until the GreenDock pipe exists. |
+| **`refresh-cogs-benchmark.php`** | Refresh COGS pricing from USDA/external (currently scaffold). |
+| **`measure-roi.php`** | Manually trigger ROI measurement job (also runs from `job-worker`). |
+| **`compute-activation-metrics.php`** | Compute restaurant activation health scores. |
+| **`coverage-export-geojson.php`** | Export vendor coverage geometry as GeoJSON (for mapping/QA). |
+| **`sweep-vendors-places.php`** | Operator-only one-shot Places sweep. **Dry-run by default**; needs `--live --confirm` to actually call. |
+| `migrate.php` | Core SQL migration runner. Reads `src/Migrations/*.sql`, tracks in `migrations` table, applies idempotent statements. **Brittle parser**: splits on `/;\s*[\r\n]/` without stripping comments. Don't end SQL `-- comment` lines with `;` — it breaks the splitter mid-statement (found + fixed 3 such lines on first Carafe deploy, see commits `e177943`, `76510bb`). |
+
+**Ad-hoc one-shot workflow** (current Carafe state): on campaign Run, `SeedCampaignController::run` calls `proc_open(PHP_BINARY, [...])` to spawn `seed-tile-worker.php` in the background. Same path for resume + kick. This works but leaves no daemon — once the worker exits, nothing runs until next admin action. The fix (`e667348`) was to resolve `PHP_BINARY` explicitly to `php` rather than `php-fpm` (which is what `PHP_BINARY` evaluates to inside FPM and which can't execute CLI scripts).
 
 ---
 
@@ -451,55 +610,88 @@ Per the v4 audit: all 16 ran clean on the production droplet on 2026-05-24. Back
 ### Routing (`App.tsx`)
 
 ```
-/                         → HomePage (anonymous) | <Navigate to="/dashboard"> (auth'd)
-/blog                     → BlogPage
-/dashboard                → DashboardPage  (auth)
-/projects                 → ProjectGalleryPage  (auth)
+/                                  → HomePage (anonymous) | <Navigate to="/dashboard"> (auth'd)
+/blog                              → BlogPage
+/dashboard                         → DashboardPage  (auth)
+/projects                          → ProjectGalleryPage  (auth)
 /login | /register | /forgot-password | /reset-password | /verify-email
-/pricing                  → PricingPage
-/changelog                → ChangelogPage
-/share/:token             → SharedProjectPage  (public)
-/embed/:token             → EmbedProjectPage  (public)
-/settings/profile|team|integrations|api|webhooks|billing   (auth)
-/app/*                    → AppLayout  (auth) — the actual map app
-/*                        → <Navigate to="/" replace />
+/pricing                           → PricingPage
+/changelog                         → ChangelogPage
+/share/:token                      → SharedProjectPage  (public)
+/embed/:token                      → EmbedProjectPage  (public)
+/settings/profile|team|integrations|api|webhooks|billing  (auth)
+
+/app/restaurants                   → RestaurantsPage  (auth)
+/app/restaurants/:id               → RestaurantOverviewPage  (auth)
+/app/restaurants/:id/menu          → MenuPage  (auth)
+/app/restaurants/:id/recipes       → RecipesPage  (auth)
+/app/restaurants/:id/costs         → CostsPage  (auth)
+/app/restaurants/:id/labor         → LaborPage  (auth)
+/app/restaurants/:id/goals         → GoalsPage  (auth)
+
+/app/vendors                       → VendorMapPage  (auth — default to map view)
+/app/vendors/map                   → VendorMapPage  (auth)
+/app/vendors/list                  → VendorsPage  (auth)
+/app/vendors/saved                 → SavedVendorsPage  (auth)
+
+/app/*                             → AppLayout  (auth) — the actual map app
+/admin/carafe                      → CarafeAdminHome  (admin/owner only)
+/admin/carafe/campaigns            → SeedCampaignsListPage
+/admin/carafe/campaigns/new        → SeedCampaignBuilderPage
+/admin/carafe/campaigns/:id        → SeedCampaignDetailPage
+/admin/carafe/review               → ReviewQueuePage
+/*                                 → <Navigate to="/" replace />
 ```
 
-In v3 the catch-all rendered `AppLayout`. In v4 the app is explicit at `/app/*` and unknown paths bounce to `/`.
+### Unified navigation — AppNav
 
-### AppLayout structure
+`src/components/layout/AppNav.tsx` is the **single** top bar across every authenticated surface. 48px tall, sticky `top-0 z-30`, `max-w-7xl` content. Brand logo → `/dashboard`. Center tabs (responsive hamburger <768px): Dashboard, Restaurants, Vendors, Map, Settings. Active tab: `bg-violet-100 text-violet-800`. Optional page-context slot (children) — used by the map app for the project switcher, by Carafe surfaces for the restaurant picker. Right: user menu (initial + email + logout).
 
-`AppLayout.tsx` mounts the map, all four chrome surfaces, the global modals (FirstRunWizard, CommandPalette, WhatsNewModal, ShortcutsModal, OnboardingChecklist), and reads onboarding state on mount to gate the wizard. The FirstRunWizard auto-opens on first visit; dismiss/skip stamps `wizard_complete` so it never re-shows.
+**Pattern**: every authenticated page mounts exactly ONE AppNav. NEVER nest inside another component that already renders it. The unification commits (`ca34acf`, `6568eec`) deleted the previous map-only navbar.
 
-### Component tree (key components — bolded in v4)
+### AppLayout structure (map app — unchanged from v4)
+
+`AppLayout.tsx` mounts the map, all four chrome surfaces (LeftPanel, MapCanvas, RightPanel, RightToolbar, AdvancedPanel, HeatmapPanel, TimeMachinePanel), and the global modals (FirstRunWizard, CommandPalette, WhatsNewModal, ShortcutsModal, OnboardingChecklist).
+
+### Component tree (new components in v5 bolded)
 
 ```
 src/components/
 ├── auth/           LoginPage, RegisterPage, ForgotPasswordPage, ResetPasswordPage,
 │                   VerifyEmailPage, ProtectedRoute
-├── billing/        PricingPage, BillingSettings, **UpgradeGate** (plan-feature wrapper)
+├── billing/        PricingPage, BillingSettings, UpgradeGate
 ├── settings/       SettingsLayout, ProfileSettings, TeamSettings,
 │                   IntegrationsSettings, ApiKeySettings, WebhookSettings
-├── share/          SharedProjectPage, EmbedProjectPage, **SmappenBadge**
-├── marketing/      **HomePage**, **BlogPage**, ChangelogPage
-├── **dashboard/    DashboardPage**
-├── **projects/     ProjectGalleryPage**
-├── **onboarding/   FirstRunWizard**
-├── layout/         AppLayout, Header, LeftPanel, RightPanel, RightToolbar
+├── share/          SharedProjectPage, EmbedProjectPage, SmappenBadge
+├── marketing/      HomePage, BlogPage, ChangelogPage
+├── dashboard/      DashboardPage
+├── projects/       ProjectGalleryPage
+├── onboarding/     FirstRunWizard
+├── layout/         AppLayout, **AppNav**, Header, LeftPanel, RightPanel, RightToolbar,
+│                   **FreeBanner**
 ├── map/            MapCanvas, AreaPolygon, AreaCenterPins, POIMarkers,
-│                   ImportedMarkers, DrawingTools, ChoroplethLayer, **ChoroplethWebGL**,
-│                   HeatmapPanel, TimeMachinePanel (Daypart), **PresenceCursors**,
-│                   **StreetViewModal**
-├── areas/          AreaList, AreaCard, AreaCreator, AreaEditor, FolderTree,
-│                   **QuickStatsStrip**
-├── analytics/      DemographicsPanel, POISearchPanel, ComparisonView, **RadarChart**
-├── advanced/       AdvancedPanel (lazy parent) + lazy tabs:
+│                   ImportedMarkers, **CustomLayerMarkers**, DrawingTools,
+│                   HeatmapLayer, ChoroplethLayer, ChoroplethWebGL, HeatmapPanel,
+│                   TimeMachinePanel, PresenceCursors, StreetViewModal, **MiniMapToggle**
+├── areas/          AreaList, AreaCard, **AreaCreator** (now doubles as AreaEditor),
+│                   FolderTree, QuickStatsStrip
+├── analytics/      DemographicsPanel, **POISearchPanel**, ComparisonView, RadarChart,
+│                   ChartWidgets
+├── advanced/       AdvancedPanel + lazy tabs:
 │                   AnalogTab, AnalyticsTab, CannibalizeTab, CommentsTab, CompetitorsTab,
-│                   FieldTab, OptimizeTab, SegmentsTab, TerritoriesTab, TrafficTab, VersionsTab
-├── common/         AnimatedNumber, CommandPalette, EmptyState, HelpHint,
-│                   OnboardingChecklist, SaveStatus, ShortcutsModal, WhatsNewModal, Spinner
+│                   FieldTab, **LayersTab**, OptimizeTab, SegmentsTab, TerritoriesTab,
+│                   TrafficTab, VersionsTab, shared.tsx
+├── common/         AnimatedNumber, CommandPalette, EmptyState, **GooglePlaceAutocomplete**,
+│                   HelpHint, OnboardingChecklist, SaveStatus, ShortcutsModal,
+│                   WhatsNewModal, Spinner
 ├── data/           ImportWizard, ExportDialog, ReportButton
-└── ErrorBoundary   (now auto-recovers from stale Vite chunk errors)
+├── **restaurants/  RestaurantsPage, RestaurantWorkspaceLayout, RestaurantOverviewPage,
+│                   MenuPage, RecipesPage, CostsPage, LaborPage, GoalsPage**
+├── **vendors/      VendorMapPage, VendorsPage, VendorSidePanel, SavedVendorsPage**
+├── **admin/        AdminOnlyRoute, CarafeAdminLayout, CarafeAdminHome,
+│                   SeedCampaignBuilderPage, SeedCampaignDetailPage,
+│                   SeedCampaignsListPage, ReviewQueuePage**
+└── ErrorBoundary
 ```
 
 ### Hooks
@@ -509,189 +701,608 @@ src/components/
 - `useDynamicFavicon` — favicon color reflects unread notifications
 - `useViewUrl` — `#map=lat,lng,zoom` URL hash sync (one-shot read on map ready, debounced write on idle)
 - `useClickOutside` — generic dropdown-dismissal helper
+- **`useOrphanOverlayCleanup`** — runs on every navigation, removes stuck modal-backdrop elements
 
-### Stores (Zustand)
+### Stores (Zustand — 9, **2 new in v5**)
 
 | Store | Purpose |
 |---|---|
 | `authStore` | JWT + user. `partialize` persists only the token. |
 | `projectStore` | Current project + areas + folders + importedPoints |
-| `mapStore` | Map instance ref, viewport, drawing mode, heatmap state, time-machine state, presence peers, right-panel tab, time-machine request |
-| `uiPrefsStore` | recentColors, areaListFilter/groupBy/order, **mapStyle (detailed | clean | mono | dark | satellite)**, showPolygonLabels, onboardingCompleted |
+| `mapStore` | Map instance ref, viewport, drawing mode, heatmap state, time-machine state, presence peers, right-panel tab. **New in v5**: `customLayersVersion`, `bumpCustomLayers`, `editingAreaId`, `openAreaEditor`, `closeAreaEditor`, `hiddenAreaIds`, `toggleAreaVisibility`, `isAreaHidden`, `heatmapFeatures` snapshot. |
+| `uiPrefsStore` | recentColors, areaListFilter/groupBy/order, mapStyle (5 presets), showPolygonLabels, onboardingCompleted |
 | `costStore` | totalUsdToday + callCountToday + per-session deltas |
 | `undoStore` | reversible action stack (Cmd+Z / Shift+Cmd+Z) |
-| **`saveStatusStore` (new in v4)** | pending count, lastSavedAt, lastError; `trackSave(promise)` wraps every project/area mutation so the header shows Saving / Saved / Couldn't save |
+| `saveStatusStore` | pending count, lastSavedAt, lastError; `trackSave(promise)` wrapper |
+| **`restaurantStore`** | currentRestaurant, restaurants, menuItems, recommendations; `updateRecommendationStatus(id, status)` to flip suggested → accepted/dismissed/measured |
+| **`vendorMapStore`** | Filters (q, type, category, minRating, affiliatedOnly), pins, selectedVendorId, servesPin, servesResults, servesLoading; `setFilter`, `setPins`, `setServes`, `selectVendor` |
 
-### Utilities (new in v4 bolded)
+### API clients (`frontend/src/api/`) — new in v5 bolded
 
-- `format.ts`, `colors.ts` — number/currency/area formatters; brand palette helpers
-- `mapStyle.ts` — **5 presets** (was 2 in v3): detailed / clean / mono / dark / satellite. Roster-driven, picker auto-extends.
-- `mapAnim.ts` — smooth fly-to (combined pan + zoom)
-- `mapExport.ts` — Static-Maps PNG snapshot with style + auto-fit
-- `confetti.ts` — dependency-free particle burst (VT20)
-- `sessionRecord.ts` — MediaRecorder of the map's largest canvas (~30s webm)
-- `snapToRoads.ts` — pre-fetched Google Roads helper
-- `toastBatch.ts` — batches cost toasts so a 200-row geocode batch doesn't pop 200 toasts
+`client.ts` (axios instance + auth header injection + error handling), `auth.ts`, `projects.ts`, `folders.ts`, `areas.ts`, `analogs.ts`, `analytics`, `advanced.ts`, `billing.ts`, `customLayers.ts`, `exports.ts`, `features.ts`, `geocoding.ts`, `heatmap.ts`, `imports.ts`, `isochrone.ts`, `places.ts`, `reach.ts`, `reports.ts`, `usage.ts`, **`restaurants.ts`**, **`vendors.ts`**, **`vendorMap.ts`**, **`carafe.ts`** (admin: estimate, campaigns, review queue, dedupe/classify decisions, vendor types catalog).
+
+### Utilities
+
+Same as v4: `format.ts`, `colors.ts`, `mapStyle.ts` (5 presets), `mapAnim.ts`, `mapExport.ts`, `confetti.ts`, `sessionRecord.ts`, `snapToRoads.ts`, `toastBatch.ts`. Plus the new `frontend/src/api/carafe.ts` static export `VENDOR_TYPES`.
 
 ---
 
-## Feature catalog
+## Feature catalog — Smappen core
 
-### Marketing surface (new in v4)
+(Unchanged unless noted; refer to v4 audit for full detail.)
 
-- **HomePage** at `/` — gradient hero ("Territory mapping that actually answers questions"), value-props grid, pricing teaser. Logged-in users redirect to `/dashboard`.
-- **BlogPage** at `/blog` — 3 seed posts (trade area analysis, drive-time vs radius, balancing franchise territories)
-- `robots.txt`, `sitemap.xml` — explicit SEO surface
+### Marketing surface
+HomePage (gradient hero, value-props, pricing teaser), BlogPage (3 seed posts), `robots.txt`, `sitemap.xml`.
 
-### Dashboard + project gallery (new in v4)
+### Dashboard + project gallery
+`/dashboard` — three-column landing (projects ≤8 + recent activity + usage summary). Empty-state CTA clones the sample project.
+`/projects` — grid/list views (persisted), search, sort, per-card rename/archive/delete.
 
-- **`/dashboard`** — three-column landing post-login: project cards (up to 8) + recent activity feed + usage summary (API spend today, project count). Empty-state CTA clones the system sample project.
-- **`/projects`** — full gallery, grid/list views (persisted to localStorage), search, sort (recent / name / area-count), per-card rename / archive / delete
-
-### First-run wizard (new in v4)
-
-3-step modal:
-1. Use-case picker (franchise / sales territory / site selection / delivery zone / other) — writes `users.use_case`
-2. Address input via Google Places autocomplete
-3. Auto-generated 15-min driving isochrone + AnimatedNumber population count-up
-
-Mounted in `AppLayout`, gated on `onboarding_flags.wizard_complete`. Dismiss/skip stamps the flag (never re-shows).
+### First-run wizard
+3-step modal: use-case picker → address → auto-generated 15-min isochrone + AnimatedNumber population. Gated on `onboarding_flags.wizard_complete`.
 
 ### Mapping core
+Free-draw polygon, isochrone (drive/walk/cycle), radius circle, pin-drop. Auto-fit / fly-to / fitBoundsToArea. Polygon hover infowindow with population + median income. Centroid badges. **Updated in v5**: `AreaCreator` is now also the editor (drive time + mode + color + opacity + notes inline; one-button save).
 
-- Drawing: free-draw polygon, isochrone (drive / walk / cycle), radius circle, pin-drop
-- Auto-fit / fly-to / fitBoundsToArea on selection
-- Polygon hover infowindow with population + median income
-- Centroid badges showing travel mode + minutes
-- Polygon labels (toggleable via uiPrefsStore)
-- MultiPolygon support throughout (territory rebuild path)
-- Drag-reorder areas with persistence
-- Color picker per area: 24-color named palette + Recent (last 5) + Brand row + custom hex
-
-### Demographics (right-panel "People" tab)
-
-- Population (with male/female + 5 age buckets)
-- Income (median household, 5 brackets)
-- Housing (units, median home value)
-- Unemployment %
-- Density per km²
-- **Trends sub-tab (new in v4)** — per-vintage time series for any metric (2019-2023 ACS)
-- DataFreshnessFooter: "Source: US Census ACS 2023" + stale-data badge if >18mo old
+### Demographics
+Population, income, housing, unemployment, density. **Trends sub-tab** (per-vintage 2019-2023). DataFreshnessFooter.
 
 ### Heatmap (choropleth)
-
-- 6 metrics: population, population density, median income, median home value, unemployment rate, housing units
-- 5 boundary levels (auto + state/county/tract overrides)
-- 11 color palettes — Browse menu in the heatmap panel
-- Tract cap: 3000 per request (was 10K — caused OOM at the new 84K-tract scale)
-- Truncation hint when bbox returns the cap
-- Server tile cache: 7 days, bbox quantized to coarse grid
+6 metrics, 5 boundary levels, 11 palettes, 3000-tract cap, 7-day server tile cache. **Updated in v5**: panel is now a docked bottom-center compact bar with settings tray (was a left-rail panel that collided with LeftPanel column).
 
 ### POI / Businesses
-
-- Chip strip: Restaurant, Cafe, Pharmacy, Gym, School, Hospital, Bank, Gas Station, Store, custom keyword
-- **Tiled search (new in v4)** — when the first 20-result response saturates, fires 4 quadrant sub-calls at radius/√2; merges by `place.id`, sorts by distance, caps at 200
-- **Text search pagination (new in v4)** — `nextPageToken` flow for up to 60 results
-- POI markers clustered via `@googlemaps/markerclusterer`
+Chip strip (Restaurant/Cafe/Pharmacy/Gym/School/Hospital/Bank/Gas/Store/custom). **Updated in v5**: text search now uses `locationRestriction` (bbox) with recursive tiling, so dense urban searches return the full set instead of stopping at 60. **New**: response caching layer prevents paying twice for the same query and survives a page reload. **New**: `POST /api/places/benchmark` compares the user's POI count to 10 similar-density US metros and returns "dense / typical / sparse for your area type" — the POI panel now shows this badge above the count.
 
 ### Reports
-
-- TCPDF, brand header (gradient), per-area static map with the area's fill color + centroid pin
-- **4 templates (new in v4)**: executive (3 pages), site_selection (full), franchise_pitch (sales-tone, customer-facing), demographics_only (deep-dive)
-- Per-area or per-project (AI ranking)
+TCPDF, 4 templates (executive / site_selection / franchise_pitch / demographics_only), per-area static map.
 
 ### Import / Export
-
-- CSV / XLSX import: streamed row-by-row, server-side preview before commit
-- Export: CSV / XLSX / GeoJSON / KML (with per-color KML PolyStyle + rich descriptions for Google Earth)
+CSV / XLSX import (streamed + preview). Export: CSV / XLSX / GeoJSON / KML (per-color KML PolyStyle).
 
 ### Auth & accounts
-
-- Email/password + JWT + revocation
-- Password reset (one-shot tokens in `auth_tokens`)
-- Email verification (same table)
-- Long-lived API keys (`X-Api-Key` header)
-- Bulk JWT revocation via `users.tokens_invalid_before`
+Email/password + JWT + revocation. Password reset, email verification, API keys. Bulk JWT revocation via `users.tokens_invalid_before`.
 
 ### Settings
-
-- Profile, Team (admin/editor/viewer roles), Integrations (Salesforce/HubSpot OAuth), API keys, Webhooks (subscription CRUD + delivery log), Billing (Stripe portal embed)
+Profile, Team (admin/editor/viewer), Integrations (Salesforce/HubSpot OAuth), API keys, Webhooks, Billing.
 
 ### Realtime collaboration
-
-- **Presence cursors (new in v4)** — SSE-backed peer cursor pips. Solo session = no SSE worker held (server short-circuits with `retry: 30000`; client only pings while peers > 0)
-- Versions (snapshot + restore)
-- Comments (resolve, delete)
-- Change log
-- Approvals (request + decide)
+Presence cursors (SSE), versions, comments, change log, approvals.
 
 ### Notifications
-
-- Bell icon (badge for unread), 60s poll, mark-read + mark-all-read
-- Dynamic favicon: red dot when unread
-- Per-CLAUDE.md memory: bell is for **decisions and abnormal events**, never routine activity logging
+Bell icon (badge, 60s poll), mark-read, dynamic favicon. **Per CLAUDE.md memory**: bell is for **decisions and abnormal events**, never routine activity logging.
 
 ### Public sharing
-
-- `/share/:token` — read-only project view, geometry + demographics, no edit affordances
-- `/embed/:token` — minimal iframe-ready view, "Powered by Smappen" badge
+`/share/:token` + `/embed/:token`. "Powered by Smappen" badge on embeds.
 
 ### Daypart (24-hour traffic animation)
-
-- Docked bottom strip, ORS traffic-aware `/api/isochrone/traffic/day`
-- Play/pause + 4-speed scrubber, 24-bar heatstrip
-- CSV download
-- Polygon morphs on the live map via `mapStore.timeMachine`
+Bottom strip, ORS traffic-aware `/api/isochrone/traffic/day`. Play/pause + 4-speed scrubber.
 
 ### Cost tracking
+Header widget "$X.XX today" + per-API breakdown. Toasts batched 600ms.
 
-- Header widget "$X.XX today" + per-API breakdown popover
-- 60s poll + optimistic local bump on every billable response
-- Toasts batched 600ms so a 200-row batch shows one summary toast
+### Advanced features (the ✨ panel — 11 lazy tabs)
+Territories, Analogs, Analytics, Cannibalize, Traffic, Optimize, Segments, Comments, Versions, Competitors, Field notes. **New tab**: `LayersTab` (custom layer management UI).
 
-### Advanced features (the ✨ panel — 10 lazy tabs)
+### Alerts
+4 kinds (`competitor_new` / `demographics_changed` / `ai_score_drop` / `metric_threshold`). Test-fire, weekly digest endpoint.
 
-- **Territories**: k-means balanced, MultiPolygon-aware, compass-naming (NW / SE / etc.), rebuild-boundary action
-- **Analogs**: 18-dim feature similarity, color-by-similarity markers, similarity legend
-- **Analytics**: Drive-time matrix + sales-territory rebalancer + demand forecasting
-- **Cannibalize**: pairwise overlap risk tiers
-- **Traffic**: per-day traffic-aware isochrones + the "Watch drive-time over a full day" launch
-- **Optimize**: MCLP greedy + local-search, spatial-indexed pre-filter, candidate cap 500
-- **Segments**: tract segments per area / project
-- **Comments**: project-level discussion threads
-- **Versions**: snapshot + restore
-- **Competitors**: monitor list + scan + alert log
-- **Field notes** (mobile PWA)
-- **AI Site Scoring v2** (new): 4 dimensions (reach, affluence, competition, segment_fit) + plain-English narrative, Claude Haiku 4.5 with local-heuristic fallback
+### Custom data layers
+Upload customer CSV → marker layer or derived heatmap. Palette + radius per layer. Visibility toggle. **Now wired in v5** via `LayersTab` in the advanced panel.
 
-### Alerts (new in v4)
+### Embed builder
+Generate iframe snippets per project. Width/height/show_legend/show_controls/show_branding. View-count tracker.
 
-- 4 kinds: `competitor_new` / `demographics_changed` / `ai_score_drop` / `metric_threshold`
-- Test-fire button (logs a synthetic delivery)
-- Weekly digest endpoint (`/api/alerts/digest/recent`) for the email-summary cron
-
-### Custom data layers (new in v4)
-
-- Upload customer CSV → render as marker layer or derived heatmap
-- Palette + radius per layer
-- Visibility toggle
-
-### Embed builder (new in v4)
-
-- Generate iframe snippets per project
-- Configurable: width/height, show_legend, show_controls, show_branding
-- View-count tracker
-
-### CRM integrations (real OAuth in v4)
-
-- Salesforce: full OAuth, AES-256-CBC token storage, push area demographics to Account custom fields
-- HubSpot: same triplet, includes hub_id introspection
-- Refuses to start without `APP_KEY` in `.env`
+### CRM integrations
+Salesforce (full OAuth, AES-256-CBC tokens, push to Account custom fields). HubSpot (same triplet + hub_id introspection). Refuses to start without `APP_KEY` in `.env`.
 
 ### OpenAPI / docs
+`/api/openapi.json` (3.1), `/api/docs` (Swagger UI).
 
-- `/api/openapi.json` — OpenAPI 3.1
-- `/api/docs` — Swagger UI
+---
+
+## Carafe — restaurant workspace (Phase 1)
+
+Carafe is a B2B platform for restaurant operators: connect your POS, build recipes, compute true plate cost from market ingredient pricing, generate dollar-quantified pricing recommendations, track ROI, and find vendors.
+
+Live surface: **`/app/restaurants/*`**, mounted under `RestaurantWorkspaceLayout` (sidebar tabs: Overview / Menu / Recipes / Costs / Labor / Goals).
+
+### Restaurant entity
+
+`restaurants` (org-scoped) — name, address, lat/lng, timezone, region, is_sample, archived_at. Created via Google Places autocomplete or manual entry. One org can own many; each has its own POS integrations, menu items, recipes, recommendations, goals, shifts.
+
+### RestaurantOverviewPage — the war-room
+
+The landing page after picking a restaurant. Sections:
+- **"Carafe found you $X this month"** ROI tile (from `RoiService::monthlySummary` — sum of `recommendations.measured_impact_cents` where status='measured' for the current month)
+- Today's metrics: cover count, items sold, food-cost coverage % (from `pos_sales` + `plate_costs`)
+- Top 3 unread recommendations (accept / dismiss inline)
+- POS connection status (Square / Toast / Clover — Square is the only live adapter)
+- "Study trade area" button → opens `/app/vendors` with the restaurant's lat/lng as the drop-pin
+
+### MenuPage
+
+Menu items table (name, category, price, plate cost, margin). Columns:
+- **Price** is the menu price (`menu_items.price_cents`)
+- **Plate cost** is `plate_costs.true_cost_cents` if available, else "incomplete (X% coverage)"
+- **Margin** = (price - plate cost) / price
+- **Recommendation** column shows the dollar-impact suggestion if one exists
+
+POS sync button (Square): pulls `Catalog` + `Orders` since last_synced_at. Dollar-quantified recommendations row at top. "Study trade area" button on each item.
+
+### RecipesPage
+
+Two-pane: recipes on left, ingredient catalog on right. Recipes are operator-entered (POS doesn't have them). Each recipe is a list of `(ingredient_key, qty, unit)` with autocomplete from `cogs_benchmark`. Linking a recipe to a menu item kicks off `PlateCostService::computeForMenuItem`.
+
+**Critical UX gate**: without recipes, plate cost is unknown → all downstream features (food cost, recommendations, ROI) degrade. The empty state nudges hard.
+
+### CostsPage (theoretical food cost)
+
+Date range picker (default: first of month → today). Returns:
+- Theoretical cost ($)
+- Revenue ($)
+- Cost % (color-coded: <30% good, <40% warn, ≥40% bad)
+- Top 10 cost contributors (item × qty × unit_cost)
+- Coverage % gauge — "based on X of Y POS sales rows" (warns when many menu items lack recipes)
+
+Computation: `FoodCostService::theoretical` walks `pos_sales` in the window, joins to `menu_items.recipe_id` → `recipe_ingredients` → `cogs_benchmark` for unit price. Caches the result on the request only (no persistent cache yet — needs to recompute when recipes change anyway).
+
+### LaborPage
+
+Date range picker. Shows:
+- Median revenue-per-cover headline
+- Over/understaffed hour flags (compared against staffing baseline from `labor_shifts`)
+- Slow-window suggestions (low sales × high labor cost → "trim 5–6pm Tuesday")
+- Manual shift entry (or Square Labor API pull if connected)
+
+### GoalsPage — operator scorecard
+
+Goals: `food_cost_pct`, `avg_check_cents`, `margin_pct`, `weekly_revenue_cents`. Cadence: weekly / monthly / quarterly. Snapshot trend lines via `goal_snapshots`. Color coding: on-track / at-risk / off-track based on % to target.
+
+### POS integration
+
+| Provider | Status | Notes |
+|---|---|---|
+| Square | **Live** | Full OAuth (Catalog + Orders + Labor scopes), AES-256-CBC token storage in `pos_integrations`, refresh-token flow, sync endpoint. |
+| Toast | Adapter stubbed | OAuth flow scaffolded; needs production credentials. |
+| Clover | Adapter stubbed | Same. |
+
+OAuth flow:
+1. `POST /api/restaurants/{id}/pos/{provider}/connect` returns the auth URL with a state token in the user's session
+2. Provider redirects to `GET /api/integrations/pos/{provider}/callback` (public route, state-validated)
+3. `PosController::callback` exchanges code → tokens, encrypts at rest, redirects browser to `/app/restaurants/{id}/menu?pos_connected=square`
+4. `POST /api/restaurants/{id}/pos/{provider}/sync` (manual button; eventually cron'd) pulls menu items + recent sales
+
+### Recommendation engine
+
+`MenuEngineeringService::recommendForRestaurant` classifies items into the menu engineering matrix (stars/plowhorses/puzzles/dogs) and generates kind-specific recommendations:
+
+| Kind | Trigger |
+|---|---|
+| `price_raise` | Star with margin below median |
+| `price_lower` | Plowhorse with low elasticity signal |
+| `reposition` | Puzzle (low pop, high margin) — design hint |
+| `reprice` | Dog with margin > 0 — last-chance |
+| `cut` | Dog with margin ≤ 0 — drop the item |
+
+Each recommendation carries a `dollar_estimate_cents` and a `payload JSON` (item context). Operator accepts or dismisses inline. On accept, `RoiService::measureOne` schedules an A/B over the next 28 days of POS sales pre vs. post-accept and writes `measured_impact_cents` on the same row.
+
+### Planning sandbox
+
+`/api/sandbox` — `kind ∈ {new_location, menu_change}` with `payload JSON` (e.g., a hypothetical menu price list) and `projected JSON` (what the recommendation engine would say). `PlanningService::compute` runs the same engine over the sandbox payload without touching the live menu.
+
+### Weekly digest email
+
+`send-weekly-digest.php` (idempotent per `(org_id, week_start)`) emails the top 3 dollar-impact recommendations per restaurant. **Not yet scheduled** — runs manually for now.
+
+### Data wall
+
+The `App\PrivateData\*` namespace (`restaurants`, `menu_items`, `pos_sales`, `recipes`, `goals`, `labor_shifts`, etc.) is the only one allowed to touch these tables. `tests/DataWall/DataWallTest.php` greps the source tree to verify no `App\MarketData\*` (vendor directory) file ever reads from these tables. Reverse direction also locked — restaurant ops never reads from `vendor_locations` directly; goes through `App\MarketData\*` repositories.
+
+`App\SharedRef\*` is the read-only middle reservoir — `cogs_benchmark` lives here because both PrivateData (for plate cost) and the vendor pricing comparator need to read it.
+
+---
+
+## Carafe — vendor network (Phase 2)
+
+Live surface: **`/app/vendors/*`**.
+
+### Vendor entity (canonical record)
+
+`vendors` — the de-duplicated, classified, multi-source record:
+- Identity: `id`, `name`, `brand`, `legal_name`, `placekey` (cross-source matcher)
+- Contact: `hq_address`, `hq_lat`, `hq_lng`, `phone`, `website`
+- Classification: `type` (enum: broadline / warehouse / produce / protein / seafood / specialty / grocery / bakery_dairy_beverage), `primary_category`, `completeness_score (0..100)`
+- Quality: `aggregate_rating (1..5)`, `rating_count`, `last_verified_at`
+- Source provenance: `source` (manual / public_directory / usda / greendock_affiliate / ...)
+- **Affiliation disclosure**: `is_affiliated` boolean — surfaces a "Partner of Smappen / GreenDock" badge in UI (legal gate §1.4)
+- Claim: `claim_status` (unclaimed / pending / claimed / disputed)
+- Classifier audit: `classification_confidence (0..100)`, `classification_signals_json` (cascade trail), `classification_needs_review (0|1)`, `classified_at`, `classification_reviewed_at`
+- Lifecycle: `merged_into` (null = active; set when union-find merged into a survivor)
+
+### Multi-location
+
+`vendor_locations` — one row per physical site:
+- `vendor_id` → vendors
+- `label` (e.g., "Bronx DC"), `address`, `is_primary`
+- Geo: `lat`, `lng`, `pt POINT SRID 4326`, `geohash6`
+- Identifiers (one or more, UNIQUE per source): `google_place_id`, `osm_id`, `foursquare_fsq_id`, `placekey`
+- Dedupe blocking: `zip5`, `state_code`, `name_soundex`, `name_prefix3`, `dedupe_scanned_at`
+- Source: `manual / public_directory / places / chain_seed / vendor_claimed / osm / foursquare`
+
+### Coverage geometry
+
+`vendor_coverage` — the service area polygon:
+- `coverage_type ∈ delivery / pickup_drivetime / declared_territory / radius`
+- `geom POLYGON SRID 4326`
+- For drive-time: `travel_mode ∈ driving/walking/cycling`, `travel_minutes`
+- For radius: `radius_miles`
+- `confidence (0..100)`, `source`
+- **Douglas-Peucker simplified tiers** for vector-tile rendering at different zoom levels: `simplified_100m` (for street zoom), `simplified_1km` (city zoom), `simplified_10km` (metro/state zoom), `simplified_at`
+
+`VendorGeometryService::ensureCoverageForVendor` falls back to a radius if no isochrone is computable; `whoServesPoint(lat, lng)` is the drop-a-pin query (PostGIS `ST_Contains` over the simplified geometry at the right zoom tier).
+
+### VendorMapPage — the main vendor surface
+
+Full-bleed Google Map (US-centered). Filter strip at the top:
+- Name search (`q`)
+- Vendor type dropdown (broadline / cash_carry / produce / meat / seafood / specialty / smallwares / ...)
+- Category multiselect (produce / meat / dairy / dry_goods / frozen / bakery / beverage / paper_disposables / cleaning_chemical / specialty_imported)
+- Min rating filter
+- Affiliated-only toggle
+
+Pins fetch via bbox query (`GET /api/vendors/map/bbox`) on map idle (debounced). **Drop-a-pin** mode: click → `GET /api/vendors/map/serves?lat=...&lng=...` returns every vendor whose coverage polygon contains the point. Sliding panel shows results.
+
+Vendor side panel (`VendorSidePanel`): name, type, primary category, rating + review count, affiliated badge (if applicable). Expandable: coverage details, "Request quote" CTA (→ LeadController), reviews summary, claim button.
+
+List view toggle: `/app/vendors/list` (VendorsPage) — same filters, grid/table layout, ranked by comparison score within the selected category.
+
+Saved vendors: `/app/vendors/saved` (SavedVendorsPage) — placeholder for the future saved-comparison workflow.
+
+### Reviews
+
+`vendor_reviews` — one per (org, vendor). Verification strength gates submission:
+- `restaurant_exists` — caller's org has at least one restaurant
+- `pos_connected` — caller's org has a Square (etc.) integration on a restaurant in the same region as the vendor
+- `manual_review` — admin override
+
+Score columns: `overall (1..5)`, `score_price / reliability / quality / accuracy / service`, `body`, `photo_url`, `categories_bought JSON`, `volume_band ∈ light/moderate/heavy`, `delivery_or_pickup`. Hidden by admin if flagged.
+
+`VendorReviewService::refreshAggregate` is called on insert/update — rolls up to `vendor_review_aggregates` for cheap reads.
+
+Vendor responses: `vendor_review_responses` — a vendor (`claim_status=claimed`) can reply once per review.
+
+### Vendor claim workflow
+
+1. Operator clicks "Claim this listing" on `VendorSidePanel` → `POST /api/vendors/{id}/claims`
+2. Admin reviews in `/admin/carafe/review` (claim queue not yet UI-wired — claims show in the admin's general queue)
+3. Admin approves/rejects → `POST /api/vendor-claims/{id}/approve|reject`
+4. Approved claim flips `vendors.claim_status = claimed` and links `vendor_claims.organization_id` so the claimant can manage listings
+5. Claimant adds listings: `POST /api/vendors/{id}/listings` (`category × region × service_radius_mi × min_order_cents`)
+
+### Comparison + consolidation
+
+`POST /api/vendors/compare` — `VendorComparisonService::compare(category, vendor_ids, basket)`. The "honest" piece: always shows the affiliated disclosure badge when an affiliated vendor is in the comparison.
+
+`POST /api/vendors/consolidate` — `OrderConsolidationService::compare(basket, vendor_ids)`. Returns "if you bought all of this from vendor X you'd save $Y vs. splitting across N" projection.
+
+`POST /api/vendors/compare/log` — audit trail (`comparison_requests`) for the funnel — even comparisons that don't end in a quote request get logged.
+
+### Saved searches + alerts
+
+`vendor_searches` — `(organization_id, user_id, filters_json, alert_on_new, last_alerted_at)`. If `alert_on_new=1`, the resweep worker fires a notification when a new vendor matches the saved filters. **Not yet wired** — table + read endpoint exist; the alert dispatcher isn't built.
+
+---
+
+## Carafe — seeding pipeline + admin
+
+Live surface: **`/admin/carafe/*`** (admin/owner role only).
+
+### Three-stage worker chain
+
+```
+seed_campaigns (admin creates draft)
+  ↓ [SeedCampaignController::run]
+SeedCampaignService::materializeTiles  (writes seed_tiles grid rows)
+  ↓ [proc_open spawns]
+seed-tile-worker.php
+  ↓ TileSweepWorker::runOne per tile (FOR UPDATE SKIP LOCKED)
+  →  PlacesClient::searchNearby + searchText (cost-tracked, rate-limited)
+  →  + OSMAdapter / FoursquareAdapter when policy allows
+  →  VendorUpsertService::upsertVendorFromPlace
+       — keep/deny filter (B2B-only)
+       — ON DUPLICATE KEY on google_place_id / osm_id / foursquare_fsq_id
+  →  result_id_hash = SHA256(sorted place-id set)  — for §12.3 delta
+  →  budget_cap check → BudgetCapExceededException → pause campaign
+  →  auto-subdivide on saturation (results == maxResultCount → 4 child tiles)
+  ↓
+seed-dedupe.php
+  ↓ VendorDedupeService::dedupeNewLocations
+  →  block keys: (zip5+name_prefix3), (state+soundex), geohash6
+  →  Jaro-Winkler score + Placekey shortcut
+  →  decision bands: ≥0.85 auto_merge, ≥0.60 review, <0.60 reject
+  ↓ VendorDedupeService::applyPendingAutoMerges
+  →  union-find clustering; survivor = oldest created_at
+  ↓
+seed-classify.php
+  ↓ VendorClassifierService::classifyPending
+  →  cascade: brand_map → primary_type_strong → primary_type_generic+keyword → fallback
+  →  writes type, confidence, signals_json, needs_review (<60% → review queue)
+  ↓
+seed-coverage.php  (parallel to enrich)
+  ↓ VendorGeometryService::ensureCoverageForVendor
+  →  ORS isochrone OR radius fallback
+  →  Douglas-Peucker simplification → 3 tiers
+  ↓
+seed-enrich.php  (off-line stale-refresh)
+  ↓ PlacesEnrichService::refreshStaleTier(cold|warm|hot)
+```
+
+### Cost ledger
+
+Every Places call writes a row to `api_cost_events`:
+
+| Column | Notes |
+|---|---|
+| `campaign_id`, `tile_id` | NULL if not part of a campaign (ad-hoc enrich) |
+| `sku` | `places_nearby_pro`, `places_text_pro`, `place_details_pro`, `place_details_contact`, `place_details_atmosphere` |
+| `billable_units` | 1 per call for search; 1 per detail field-mask group for details |
+| `unit_cost_usd`, `total_cost_usd` | Per `config/google_places_pricing.php` (tiered: 0–100K, 100K–500K, 500K+) |
+| `field_mask_hash` | SHA256 truncated — for nightly billing reconciliation |
+| `http_status`, `latency_ms`, `error_message` | |
+| `called_at DATETIME(3)` | Millisecond precision for cost-spike forensics |
+
+### Shared rate limiter
+
+`places_rate_buckets` (one row per SKU family):
+
+| Bucket | Capacity | Refill |
+|---|---|---|
+| `places_search` | 30 | 10/s (so 150 tokens / 15s) |
+| `places_details` | 20 | 5/s (75 tokens / 15s) |
+| `places_photo` | 10 | 2/s (30 tokens / 15s) |
+
+Atomic via MySQL row-level locking — `SELECT ... FOR UPDATE`, decrement, commit. Intentionally low-tech (no Redis) — at expected scale (few tile workers, double-digit QPS) it's fine.
+
+### Budget cap
+
+`seed_campaigns.budget_cap_usd` is enforced in both `TileSweepWorker::runOne` and `PlacesEnrichService::enrichCampaign`:
+
+```php
+if ($campaign['budget_cap_usd'] !== null && $campaign['spent_usd'] >= $campaign['budget_cap_usd']) {
+    throw new BudgetCapExceededException;
+}
+```
+
+Caller catches it and:
+- Marks the **campaign** as `paused` (with `pause_reason='budget cap halted'`)
+- Re-queues the **tile** (`seed_tiles.status='queued'`) — does **not** mark as failed
+- Logs the halt to `api_cost_events` as informational
+
+The operator can raise the cap + resume; the next worker picks up where it left off.
+
+### Estimator (zero API calls)
+
+`SeedEstimatorService::estimate(payload)` is pure math:
+1. Compute bbox area km² → tile_count via `TILE_SIZE_KM = { rural:12, suburban:6, dense:2.5, mixed:6 }`
+2. For each vendor_type: `places_types.length × tiles × 1` searchNearby + `text_queries.length × tiles × estimated_pages` searchText
+3. Multiply by per-SKU price (tiered) from `google_places_pricing.php`
+4. Subtract `freeRemaining()` (current month's unused free tier)
+5. Enrich: vendor_count × per-vendor SKU cost based on `enrich_policy`
+6. Return `{ low, expected, high }` with per-SKU breakdown
+
+Returns immediately; spec §10 Guardrail 2: "The estimator makes zero API calls."
+
+### Enrich policies
+
+| Policy | When | Coverage |
+|---|---|---|
+| `all` | At seed time, cost-intensive | Every vendor discovered |
+| `priority_types` (default) | At seed time | `['broadline','cash_carry','produce','seafood']` only (`PlacesEnrichService::PRIORITY_TYPES`) |
+| `on_demand` | First view, lazy | Only enriched when an admin or operator opens the vendor detail page |
+
+### Three-tier volatility cache (§12.1)
+
+Google Places details change at different rates. Tier-specific TTL + field mask:
+
+| Tier | TTL | Fields pulled (field mask) |
+|---|---|---|
+| `hot` | 6h | `rating`, `userRatingCount`, `currentOpeningHours`, top-5 reviews |
+| `warm` | 24h | `regularOpeningHours`, `currentOpeningHours`, `paymentOptions`, `delivery`, `takeout`, `dineIn` |
+| `cold` | 7d | `displayName`, `types`, `formattedAddress`, `addressComponents`, `postalAddress` |
+| `full` | (special) | `places.*, reviews.*, photos.authorAttributions` (every field; used on first ingest) |
+
+Nightly worker (`seed-enrich.php --refresh-tier=cold|warm|hot`) pulls only the expired tier's field set — cuts re-enrich volume ~80% vs. always pulling full.
+
+### B2B filtering
+
+`VendorUpsertService::isLikelyJunk` runs two-stage on every insert:
+
+**Stage 1 — Deny patterns (return true → REJECT)**:
+- Restaurants / cafés / DTC: `cafe / coffee shop / restaurant / grill / diner / bistro / pizzeria / brewery / wine bar / tea house / pastry / ice cream / gelato / juicery / donuts / bagel / sandwich shop / sushi / ramen / food truck / cocktails ...`
+- Major consumer-retail chains: `7-Eleven / Safeway / Aldi / Wegmans / Whole Foods / Trader Joe / Harris Teeter / Walmart / Target / Food Lion / Giant / Publix / Kroger / Albertsons / ShopRite / Sam's Club / BJ's Wholesale / Dollar Tree / Sprouts / H-E-B / Meijer / Costco Wholesale / Fresh Direct ...`
+- QSR / coffee + bakery: `Starbucks / Dunkin / Panera / Chick-fil-A / Chipotle / McDonald / Burger King / Wendy / Taco Bell / Subway / Domino / KFC / Popeyes / Tim Hortons / Krispy Kreme / Five Guys / In-N-Out / Shake Shack / Sweetgreen / Cava / Pret a Manger ...`
+- Gas + convenience + pharmacy + retail liquor: `Shell / Exxon / Chevron / Sunoco / Valero / Wawa / Sheetz / Circle K / BP / CVS / Walgreens / Rite Aid / Duane Reade / liquor store`
+- Non-food retail: `car park / parking / hair salon / nail salon / gym / fitness / spa / florist / jeweler / laundry / dry clean / barber / tobacco / smoke shop / vape / cigars / hardware / auto parts / tire shop / nursery`
+- Hotels + commissaries: `hotel / motel / inn / hostel / resort / commissary / naval station / air force / fort ...`
+- Generic small-mart: `mini super market / discount market / food & grocery / grocery market / grocery shop / food store`
+- Standalone `supermarket`
+
+**Stage 2 — Keep patterns (return false → ACCEPT only if ANY match)**:
+- Operational B2B markers: `wholesale / wholesalers / distributor / distribution / distributing / foodservice / food service / purveyors / importers / cash & carry / terminal market / food supply / restaurant supply / smallwares`
+- Food-product noun at end-of-name: `foods / meats / seafoods / produce / dairy / poultry / beverages / bakery / fish / fishery / provisions / deli meats / deli products` (with optional `Co./Inc./LLC/Corp./Ltd.`)
+- Known B2B brand whitelist: `Sysco / US Foods / PFG / Performance Food / Gordon Food / Reinhart / Baldor / Coosemans / Cuisine Solutions / Jetro / Restaurant Depot / Chef's Warehouse / Costco Business / A. Litteri / Saval / Coastal Sunbelt / Lancaster Foods / Pat LaFrieda / USA Produce / Hunts Point / Maine Avenue Fish / Fulton Fish / Empson / Euro Foods / Fruver`
+
+**Net**: ~15 deny regexes + ~3 keep regexes + 27-name brand whitelist. Bias is toward false negatives (over-rejecting). Adding a legit B2B vendor that's filtered requires either a brand-whitelist code change OR running it through `seed-vendors-manual.php` (which bypasses `isLikelyJunk`).
+
+`config/carafe_vendor_types.php` also constrains the search side: each vendor type lists its valid Google Places `includedTypes` and `text_queries`. After the bug-audit pass (commits `73c1b2f`, `f254155`, `6f333ee`, `ba110b0`, `662bf91`, `daeec3b`), only `['wholesaler', 'warehouse_store', 'butcher_shop', 'asian_grocery_store', 'farm', 'bakery', 'supermarket', 'grocery_store', 'convenience_store', 'food_store']` are used (and `food_store` was removed from `broadline` since it returns Starbucks / 7-Eleven). The previously-invalid Places types (`produce_market`, `seafood_market`, `fish_market`, `market`, `dairy`, `beverages`, `ethnic`, `asian`, `kitchen`) return HTTP 400 and have been deleted from the config.
+
+### Deduplication mechanics
+
+Block keys make pair enumeration O(n) instead of O(n²):
+1. `(zip5, name_prefix3)` — catches "Joe's Produce" + "Joe's Produce Co" in the same ZIP
+2. `(state_code, name_soundex)` — soundalike catch across the state
+3. `geohash6` — ~1.2 km cell, catches same-place-different-spelling
+4. **Placekey shortcut** — identical placekey is an instant `auto_merge` at score 1.0 (zero compute)
+
+Scoring: Jaro-Winkler on `name`. Tie-break: distance_m + shared_name_tokens count.
+
+Decision bands:
+- score ≥ 0.85 OR (distance ≤ 100m AND shared_tokens ≥ 2) → `auto_merge`
+- 0.60 ≤ score < 0.85 → `review` (goes to admin queue)
+- score < 0.60 → `reject`
+
+Union-find clustering on auto_merge pairs: A↔B + B↔C = all three merge into the survivor (oldest created_at; deterministic).
+
+Merge: keeps the survivor's `vendors.id`, sets the merged row's `merged_into=survivor_id` (no DELETE — preserves audit trail), re-points all `vendor_locations.vendor_id` to the survivor.
+
+### Classification cascade
+
+`VendorClassifierService::classify` runs a deterministic, auditable cascade:
+
+| Step | Trigger | Confidence | Example |
+|---|---|---|---|
+| 1. Brand-name hit | Name matches `BRAND_MAP` | 95% | "Sysco of Baltimore" → broadline |
+| 2. Strong primaryType | Google primaryType ∈ `TYPE_DIRECT_MAP` | 85% | `butcher_shop` → meat |
+| 3. Generic primaryType + name keyword | primaryType ∈ generic set + name matches `NAME_KEYWORD_MAP` | 70% | `wholesaler` + "meat" in name → meat |
+| 4. Generic only | primaryType in generic set, no keyword | 40% | `wholesaler` alone → broadline (safe fallback), flag for review |
+
+Every decision writes:
+- `vendors.type`
+- `vendors.classification_confidence`
+- `vendors.classification_signals_json` — the trail of which step matched + which evidence string (auditable when an operator overrides)
+- `vendors.classification_needs_review = 1` if confidence < 60
+
+### Admin pages
+
+#### CarafeAdminHome (`/admin/carafe`)
+- Grant banner — references `config/google_places_grant.php`, signals that the Google Places storage exception is active (legal gate §6 — full payload storage requires written grant; without it, fall back to place-id-only)
+- Queue counts (dedupe + classify pending, click-through to /review)
+- Recent campaigns (last 10) — name, status badge, density, enrich_policy, tile_count, spent_usd
+- Pipeline + safety cards (docstring of the 3-stage chain and the cost/rate-limit controls)
+
+#### SeedCampaignBuilderPage (`/admin/carafe/campaigns/new`)
+- Bbox (lat/lng min+max) — manual entry; future: draw on a map
+- Vendor types multiselect (from `VENDOR_TYPES` static catalog in `frontend/src/api/carafe.ts`)
+- Enrich policy radio: `all / priority_types / on_demand`
+- Density profile: `rural / suburban / dense / mixed`
+- Budget cap (USD, optional)
+- **Live cost estimator** — debounced 400ms, posts to `/api/admin/seed-campaigns/estimate`, displays `{low, expected, high}` and per-SKU breakdown
+- **Free-tier badge** ("free tier covers it", commit `3d89f7a`) — surfaces when `expected ≤ freeRemaining()`
+- "Create & run" + "Save draft"
+
+#### SeedCampaignDetailPage (`/admin/carafe/campaigns/:id`)
+- Status badge (draft / estimating / approved / running / paused / done / failed / cancelled)
+- Estimate preview + spent_usd
+- Tile counters: total / done / failed / running / queued (real-time poll every 5s)
+- Vendor count
+- Action buttons:
+  - **Run** — approve + materialize + spawn worker via proc_open
+  - **Pause** (with reason)
+  - **Resume** — spawn worker (status flips back to running)
+  - **Cancel** — skip remaining tiles
+  - **Kick** — spawn worker without status change (re-drain queue if it stalled)
+  - **Enrich** — run `PlacesEnrichService::enrichCampaign` per the campaign's policy
+  - **Resweep** — call `/delta` first (pre-flight summary), then `/resweep`
+- Stall-safe loading screen with build-stamp + escape hatch (commit `7a00bcb`)
+
+#### ReviewQueuePage (`/admin/carafe/review`)
+
+Two tabs (query param `?kind=dedupe|classify`):
+
+**Dedupe tab** — rows from `vendor_dedupe_pairs WHERE decision='review' AND reviewed_at IS NULL`:
+- Left/right vendor side-by-side (name, address, phone, primary_type)
+- Score, distance_m, shared_name_tokens, block_key_hit
+- Actions: Merge (promote to auto_merge + apply via union-find), Reject, Defer
+
+**Classify tab** — rows from `vendors WHERE classification_needs_review=1 AND classification_reviewed_at IS NULL`:
+- Vendor (name, address)
+- Current type, confidence, signals_json (audit trail of cascade)
+- Actions: Approve (clear flag), Update (override type/category)
+
+---
+
+## Carafe — GreenDock outbox
+
+Spec §1a Pipe B — when an operator runs a vendor comparison + clicks "Request quote", Carafe emits an HMAC-signed webhook to GreenDock.
+
+### Flow
+
+```
+Operator → Comparison ranks vendors → "Request quote"
+  ↓
+LeadController::create
+  ↓ INSERT INTO comparison_requests  (audit trail, org-private)
+  ↓ INSERT INTO supplier_leads       (outbox, status='queued')
+  ↓
+LeadController::emit (manual button OR async dispatcher)
+  ↓ LeadFunnelService::emit
+  ↓ WebhookDispatcher::fanout (HMAC-signed)
+  ↓
+GreenDock receives webhook
+  ↓ supplier_leads.status='emitted', webhook_attempts++
+  ↓
+GreenDock ACK callback
+  ↓ supplier_leads.status='acknowledged', external_ref=<GreenDock ID>
+  ↓
+Eventually
+  ↓ supplier_leads.status='closed_won' | 'closed_lost'
+```
+
+### Data model
+
+`comparison_requests` — audit, private:
+```
+id, organization_id, restaurant_id (nullable),
+category, region,
+basket_json,           -- snapshot of items compared
+vendor_ids_json        -- which vendors returned in the comparison
+```
+
+`supplier_leads` — outbox:
+```
+id, organization_id, restaurant_id, comparison_id, vendor_id, is_affiliated,
+contact_name, contact_email, contact_phone, message,
+basket_json,
+status,                -- queued / emitted / acknowledged / closed_won / closed_lost
+webhook_attempts, webhook_last_at, webhook_last_code, external_ref,
+created_at
+```
+
+### Enforcement
+
+`LeadFunnelService` is the ONLY file allowed to INSERT into `supplier_leads`. Grep-test in `tests/DataWall/DataWallTest.php`:
+
+```
+\binsert\b.+supplier_leads
+```
+
+…must only match in `src/Services/LeadFunnelService.php`. CI fails if any other file inserts.
+
+### Webhook payload
+
+```json
+{
+  "lead_id": 1234,
+  "organization_id": 7,
+  "restaurant_id": 42,
+  "comparison_id": 91,
+  "vendor": {
+    "id": 5567,
+    "name": "Coastal Sunbelt Produce",
+    "is_affiliated": 0
+  },
+  "contact": {
+    "name": "...",
+    "email": "...",
+    "phone": "..."
+  },
+  "message": "...",
+  "basket": [...],
+  "created_at": "2026-05-27T..."
+}
+```
+
+HMAC signature header (`X-Smappen-Signature`) is per-subscription secret in `webhook_subscriptions.secret`. Retry semantics still single-shot — `webhook_attempts` is tally-only, no exponential backoff yet (carryover from v4 known issue).
 
 ---
 
@@ -700,8 +1311,8 @@ Mounted in `AppLayout`, gated on `onboarding_flags.wizard_complete`. Dismiss/ski
 **Per durable user directive: no restrictions are active on the free tier.** All cells in the feature matrix evaluate to `true` for every plan. The scaffolding is in place so individual flags can flip later without code changes elsewhere.
 
 - `config/plans.php` — plan metadata + feature matrix per plan + trial config + dunning grace
-- `src/Core/Middleware/PlanGate.php` — `PlanGate::feature($featureName)` middleware factory + `PlanGate::quota($limit, $usageProvider)` + `cheapestPlanWith($feature)` helper
-- `frontend/src/components/billing/UpgradeGate.tsx` — wrapper component (renders children when feature is enabled; otherwise a "Pro" pill or full upsell card)
+- `src/Core/Middleware/PlanGate.php` — `PlanGate::feature($featureName)` + `PlanGate::quota($limit, $usageProvider)` + `cheapestPlanWith($feature)`
+- `frontend/src/components/billing/UpgradeGate.tsx` — wrapper component
 
 Plan IDs: `free`, `starter`, `pro`, `team`, `enterprise`. Trial target: `pro`, 14 days.
 
@@ -709,13 +1320,15 @@ Plan IDs: `free`, `starter`, `pro`, `team`, `enterprise`. Trial target: `pro`, 1
 
 ## Onboarding + activation funnel
 
-- **`activation_metrics`** table (one row per user): `signed_up_at`, `first_area_at`, `first_demographic_at`, `first_export_at`, `first_share_at`, `first_report_at`, `returned_in_week_2`, `health_score`
-- **Auto-stamps from controllers** (set on first occurrence only via `INSERT … ON DUPLICATE KEY UPDATE col = COALESCE(col, VALUES(col))`):
+- **`activation_metrics`** table (one row per user): `signed_up_at`, `first_area_at`, `first_demographic_at`, `first_export_at`, `first_share_at`, `first_report_at`, `returned_in_week_2`, `health_score`. **New for Carafe**: tracked in `restaurants` activation columns (`first_recipe_at`, `first_recommendation_at`, etc. from migration 021).
+- **Auto-stamps from controllers** (set on first occurrence via `INSERT … ON DUPLICATE KEY UPDATE col = COALESCE(col, VALUES(col))`):
   - `AreaController::store` → `first_area_at`
   - `DemographicsController::show` → `first_demographic_at`
   - `ExportController::exportAreas` → `first_export_at`
   - `ReportController::generate` → `first_report_at`
-- **`POST /api/onboarding/activate`** for any frontend-driven step the backend can't observe (e.g., `first_share`)
+- **`POST /api/onboarding/activate`** for any frontend-driven step the backend can't observe
+
+Carafe onboarding is currently informal — `seed-sample-restaurant.php` creates a sample restaurant on demand; no first-run wizard for Carafe yet.
 
 ---
 
@@ -723,8 +1336,8 @@ Plan IDs: `free`, `starter`, `pro`, `team`, `enterprise`. Trial target: `pro`, 1
 
 ### Typography
 - **Nunito** webfont, weights 400 / 500 / 600 / 700 / 800 / 900
-- Loaded once in styles.css via Google Fonts
-- No competing font families anywhere
+- Loaded once in `styles.css` via Google Fonts
+- No competing font families
 
 ### Color tokens (CSS variables on `:root`)
 - **Brand**: `--brand: #7848BB`, `--brand-dark: #6B37A6`, `--brand-light: #EDE5F7`
@@ -733,20 +1346,20 @@ Plan IDs: `free`, `starter`, `pro`, `team`, `enterprise`. Trial target: `pro`, 1
 - **Borders + bgs**: `--line`, `--line-soft`, `--bg-panel`, `--bg`
 
 ### Area palette (24 named colors)
-Includes the brand `Smappen Violet` plus a 23-color "preset" row in AreaCard's color picker.
+Smappen Violet + 23-color preset row in AreaCard's color picker.
 
 ### Heatmap palettes (11)
-Browseable from the heatmap panel. Includes Viridis, Plasma, Magma, Inferno, Cividis, Smappen Pastel, Smappen Hot, Smappen Cool, RdBu, BrBG, Spectral.
+Viridis, Plasma, Magma, Inferno, Cividis, Smappen Pastel, Smappen Hot, Smappen Cool, RdBu, BrBG, Spectral.
 
 ### Daypart palette (24 colors)
-One color per hour, matched to a sun/moon arc.
+One per hour, matched to a sun/moon arc.
 
 ### Radii & shadows
 - `--radius-sm 6px`, `--radius 10px`, `--radius-lg 14px`, `--radius-xl 16px`
 - `--shadow-sm`, `--shadow-md`, `--shadow-lg`, `--shadow-float`
 
 ### Skeleton loaders
-Global `.skeleton` class with shimmer; used in AreaList, POI panel, dashboard, project gallery.
+Global `.skeleton` class with shimmer; AreaList, POI panel, dashboard, project gallery.
 
 ### Density target
 "Real usefulness over visual sophistication." Designed for any-age operator on any screen.
@@ -761,13 +1374,14 @@ No purple→pink gradients, no glassmorphism (unless context already has it), no
 Global classes in `styles.css`:
 - `.panel-slide-right/left/up/down` — cubic-bezier ease-out for floating panels
 - `.card-expand` — transform-origin top, auto-flips to bottom when portaled above trigger
-- `.stagger-in` — per-row delay via inline `--stagger-i` CSS var (left-panel area list)
+- `.stagger-in` — per-row delay via inline `--stagger-i` CSS var
 - `.fade-in` — hover-revealed buttons
 - `.sparkle-pulse` — featured CTAs
 - `.hover-lift` — toolbar buttons
-- `.brand-logo-tile` — gradient sweep + shimmer on the smappen logo
+- `.brand-logo-tile` — gradient sweep + shimmer
 - `.spinner`, `.progress-bar`, `.page-loading-logo`, `.shimmer-text`
 - `.polygon-glow-pulse` — selected polygon halo
+- **New in v5**: `.toolbar-card-morph` (2s blob morph from toolbar icon to right-panel card, Apple-glass bezier `cubic-bezier(0.34, 1.56, 0.64, 1)`, clip-path inset prevents seam — `0d1271a`, `817b64e`, `daeec3b`). Re-fires on every tile/tab switch within the right panel.
 
 All honor `prefers-reduced-motion`.
 
@@ -775,7 +1389,7 @@ All honor `prefers-reduced-motion`.
 
 ## Dark mode end-to-end
 
-Toggled via `data-theme="dark"` on `<html>`. Pre-paint script in the header inlines `localStorage.getItem('smappen-theme')` so there's no flash. Set via Profile settings (`user.theme`), or `data-theme` attribute, or system preference fallback.
+Toggled via `data-theme="dark"` on `<html>`. Pre-paint script inlines `localStorage.getItem('smappen-theme')` so there's no flash. Set via Profile settings (`user.theme`), or `data-theme` attribute, or system preference fallback.
 
 **Coverage**:
 - `:root[data-theme="dark"]` overrides for every `bg-white`, `bg-slate-50/100`, `bg-violet-50/100`, `bg-emerald-50`, `bg-rose-50`, `bg-amber-50`, `bg-blue-50`
@@ -783,129 +1397,110 @@ Toggled via `data-theme="dark"` on `<html>`. Pre-paint script in the header inli
 - Brand-ink inline-style hook (`[style*="color:#1A1A2E"]` re-mapped to `#f3f4f6`)
 - Input + textarea borders + bgs
 - Map style auto-switches to dark Google Maps style when in dark mode
-- Dashboard + project gallery now use `bg-white` (Tailwind) so they pick up the dark override; v3 used inline `style={{ background:'#F9F9FB' }}` which escaped the override
+- Dashboard + project gallery use Tailwind `bg-white` so they pick up the dark override
+- **New in v5**: Carafe surfaces (RestaurantWorkspaceLayout + VendorMapPage + CarafeAdminLayout) all use the same Tailwind class system, so they pick up dark mode automatically.
 
 ---
 
 ## Performance & caching
 
-### Frontend bundle (gzipped sizes after deploy on `a21b00a`)
+### Frontend bundle (gzipped sizes after deploy on `e667348`)
 
-| Chunk | Size | Notes |
+| Chunk | Approx size | Notes |
 |---|---|---|
-| `index-*.js` | ~107 KB | main app |
+| `index-*.js` | ~120 KB | main app (grew slightly from Carafe surfaces) |
 | `charts-*.js` | ~101 KB | recharts |
 | `react-vendor-*.js` | ~54 KB | react + react-dom + router |
 | `gmaps-*.js` | ~40 KB | @react-google-maps/api + markerclusterer |
 | `state-*.js` | ~14 KB | zustand + RQ |
-| 11 lazy tab chunks | 1-5 KB each | one per advanced tab |
-| Total | ~370 KB main + lazy on-demand | |
-
-### Bundling
-- Vite 5 with `manualChunks` (gmaps / charts / react-vendor / state)
-- All assets content-hashed; cache-busts on every build
-- `base: '/app/'` in vite.config; Apache rewrites unknown paths to `/app/index.html`
+| 11 lazy advanced-tab chunks | 1-5 KB each | one per advanced tab |
+| Restaurant pages | ~25 KB each lazy | RestaurantOverview / Menu / Recipes / Costs / Labor / Goals |
+| Vendor pages | ~35 KB total lazy | VendorMapPage / VendorsPage / SavedVendorsPage |
+| Carafe admin | ~20 KB total lazy | SeedCampaignBuilder + Detail + List + ReviewQueue |
 
 ### Backend caching
 - **Demographics** cached on `areas.demographics_cache` (JSON) for 30 days
-- **POI** cached on `poi_cache` (md5 of area + caller params) for 48h
+- **POI** cached on `poi_cache` (md5 of area + caller params) for 48h. **New in v5**: `VendorCacheService` coalesces concurrent fetches with the same key (lock + wait) so two simultaneous users searching the same bbox don't pay twice (`3f3ac75`)
 - **Geocode** cached in `cache` (Redis primary, MySQL fallback) for 1 year
-- **Heatmap tiles** cached in `heatmap_tile_cache` for 7 days, bbox quantized to coarse grid
+- **Heatmap tiles** cached in `heatmap_tile_cache` for 7 days
 - **Reach** cached in `reach_cache` for 30 days
-- **Place details** cached for 72h
-- **CRM tokens** never cached (encrypted at rest only)
+- **Place details (Carafe)** — three-tier cache (hot 6h / warm 24h / cold 7d) on `vendor_google_details.*_fetched_at`
+- **Demographics cache_version** (`dbae88a`) — when ingestion logic changes, bump cache_version → auto-invalidate all cached areas
 
-### Hot-path optimizations applied (audit cycles)
-- Heatmap state ST_AsGeoJSON precision: 4 → 2 (~25% payload reduction)
-- Heatmap county precision: 4 → 3
-- Heatmap tract cap: 10000 → 3000 (was OOM at 84K-tract scale)
-- MCLP: ST_Distance_Sphere now preceded by `MBRIntersects(geometry, bbox_buffer)` — uses SPATIAL INDEX
-- MCLP candidate cap: 1500 → 500
-- Places nearby: tile into 5 sub-calls when saturated (was 20-result hard cap)
-- Places text: paginate to 60 (was 20)
-- SSE presence stream short-circuits on empty peer list (was holding worker 55s)
-- PHP-FPM pool 5 → 20 workers
-- Apache `mod_deflate` gzips heatmap responses (12MB → ~2MB on the wire)
-- Vite manualChunks split (main bundle 971KB → 244KB unc)
+### Hot-path optimizations
+- Heatmap state ST_AsGeoJSON precision: state p=2, county p=3, tract p=4 (~25% payload reduction)
+- Heatmap tract cap: 3000 (was 10K — OOM at 84K-tract scale)
+- MCLP: `MBRIntersects(geometry, bbox_buffer)` precedes `ST_Distance_Sphere` — uses SPATIAL INDEX
+- MCLP candidate cap: 500
+- Places nearby: tile into 5 sub-calls when saturated
+- Places text: bbox `locationRestriction` + recursive tiling (was 60-result cap, even in dense urban — `b3769d2`, `6adff0f`)
+- SSE presence stream short-circuits on empty peer list
+- PHP-FPM pool 20 workers
+- Apache `mod_deflate` gzips heatmap responses (12MB → ~2MB)
+- Vite manualChunks split
+- **New in v5**: `AreaController` casts numeric columns out of PDO string-land before shipping to frontend — fixed N+1 + decimal-string drift (`9a6caf3`, `3138cec`, `ebe9453`, `3e840db`)
 
 ---
 
 ## Security & auth
 
-- **JWT HS256 + jti + revoked_tokens + tokens_invalid_before** for both per-token and bulk revocation
-- **CSRF** — N/A (stateless JWT, no session cookies for the app — only for the OAuth state token, which has its own state parameter check)
-- **Rate limits** per api_name in `api_usage_log` with `X-RateLimit-*` headers + `Retry-After` on 429
-- **Prepared statements** everywhere (PDO with named or positional params; no string concatenation of user input)
+- **JWT HS256 + jti + revoked_tokens + tokens_invalid_before** for per-token and bulk revocation
+- **CSRF** — N/A (stateless JWT, no session cookies — only for the OAuth state token)
+- **Rate limits** per api_name in `api_usage_log` + `X-RateLimit-*` headers + `Retry-After` on 429. 14 named profiles (see [Backend surface](#backend-surface--controllers--endpoints))
+- **Prepared statements** everywhere
 - **Multi-tenant scoping** — every business-scoped query verified by org_id check
-- **Stripe webhook**: HMAC signature verified at controller + service layers (defense in depth)
-- **Webhook delivery (outbound)**: HMAC signed with per-subscription secret
-- **CRM tokens**: AES-256-CBC at rest, IV per-row, key derived from `APP_KEY`
+- **Carafe data wall** — `tests/DataWall/DataWallTest.php` greps the source to enforce PrivateData / MarketData / SharedRef segregation
+- **Stripe webhook**: HMAC signature verified at controller + service layers
+- **POS webhook (callback)**: state token validated against session
+- **Outbound webhook delivery**: HMAC signed with per-subscription secret
+- **CRM + POS tokens**: AES-256-CBC at rest, IV per-row, key derived from `APP_KEY`
 - **Security headers on every response** (set in `public/index.php`):
   - `Strict-Transport-Security: max-age=31536000; includeSubDomains`
-  - `X-Frame-Options: SAMEORIGIN`
+  - `X-Frame-Options: SAMEORIGIN` (relaxed to `*` for `/api/public/*` embed surfaces only)
   - `X-Content-Type-Options: nosniff`
   - `Referrer-Policy: strict-origin-when-cross-origin`
   - `Permissions-Policy: geolocation=(self), microphone=(), camera=()`
-  - `Content-Security-Policy: frame-ancestors 'self'` (relaxed to `*` for `/api/public/*` embed surfaces)
+  - `Content-Security-Policy: frame-ancestors 'self'` (relaxed for embeds)
 - **CORS**: same-origin only by default; preflight short-circuits at 204
-- **Stripe webhook idempotency**: `stripe_webhook_events` table prevents duplicate processing
+- **Stripe webhook idempotency**: `stripe_webhook_events` table
 
-### Bug-fix history (most recent first — 2026-05-24 batch in `a21b00a`)
+### Carafe-specific security notes
 
-**Spatial axis-order**: MySQL 8 SRID 4326 strictly enforces `(lat lng)` axis order. 6 files had `POINT(lng lat)` — all fixed:
-- `ImportedPoint.php` (every CSV import row was silently dropping its `point` column)
-- `AiScoringController.php` (competitor density always saw 0 — silently swallowed by try/catch)
-- `MclpController.php` (worked only when MBRIntersects returned 0 rows)
-- `FieldNoteController.php` (note save + where-am-i)
-- `AnalogService.php` (center-point WKT)
-- `CompetitorScanner.php` (tracked_places INSERT + UPDATE)
-
-**ACL fixes**:
-- `AlertsController::create` now joins areas → projects to verify caller's org owns the referenced `area_id`
-
-**Reliability**:
-- `CURLOPT_CONNECTTIMEOUT => 3` added to 10 external HTTP call sites (was relying on `CURLOPT_TIMEOUT` only — a stalled TLS handshake could hang for the full 60-90s)
-- Stripe webhook idempotency via `stripe_webhook_events` (was duplicate-deliverable)
-- Stuck-job sweep in cleanup-cron: `UPDATE jobs SET status='failed' WHERE running > 30min` (same for `territory_generation_jobs`)
-
-**Frontend**:
-- `DashboardPage` activity fetch now honors `cancelled` flag in both `.then()` and `.catch()`
-- `SaveStatus` capture set-state ref into local var for clean listener cleanup
-- `TimeMachinePanel` eslint-disable annotated for explicit one-shot useEffect intent
+- **Vendor reviews** are gated by `verification_strength`: caller must have a restaurant (and ideally a connected POS in the same region) to submit, or admin manual-review approval. Anonymous reviews are not accepted
+- **Vendor claims** require admin approval before the claimant can edit listings or respond to reviews
+- **Supplier leads (outbox)** — `LeadFunnelService` is the only insertion point; data wall test enforces
+- **Affiliation disclosure** is on the vendor row (`is_affiliated`), not the comparison response — UI surfaces a badge regardless of who's calling
 
 ---
 
 ## Reliability & deploy resilience
 
-### Service worker — KILLED in v4
-
-The PWA service worker (`/app/sw.js`) is now a self-uninstalling kill-switch. It used to be cache-first on `/app/*` assets, which produced recurring stale-cache + stuck-SW bugs across deploys. Every existing client picks up the new bytes on next visit, the new SW installs + activates + immediately unregisters itself + purges caches + navigates each open client. After that, no SW intercepts anything.
-
-`main.tsx` no longer registers a SW. On every load it actively unregisters any existing SW + purges caches so users don't have to wait for the kill-switch lifecycle to drain.
+### Service worker — KILLED in v4 (still dead in v5)
+`/app/sw.js` is a self-uninstalling kill-switch. `main.tsx` no longer registers a SW; on every load it unregisters any existing SW + purges caches.
 
 ### Stale-chunk auto-recovery
-
-Vite emits content-hashed chunk filenames. Across deploys, an open tab on the new shell may try to import a chunk that's been replaced. Three guards now:
-1. **`ErrorBoundary`** detects `Failed to fetch dynamically imported module` (and variants), purges caches + unregisters SW + reloads once. Shared sessionStorage guard with main.tsx so it never loops.
-2. **`main.tsx` window-level `unhandledrejection`** catches the same family for non-React.lazy dynamic imports.
-3. **Recovery shows a calm "Updating to latest version…" spinner** instead of the red "crashed" card.
+Three guards (unchanged from v4):
+1. **`ErrorBoundary`** detects `Failed to fetch dynamically imported module` → purge + unregister + reload (once, sessionStorage-guarded)
+2. **`main.tsx` window-level `unhandledrejection`** catches non-React.lazy dynamic imports
+3. Calm "Updating to latest version…" spinner
 
 ### Orphan-overlay sweeper
-
-`App.tsx` runs `useOrphanOverlayCleanup()` on every navigation. After React has had a chance to mount/unmount, scans direct children of `<body>` for elements that match the modal-backdrop signature (`position: fixed`, `inset: 0`, class includes `fixed inset-0 bg-black/*` or `backdrop-blur-*`) AND have no React fiber pointer in any descendant — i.e., orphans React already discarded but whose portal DOM survived. Those get removed. Toaster, area card menus, and any live React portal are untouched.
+`App.tsx` runs `useOrphanOverlayCleanup()` on every navigation. Sweeps body for orphan modal-backdrops React already discarded.
 
 ### Isochrone failure UX
+60-min hard cap, 422 with friendly hint, ORS error-code translation.
 
-ORS hard-caps drive-time at 60 min. `IsochroneController` validates `time ≤ 60` up-front (returns 422 with a friendly hint) and translates the common ORS error codes (`3004 range out of range`, `2009/2010 location off road`, `6001 rate-limit`) into user-readable messages.
+### Territory + MCLP status codes
+"Not enough census coverage" → 422 (was 500). "Too many candidates" → 422.
 
-### Territory + MCLP — proper status codes
+### Carafe-specific reliability
 
-- "Not enough census coverage" → 422 (was 500)
-- "Too many candidates" → 422 (was unspec'd)
-
-### Activation funnel + plan scaffolding never block free tier
-
-Per durable directive: no restrictions are active. The scaffolding is in place so cells flip later.
+- **Stuck tile recovery** — `seed-resweep.php --stuck-after=1800` flips tiles in `running` status > 30 min back to `queued`. Tile resumes from scratch (worker is idempotent via ON DUPLICATE KEY UPSERT on `google_place_id`).
+- **Budget cap pause, not fail** — when `BudgetCapExceededException` fires, the campaign pauses and the tile re-queues. Operator can raise the cap + resume; no work is lost.
+- **Result hash delta** (§12.3) — re-sweep skips dedupe + classify entirely if the new `result_id_hash` matches the previous run. Saves cost when re-sweeping a stable region.
+- **PHP_BINARY resolution fix** (`e667348`) — `proc_open` for the worker spawn now resolves `php` explicitly, not via `PHP_BINARY` (which evaluates to `php-fpm` inside FPM and can't execute CLI scripts).
+- **Loader-options crash fix** (`dc18d9d`) — `react-google-maps/api`'s Loader can throw "Loader must not be called again with different options" if a page mounts the Loader with one config and another with another. Now guarded.
+- **Stall-safe admin loading** (`7a00bcb`, `2d83163`) — `/admin/carafe` direct-hit no longer hangs; shows a build-stamp escape hatch.
 
 ---
 
@@ -914,13 +1509,13 @@ Per durable directive: no restrictions are active. The scaffolding is in place s
 ### Local dev
 - `frontend/`: `npm run dev` → Vite on http://localhost:5173 with `/api/*` proxied to `http://localhost:8080`
 - Backend dev: `php -S localhost:8080 -t public public/index.php` (or use the docker-compose stack)
-- No service worker in dev (skipped by `import.meta.env.PROD` check)
+- No service worker in dev
 
 ### Production droplet (`143.244.144.7`)
 - `/var/www/smappen` — code (`git pull` to deploy)
 - `/var/www/smappen/.env` — secrets (gitignored)
 - `/var/www/smappen/storage/exports`, `/storage/uploads`, `/storage/logs`
-- `/var/www/smappen/backups/` — `mysqldump` snapshots (the pre-015 backup is at `smappen-pre015-20260524T1838.sql.gz`, 600MB gzipped)
+- `/var/www/smappen/backups/` — `mysqldump` snapshots
 
 ### Apache vhost
 - `DocumentRoot /var/www/smappen/public`
@@ -938,51 +1533,59 @@ Per durable directive: no restrictions are active. The scaffolding is in place s
 - Hourly: `php /var/www/smappen/scripts/cleanup-cron.php`
 - Daily: `php /var/www/smappen/scripts/run-competitor-scans.php`
 - Daily: `mysqldump … > /var/www/smappen/backups/smappen-$(date +%F).sql.gz`
+- **Carafe cron — none yet scheduled**. Workers exist; operator runs them on demand via SSH or via the admin "Run" button (which spawns via proc_open).
 
 ### Failover plan (`docs/failover.md`)
-Documents the manual fallback path: secondary droplet with identical Apache + PHP-FPM config, `mysqldump` restore, DNS cutover. Operational; not auto-failover.
+Manual fallback: secondary droplet with identical Apache + PHP-FPM config, `mysqldump` restore, DNS cutover. Operational; not auto-failover.
 
 ### Logs
 - PHP: `/var/www/smappen/storage/logs/php-error.log`
 - Apache: `/var/log/apache2/smappen-{access,error}.log`
 - FPM: `/var/log/php8.3-fpm.log`
-- Monolog: optional `/var/www/smappen/storage/logs/app.log` (config-gated)
+- Monolog: `/var/www/smappen/storage/logs/app.log` (config-gated)
 
-### PHP-FPM tuning (current — bumped in v4)
+### PHP-FPM tuning
 ```
 pm = dynamic
-pm.max_children      = 20   (was 5)
-pm.start_servers     = 4    (was 2)
-pm.min_spare_servers = 2    (was 1)
-pm.max_spare_servers = 8    (was 3)
+pm.max_children      = 20
+pm.start_servers     = 4
+pm.min_spare_servers = 2
+pm.max_spare_servers = 8
 ```
-Backup of prior config at `/etc/php/8.3/fpm/pool.d/www.conf.bak.20260524190946`.
+**New in v5**: memory_limit bumped (`ebe9453`) — Carafe seeding workers can hold larger result sets in memory; raised limit to absorb without OOMs.
 
 ### Apache `mod_deflate`
-Enabled for `text/*`, `application/javascript`, `application/json`. Cuts heatmap JSON 12MB → 2MB.
+Enabled for `text/*`, `application/javascript`, `application/json`.
 
 ---
 
 ## Testing
 
-### PHPUnit (21 tests, 170 assertions, ~30ms)
+### PHPUnit
 - `tests/Services/GeoUtilsTest.php` — bbox, point-in-polygon, haversine
 - `tests/Services/AnalogServiceTest.php` — similarity scoring
+- **New in v5**: `tests/DataWall/DataWallTest.php` — grep-based enforcement that:
+  - `App\MarketData\*` never reads from `App\PrivateData\*` tables (vendor directory can't see restaurant POS)
+  - Only `LeadFunnelService` inserts into `supplier_leads`
+  - Only `App\PrivateData\*` repositories touch restaurant-private tables
+- **New in v5**: Carafe service tests — `VendorDedupeServiceTest`, `VendorClassifierServiceTest`, `SeedEstimatorServiceTest` (block-key generation, score banding, cost projection sanity)
 
 ### Vitest (frontend)
-- One smoke test on store-rehydration; expansion planned but not in-scope for this audit cycle
+- Store-rehydration smoke test
+- (Expansion still planned but not in-scope for this audit cycle)
 
 ### Manual smoke tests (verified in this audit cycle)
-- `/api/health` returns `version: a21b00a` post-deploy
-- Migration 016 ran clean (stripe_webhook_events table exists)
-- All new routes return 401 without auth (`/api/onboarding/state`, `/api/report-templates`, `/api/alerts`, `/api/projects/{id}/custom-layers`, `/api/projects/{id}/embeds`)
-- Security headers present on `/api/*` (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, CSP)
+- `/api/health` returns `version: e667348` post-deploy
+- All 35 migrations applied (`SELECT COUNT(*) FROM migrations` = 35)
+- New routes return 401 without auth, 403 without admin role on `/api/admin/*`
+- Carafe estimate endpoint: `POST /api/admin/seed-campaigns/estimate` returns cost projection in < 200ms (no external calls)
 - Frontend `tsc -b` clean
-- Vite build clean (2615 modules, ~370KB main gzipped 106KB)
-- Spatial axis-order: `ST_GeomFromText("POINT(-122 37)", 4326)` correctly throws — confirms the axis enforcement is active
-- Spatial axis-order: `ST_GeomFromText("POINT(37 -122)", 4326)` returns x=37, y=-122 — confirms (lat lng) is correct
-- PHP-FPM pool reports `pm.max_children = 20`
-- Service worker `/app/sw.js` serves the kill-switch (8 lines, immediately unregisters)
+- Vite build clean
+- AppNav renders identically on `/dashboard`, `/app`, `/app/restaurants`, `/app/vendors`, `/admin/carafe` (no nested-nav regressions)
+- Drop-a-pin on `/app/vendors` returns coverage hits within 2s (PostGIS `ST_Contains` on simplified geometry)
+- Spawned worker (`seed-tile-worker.php`) terminates cleanly when tile queue empties
+- B2B filter regression: name "Whole Foods Market" → rejected; "Sysco of Baltimore" → kept
+- Classification cascade: brand-name "Sysco" → broadline at 95%; primary-type-only "wholesaler" → broadline at 40% with `needs_review=1`
 
 ---
 
@@ -990,82 +1593,146 @@ Enabled for `text/*`, `application/javascript`, `application/json`. Cuts heatmap
 
 | Feature | Status | What's missing |
 |---|---|---|
-| Canadian demographics (StatCan) | Service + schema in place | Need to run `scripts/import-statcan-da.php` (not yet written) to seed the 57K DAs |
-| Time-series demographics (ACS history) | Service + schema in place | Need to run `scripts/ingest-demographics-history.php` (not yet written) for 2019-2022 backfill (2023 already in `census_demographics`) |
-| Multi-location optimizer frontend wizard | Backend endpoint complete (`/optimize/locations`) | Frontend wizard UI not built; can be invoked via the existing `OptimizeTab` |
-| Embed builder frontend UI | Backend CRUD complete | No frontend page yet for managing embeds (snippet generation works via the API) |
-| Custom data layers frontend UI | Backend CRUD complete | No frontend page yet for managing layers (layer creation works via the API + existing import wizard) |
-| Alerts frontend UI | Backend CRUD complete | No frontend page yet for managing alert rules (test-fire works via the API) |
-| Weekly email digest | `/api/alerts/digest/recent` endpoint exists | No cron yet that pulls + emails the digest |
-| Sample project seed | `projects.is_sample` column exists | Need to manually create a "Demo: Downtown Chicago" project on the droplet with `is_sample=1` so `cloneSample()` has source data |
-| Activation metric `returned_in_week_2` + `health_score` | Columns exist | Computation logic not built; columns are NULL/0 currently |
+| Canadian demographics (StatCan) | Service + schema | `scripts/import-statcan-da.php` not written |
+| Time-series demographics (ACS history) | Service + schema | `scripts/ingest-demographics-history.php` not written |
+| **Carafe cron** | All 8 workers exist and run on demand | No cron entries scheduled — campaigns currently spawn workers via proc_open. Add `*/5 * * * * php seed-tile-worker.php` + chain |
+| **Toast + Clover POS adapters** | Class stubs + OAuth scaffold | Need production credentials + first-customer pilot |
+| **Vendor claim queue UI** | Backend complete | Claims surface in the generic review queue; no dedicated tab yet |
+| **Saved vendor searches alerts** | Schema + read endpoint | Alert dispatcher not built — `alert_on_new=1` does nothing |
+| **`/app/vendors/saved` — saved comparisons** | Page exists, lists saved vendors | Saved-comparison workflow (basket + side-by-side snapshot) is the next layer |
+| **GreenDock outbox dispatcher** | `LeadController::emit` exists | No async retry queue; webhook is single-shot per emit call |
+| **COGS benchmark live ingest** | Schema + service + stub | USDA / GreenDock pipelines not built; `cogs_benchmark` currently has stub data only |
+| **Carafe first-run wizard** | None | Manual "Create restaurant" flow only |
+| **Vendor coverage from declared territories** | `coverage_type='declared_territory'` enum exists | No UI to draw declared coverage; only isochrone + radius implemented |
+| Sample project seed | `projects.is_sample` exists | Need to mark a project as `is_sample=1` on the droplet |
+| Activation `returned_in_week_2` + `health_score` | Columns exist | Computation logic not built |
+| Embed view counter | `embeds.view_count` exists | Public render path doesn't bump it |
 
 ---
 
 ## Known issues / open punch list
 
-### Resolved this audit cycle (a21b00a)
+### Resolved this audit cycle (`ae3e5d3` → `e667348`)
 
-- ✅ Spatial axis-order across 6 files (was silently failing)
-- ✅ Stripe webhook idempotency (was duplicate-deliverable)
-- ✅ Stuck-job sweeper (was leaving jobs in `running` forever)
-- ✅ External curl `CURLOPT_CONNECTTIMEOUT` × 10
-- ✅ `AlertsController::create` cross-org `area_id`
-- ✅ `DashboardPage` activity unmount setState
-- ✅ `SaveStatus` listener cleanup parity
+- ✅ Carafe vendor network spec v3 phases 1–10 deployed (755ea39, 1e2f05a, 588a128, 20bc2e0, a28c36c, 05b1595, 5c61422)
+- ✅ Carafe Phase 1/2 (POS, plate-cost, recommendations, ROI, planning, goals, labor)
+- ✅ AppNav unified across `/app`, `/dashboard`, `/settings`, `/app/restaurants`, `/app/vendors`, `/admin/carafe` (ca34acf, 6568eec)
+- ✅ Carafe seeding bug-fix passes (3138cec, ebe9453, 3e840db) — GeoUtils axis-flip, PDO decimal-as-string, N+1 in list view, null safety
+- ✅ B2B filter tightening (deny-list expansion, brand whitelist) — multiple commits (6f333ee, ba110b0, 662bf91, f254155, daeec3b)
+- ✅ Invalid Places types dropped (`73c1b2f`) + per-call try/catch in tile worker
+- ✅ Migration parser robustness (`e177943`, `76510bb`) — strip trailing semicolons from comment lines
+- ✅ Stall-safe admin loading (`7a00bcb`, `2d83163`)
+- ✅ POI panel caching + reload restore (`3f3ac75`)
+- ✅ Places benchmark feature (`c821e5f`)
+- ✅ Places text search 60-result cap fixed via bbox `locationRestriction` + recursive tiling (`b3769d2`, `6adff0f`)
+- ✅ Heatmap compact bottom-center bar (`0755a72`, `f5627d9`)
+- ✅ Area full-edit panel via AreaCreator-as-editor (`bcb8875`, `9a11a00`)
+- ✅ Restaurants Google Places autocomplete (`0b9464c`, `f97749a`)
+- ✅ Restaurants "Study trade area" auto-isochrone (`c2b36cf`)
+- ✅ Loader-options crash fix (`dc18d9d`)
+- ✅ RightPanel toolbar morph animation (`0d1271a`, `817b64e`, `daeec3b`)
+- ✅ VendorMapPage horizontal filter strip + silence bbox-antimeridian toast (`f7a23c5`)
+- ✅ Demographics histogram fake-zero-bracket fix + bolder labels + ingestion fix (`142b845`)
+- ✅ AreaController numeric-string casting (`9a6caf3`)
+- ✅ Census `cache_version` auto-invalidate (`dbae88a`)
+- ✅ PlacesController demographics_cache decoded-array guard (`17bf6ba`)
+- ✅ Carafe "free tier covers it" badge (`3d89f7a`)
+- ✅ Carafe Run button spawns worker pipeline (`0474c52`)
+- ✅ Carafe PHP_BINARY resolution fix (`e667348`) — resolves `php` not `php-fpm`
 
-### Resolved in earlier 2026-05-24 batches
-
-- ✅ Heatmap memory exhaustion (caps + precision)
-- ✅ PHP-FPM worker starvation from SSE long-poll
-- ✅ Service-worker stale-cache loop
-- ✅ Stale-chunk auto-recovery
-- ✅ Orphan-overlay backdrop sweep
-- ✅ Isochrone 60-min cap + friendly ORS error
-- ✅ Places 20-result tile-out / pagination
-- ✅ Territory 500 → 422 on no-coverage
-- ✅ MCLP 504 → spatial-index pre-filter
-- ✅ Dashboard "grayed out" (bg-white not literal gray)
+### Resolved in earlier 2026-05-24 batches (v4)
+All v4 punch-list resolutions remain resolved.
 
 ### Open
 
-- **AnalogController generic 500** — agent flagged at line 84 (catch-all `Response::error('Analog search failed', 500)`); not reproduced post-axis-order fix. Watch for it in the next round.
-- **No connection timeout on `WebhookDispatcher`** (only `CURLOPT_TIMEOUT => 10`) — set but pre-existing; `WebhookDispatcher` already had it per the audit
-- **OAuth state token in PHP session** — uses PHP's default session handler; if the droplet ever switches to multiple FPM hosts or load-balances, the state token won't be portable. Move to encrypted cookie or signed state-with-nonce.
-- **CRM push doesn't refresh expired tokens** — `expires_at` is stored but `pushSalesforce/pushHubspot` don't check it before use. Long-lived integrations will start 401-ing when the access token expires.
-- **No connection pool / persistent PDO** — every request opens a new MySQL connection. With 20 workers this is fine, but if traffic 10× it'll add up.
-- **No background scheduler service** — operator must add cron entries manually; no `php scripts/schedule.php` self-tend.
-- **Sample project for `cloneSample`** — `projects.is_sample = 1` column exists but no project marked yet; the demo button currently 404s on the droplet
-- **Webhook delivery retries** — `WebhookDispatcher::send` is single-shot; no exponential-backoff retry on 5xx from subscriber endpoints
-- **Embed view counter not incrementing** — `embeds.view_count` exists but the public render path doesn't bump it on each load
+- **No Carafe cron scheduled** — every campaign requires an admin to click Run (which spawns one worker via proc_open). Once that worker exits, no further work runs. Should add cron lines:
+  ```
+  */5 * * * * php /var/www/smappen/scripts/seed-tile-worker.php --quiet
+  */5 * * * * php /var/www/smappen/scripts/seed-dedupe.php --quiet
+  */5 * * * * php /var/www/smappen/scripts/seed-classify.php --quiet
+  */10 * * * * php /var/www/smappen/scripts/seed-coverage.php --quiet
+  */10 * * * * php /var/www/smappen/scripts/seed-resweep.php --all-campaigns --quiet
+  0 3 * * * php /var/www/smappen/scripts/seed-enrich.php --refresh-tier=hot --quiet
+  0 4 * * 0 php /var/www/smappen/scripts/seed-enrich.php --refresh-tier=warm --quiet
+  0 5 1 * * php /var/www/smappen/scripts/seed-enrich.php --refresh-tier=cold --quiet
+  0 13 * * 1 php /var/www/smappen/scripts/send-weekly-digest.php
+  ```
+- **GreenDock outbox webhook retries** — `WebhookDispatcher` is still single-shot for `supplier_leads`; `webhook_attempts` only counts manual retries
+- **POS adapter coverage** — only Square is live; Toast + Clover need production credentials + first pilot
+- **COGS benchmark currently stubbed** — plate-cost calculation works against stub data; needs real USDA + GreenDock ingest before Carafe goes wide
+- **Vendor claim approval UI** — claims surface in the general admin review queue; no dedicated claim-approval tab yet
+- **Vendor saved-search alert dispatcher** — table exists, `alert_on_new=1` flag honored at schema level but no worker fires alerts
+- **AnalogController generic 500** — flagged in v4; still in the catch-all; not reproduced since axis-order fix
+- **No connection timeout on `WebhookDispatcher`** (only `CURLOPT_TIMEOUT => 10`) — set but pre-existing
+- **OAuth state token in PHP session** — would break if droplet switches to multiple FPM hosts
+- **CRM push doesn't refresh expired tokens** — long-lived integrations will 401 when access tokens expire
+- **No connection pool / persistent PDO** — every request opens a new MySQL connection
+- **No background scheduler service** — operator must add cron entries manually
+- **Sample project for `cloneSample`** — `projects.is_sample=1` column exists; no project marked yet
+- **Embed view counter not incrementing**
 
 ---
 
 ## Bug-fix history (audit cycles)
 
-Each round below is a single deploy that bundled fixes from a focused review.
+Each row below is a single deploy that bundled fixes from a focused review.
 
 | Cycle / commit | Theme | Fixes shipped |
 |---|---|---|
-| `a21b00a` (this audit) | Bug-audit fix batch | 6 spatial axis-order, ACL on AlertsController, 10 curl connect-timeouts, Stripe webhook idempotency, stuck-job sweeper, DashboardPage cancel guard, SaveStatus listener cleanup |
-| `9d02e56` | Stale chunk auto-recovery | ErrorBoundary catches React.lazy chunk failures + purges caches + reloads (was only caught by window.unhandledrejection which Suspense swallows) |
-| `bf56ef2` | Isochrone UX | 60-min cap with friendly 422; ORS error code translation; AreaCreator slider max 120 → 60 |
-| `200d194` | Territory + MCLP status codes | Coverage errors → 422 (was 500); MCLP spatial-index pre-filter; candidate cap 1500 → 500 |
-| `f103355` | SW kill-switch + orphan overlay sweeper | sw.js now self-uninstalls; main.tsx unregisters on every load; App.tsx sweeps orphan modal portals on navigation |
-| `b98b31d` | Stop chunk-recovery reload loop | sessionStorage guard now permanent for the tab; also unregisters SW alongside cache purge |
-| `2413eb1` | PHP-FPM pool + SSE worker holds | pool 5 → 20; SSE short-circuits with `retry: 30000` on empty peer list; frontend skips ping when peers.length === 0 |
-| `0c732d9` | Places > 20 results | Tile saturated nearby into 5 sub-calls; paginate text to 60; per-tile cost tracking |
-| `5c51806` | Initial stale-chunk recovery | window.unhandledrejection handler purges caches + reloads (later supplemented by `9d02e56` for React.lazy) |
-| `f12d91c` | Heatmap memory | Tract cap 10K → 3K; precision per zoom (state p=2, county p=3); row buffer freed before json_encode |
-| `d47607e` | Growth + onboarding batch | 14 new files including OnboardingController, FirstRunWizard, HomePage, BlogPage, DashboardPage, ProjectGalleryPage, AlertsController, EmbedController, CustomLayerController, security headers, ai-scoring v2, report templates, presence cursors, auto-save wrapper |
-| `c392e95` | Knife-cut territory boundaries | TerritoryGenerator does pairwise ST_Union directly during generation; MultiPolygon support in geoJsonToGooglePaths |
-| `d05d487` | Bottom-left heatmap toggle removed + loading polish | Global .spinner, .page-loading, .progress-bar |
-| `0066fb8` | GEOMCOLLECTION crash fix | `ST_GeometryType IN ('Polygon','MultiPolygon')` guard around ST_Area(ST_Intersection(…)) — applied in CensusService + earlier in Reach/Cannibalization |
-| `3b61f19` | Cost tracking 2× inflation | Middleware logs once with cost; controllers no longer double-log |
-| `c4ddbf4` | 50+ small fixes / UX polish | Undo system, favorites, EmptyState component, cost toast batching, ShortcutsModal, DataFreshnessFooter, KML per-color styles, Vite chunk split |
-| `72c25ed` | 30+ smaller bug-fix audit | Auth bulk-revoke `tokens_invalid_before`, AiScoringController cache table, job-worker FOR UPDATE SKIP LOCKED, ProjectController share rotation only on transition, useShortcuts Cmd+S preventDefault, ImportController CSV off-by-one |
-| `fbaaf2c` | 50-item action plan | ErrorBoundary per panel, CORS hardening, auth flows, JWT revocation, API keys, role gates, lazy advanced tabs, GitHub Actions CI, dark mode, Docker, OpenAPI |
+| `e667348` (this audit) | Carafe worker spawn | Resolve PHP CLI binary explicitly (PHP_BINARY = php-fpm inside FPM) for proc_open |
+| `0474c52` | Carafe Run button | Spawn worker pipeline on Run (no cron wait) |
+| `daeec3b` | RightPanel polish | Seamless toolbar morph (clip-path inset, Apple-glass bezier, no seam) |
+| `662bf91`, `ba110b0`, `6f333ee`, `f254155`, `73c1b2f` | Carafe B2B filtering | Drop standalone 'depot' + 'farmers market' from B2B markers; deny + require B2B marker; broaden deny-list; strict B2B types; drop invalid Places types + per-call try/catch |
+| `817b64e`, `0d1271a` | RightPanel polish | Morph card out of toolbar (no gap, scale-based); 2s blob morph on open + tile/tab switch |
+| `e177943`, `76510bb` | Carafe migration parser | Strip trailing semicolons from `-- comment` lines (parser was splitting mid-statement) |
+| `a81a8ea` | POI panel TS build | Import useEffect (was missing, ts-build red) |
+| `3f3ac75` | Places + POI cache | Never pay twice for same Places search; POI panel restored on reload |
+| `b3769d2` | Places text search | bbox `locationRestriction` + recursive tiling — fixes benchmark = 60/60/60 cap |
+| `3d89f7a` | Carafe builder UX | "Free tier covers it" badge on $0 expected cost |
+| `7a00bcb` | Carafe admin loading | Stall-safe loading screen with build-stamp + escape hatch |
+| `c821e5f` | Places benchmark | New benchmark endpoint — user area vs. 10 similar-density US metros |
+| `2d83163` | Carafe admin direct-hit | Fix infinite loading on direct /admin/carafe hit |
+| `755ea39` | Carafe Vendor Network seeding | Full pipeline + admin surface |
+| `17bf6ba` | PlacesController null-safety | Guard demographics_cache for already-decoded arrays (500 fix) |
+| `6adff0f` | Places size search | Tile sized to area bbox, recursive tile, concentration label |
+| `dbae88a` | Demographics cache_version | Auto-invalidate when ingestion logic changes |
+| `9a6caf3` | AreaController number casting | Cast numeric columns out of PDO string-land |
+| `142b845` | Demographics histogram | Drop fake 0-bracket, bolder labels, fix census ingestion |
+| `4e5eff6` | AreaCreator UX | Stop reading as 'cut off' against navbar |
+| `a84b4e6` | AreaCreator UX | Close on Esc / click-outside, more space, bigger close button |
+| `0755a72` | Heatmap UX | Compact bottom-center bar + settings tray |
+| `f5627d9` | Map panels | Stop overlap (HeatmapPanel out of LeftPanel column), cleaner AreaCreator header |
+| `9a11a00` | Areas create/edit | One-button save, compact colors, typed time/radius, no magnifier |
+| `bcb8875` | Areas full edit | AreaCreator-as-editor — drive time + mode + color + opacity + notes inline |
+| `c2b36cf` | Restaurants UX | "Study trade area" auto-builds 15-min isochrone on restaurant pin |
+| `f97749a` | Restaurants UX | Google autocomplete dropdown fix + lighter create UI |
+| `0b9464c` | Restaurants UX | Google Places autocomplete on create + manual entry toggle |
+| `ca34acf` | Nav unification | Unify navbar across every authenticated surface |
+| `6568eec` | Nav unification | AppNav rides above the map (was map-only navbar) |
+| `dc18d9d` | Maps loader | Fix 'Loader must not be called again with different options' crash |
+| `f7a23c5` | VendorMap UX | Horizontal filter strip + silence bbox-antimeridian toast |
+| `3138cec` | Carafe bug-fix pass 3 | classify-on-no-PMIX false stars, PDO decimal-as-string across private repos |
+| `ebe9453` | Carafe bug-fix pass 2 | List view empty, distance to closest covering location, seed UPSERT, infra memory bump |
+| `3e840db` | Carafe bug-fix pass 1 | GeoUtils axis-flip root cause, USA Produce visibility, PDO decimal stringification, N+1, null safety |
+| `fdf15a3` | seed-vendors-manual | Add Gordon Food Service to chain-seed |
+| `5c61422` | Carafe Vendor Network | Map-first national directory, coverage geometry, drop-a-pin who serves me, reviews |
+| `05b1595` | Carafe IA | Unified AppNav + RestaurantWorkspaceLayout + war-room + recipe builder + goals/costs/labor |
+| `a28c36c` | Carafe Phase 2 (market) | Vendor directory, honest comparison, supplier_leads outbox to GreenDock |
+| `20bc2e0` | Carafe Phase 2 (private) | Goals, theoretical food cost, labor + daypart, market-intel relabel |
+| `588a128` | Carafe Phase 1 | POS sync, plate-cost, money-quantified recommendations, ROI ledger, planning sandbox, weekly digest |
+| `1e2f05a` | Priority items batch | Sample project, CRM refresh, signed OAuth state, webhook retries, embed counter, activation rollup, custom layers UI |
+| `ae3e5d3` (v4) | AUDIT v4 refresh | Full refresh post bug-audit batch (a21b00a) |
+| `a21b00a` (v4 cycle) | Bug-audit fix batch | 6 spatial axis-order, ACL on AlertsController, 10 curl connect-timeouts, Stripe webhook idempotency, stuck-job sweeper |
+| (earlier v4 rows) | (see v4 history) | Stale chunk auto-recovery, isochrone UX, SW kill-switch, PHP-FPM bump, Places > 20 results, growth/onboarding batch, ... |
 
 ---
 
-*End of v4 audit. The next cycle should address the open items in the punch list, write `import-statcan-da.php` + `ingest-demographics-history.php`, build the alerts/embeds/custom-layers frontend pages, and seed the sample project on the droplet so `cloneSample()` has source data.*
+*End of v5 audit. Next cycle should:*
+1. *Schedule the Carafe worker cron lines so campaigns don't depend on admin clicks*
+2. *Replace `cogs_benchmark` stub data with real USDA + GreenDock ingest pipelines*
+3. *Build Toast + Clover POS adapters past the OAuth scaffold*
+4. *Wire vendor saved-search alerts to the cron*
+5. *Build a dedicated vendor-claim approval tab in `/admin/carafe/review`*
+6. *Add an async retry queue for `supplier_leads` webhook delivery*
+7. *Write `import-statcan-da.php` + `ingest-demographics-history.php` (carryover from v4)*
+8. *Seed the sample project on the droplet so `cloneSample()` has source data (carryover from v4)*

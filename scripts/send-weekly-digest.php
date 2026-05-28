@@ -40,8 +40,20 @@ $db->query('CREATE TABLE IF NOT EXISTS digest_sends (
   recipient_email VARCHAR(255) NOT NULL,
   rec_count       INT UNSIGNED NOT NULL DEFAULT 0,
   total_cents     INT UNSIGNED NOT NULL DEFAULT 0,
-  UNIQUE KEY uk_digest_week (organization_id, restaurant_id, week_start)
+  rec_ids         JSON        NULL,
+  UNIQUE KEY uk_digest_week (organization_id, restaurant_id, week_start),
+  INDEX idx_digest_sends_restaurant_sent (restaurant_id, sent_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+
+// Backfill rec_ids column on installs that pre-date migration 037.
+$has = $db->fetch(
+    'SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    ['digest_sends', 'rec_ids']
+);
+if (((int) ($has['n'] ?? 0)) === 0) {
+    $db->query('ALTER TABLE digest_sends ADD COLUMN rec_ids JSON NULL AFTER total_cents');
+}
 
 $weekStart = date('Y-m-d', strtotime('monday this week'));
 echo "[" . date('c') . "] weekly-digest start (week=$weekStart" . ($dry ? ', DRY' : '') . ")\n";
@@ -101,10 +113,11 @@ foreach ($rows as $row) {
             echo "  ! send failed for {$row['owner_email']}\n";
             continue;
         }
+        $recIds = array_values(array_map(static fn ($r) => (string) $r['id'], $recs));
         $db->query(
-            'INSERT INTO digest_sends (id, organization_id, restaurant_id, week_start, recipient_email, rec_count, total_cents)
-             VALUES (UUID(), ?, ?, ?, ?, ?, ?)',
-            [$row['organization_id'], $row['restaurant_id'], $weekStart, $row['owner_email'], count($recs), $total]
+            'INSERT INTO digest_sends (id, organization_id, restaurant_id, week_start, recipient_email, rec_count, total_cents, rec_ids)
+             VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?)',
+            [$row['organization_id'], $row['restaurant_id'], $weekStart, $row['owner_email'], count($recs), $total, json_encode($recIds)]
         );
         $sent++;
         echo "  + sent to {$row['owner_email']} (" . count($recs) . " recs, " . format_usd($total) . ")\n";
