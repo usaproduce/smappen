@@ -1,45 +1,60 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Plus, Trash2, BookOpen, ChefHat } from 'lucide-react';
+import { Plus, Trash2, BookOpen, ChefHat, ClipboardPaste, Sparkles, Pencil } from 'lucide-react';
 import {
   menuApi,
   type Recipe, type RecipeWithIngredients, type IngredientCatalogItem,
+  type MenuItem,
 } from '../../api/restaurants';
 import RestaurantWorkspaceLayout from './RestaurantWorkspaceLayout';
+import PasteFromSpreadsheetModal from './recipes/PasteFromSpreadsheetModal';
+import SuggestForMenuModal from './recipes/SuggestForMenuModal';
+import IngredientAutocomplete from './recipes/IngredientAutocomplete';
 
 const UNITS = ['oz', 'lb', 'g', 'kg', 'each', 'tbsp', 'tsp', 'cup', 'ml', 'l'];
 
 /**
  * Recipes — the operator-essential workflow. Without recipes, plate cost
- * can't be computed and the engine can't suggest price moves. This page
- * is two-pane: recipes on the left, ingredient builder on the right,
- * with cogs_benchmark prices shown inline so the operator sees what
- * each ingredient is "really" costing them at market rate.
+ * can't be computed and the engine can't suggest price moves. The page
+ * is two-pane (recipes on the left, ingredient builder on the right)
+ * once the operator has at least one recipe.
+ *
+ * The empty state used to be a passive illustration; it's now a
+ * three-button picker so a fresh restaurant can go from zero recipes to a
+ * usable plate cost in minutes instead of an hour of clicking.
  */
 export default function RecipesPage() {
   const { id } = useParams<{ id: string }>();
   const restaurantId = id ?? '';
   const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [catalog, setCatalog] = useState<IngredientCatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedRecipe, setSelectedRecipe] = useState<RecipeWithIngredients | null>(null);
   const [creating, setCreating] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+
+  async function refresh() {
+    const [rs, mi, cat] = await Promise.all([
+      menuApi.listRecipes(restaurantId),
+      menuApi.listItems(restaurantId).catch(() => [] as MenuItem[]),
+      menuApi.ingredientCatalog().catch(() => [] as IngredientCatalogItem[]),
+    ]);
+    setRecipes(rs);
+    setMenuItems(mi);
+    setCatalog(cat);
+    if (rs.length > 0 && !selectedId) setSelectedId(rs[0].id);
+  }
 
   useEffect(() => {
     if (!restaurantId) return;
     let cancelled = false;
     (async () => {
       try {
-        const [rs, cat] = await Promise.all([
-          menuApi.listRecipes(restaurantId),
-          menuApi.ingredientCatalog().catch(() => []),
-        ]);
-        if (cancelled) return;
-        setRecipes(rs);
-        setCatalog(cat);
-        if (rs.length > 0 && !selectedId) setSelectedId(rs[0].id);
+        await refresh();
       } catch (e: any) {
         if (!cancelled) toast.error(e?.response?.data?.error ?? 'Failed to load recipes');
       } finally {
@@ -81,7 +96,6 @@ export default function RecipesPage() {
     try {
       await menuApi.addIngredient(rid, payload);
       setSelectedRecipe(await menuApi.showRecipe(rid));
-      // Refresh the recipe list so ingredient_count bumps.
       setRecipes(await menuApi.listRecipes(restaurantId));
     } catch (e: any) {
       toast.error(e?.response?.data?.error ?? 'Failed to add ingredient');
@@ -107,16 +121,30 @@ export default function RecipesPage() {
     }
   }
 
+  const isEmpty = !loading && recipes.length === 0;
+
   return (
     <RestaurantWorkspaceLayout>
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <h1 className="text-2xl font-extrabold flex items-center gap-2" style={{ color: '#1A1A2E' }}>
             <BookOpen size={22} style={{ color: '#7848BB' }} /> Recipes
           </h1>
-          <button onClick={recomputeCosts} className="btn h-9 px-3 text-sm">
-            Recompute plate costs
-          </button>
+          <div className="flex items-center gap-2">
+            {!isEmpty && (
+              <>
+                <button onClick={() => setPasteOpen(true)} className="btn h-9 px-3 text-sm flex items-center gap-1.5">
+                  <ClipboardPaste size={14} /> Paste
+                </button>
+                <button onClick={() => setSuggestOpen(true)} className="btn h-9 px-3 text-sm flex items-center gap-1.5">
+                  <Sparkles size={14} /> Suggest
+                </button>
+              </>
+            )}
+            <button onClick={recomputeCosts} className="btn h-9 px-3 text-sm">
+              Recompute plate costs
+            </button>
+          </div>
         </div>
 
         <p className="text-sm text-slate-600">
@@ -128,42 +156,49 @@ export default function RecipesPage() {
             <div className="col-span-12 md:col-span-4 skeleton h-64" />
             <div className="col-span-12 md:col-span-8 skeleton h-64" />
           </div>
+        ) : isEmpty ? (
+          <EmptyStatePicker
+            onPaste={() => setPasteOpen(true)}
+            onSuggest={() => setSuggestOpen(true)}
+            unlinkedCount={menuItems.filter((mi) => !mi.recipe_id && mi.is_active).length}
+            onManual={() => {
+              const name = window.prompt('Recipe name?');
+              if (name) createRecipe(name);
+            }}
+          />
         ) : (
           <div className="grid grid-cols-12 gap-4">
             {/* Recipe list */}
             <aside className="col-span-12 md:col-span-4 bg-white border border-slate-200 rounded-xl p-3">
               <CreateRecipeForm onCreate={createRecipe} disabled={creating} />
-              {recipes.length === 0 ? (
-                <div className="text-center py-8 text-sm text-slate-500">No recipes yet.</div>
-              ) : (
-                <ul className="space-y-1 mt-3">
-                  {recipes.map((r) => (
-                    <li key={r.id}>
-                      <button
-                        onClick={() => setSelectedId(r.id)}
-                        className={`w-full text-left p-2 rounded-md flex items-center gap-2 transition-colors ${
-                          selectedId === r.id ? 'bg-violet-100 text-violet-900' : 'hover:bg-slate-50'
-                        }`}
-                      >
-                        <ChefHat size={14} className="text-slate-400 flex-shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-semibold truncate">{r.name}</div>
-                          <div className="text-[10px] text-slate-500">
-                            {r.ingredient_count} ingredient{r.ingredient_count === 1 ? '' : 's'}
-                            {r.linked_menu_items > 0 && ` · linked to ${r.linked_menu_items} item${r.linked_menu_items === 1 ? '' : 's'}`}
-                          </div>
+              <ul className="space-y-1 mt-3">
+                {recipes.map((r) => (
+                  <li key={r.id}>
+                    <button
+                      onClick={() => setSelectedId(r.id)}
+                      className={`w-full text-left p-2 rounded-md flex items-center gap-2 transition-colors ${
+                        selectedId === r.id ? 'bg-violet-100 text-violet-900' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <ChefHat size={14} className="text-slate-400 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold truncate">{r.name}</div>
+                        <div className="text-[10px] text-slate-500">
+                          {r.ingredient_count} ingredient{r.ingredient_count === 1 ? '' : 's'}
+                          {r.linked_menu_items > 0 && ` · linked to ${r.linked_menu_items} item${r.linked_menu_items === 1 ? '' : 's'}`}
                         </div>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </aside>
 
             {/* Ingredient builder */}
             <main className="col-span-12 md:col-span-8">
               {selectedRecipe ? (
                 <RecipeEditor
+                  restaurantId={restaurantId}
                   recipe={selectedRecipe}
                   catalog={catalog}
                   onAdd={(payload) => addIngredient(selectedRecipe.id, payload)}
@@ -178,7 +213,108 @@ export default function RecipesPage() {
           </div>
         )}
       </div>
+
+      {pasteOpen && (
+        <PasteFromSpreadsheetModal
+          restaurantId={restaurantId}
+          onClose={() => setPasteOpen(false)}
+          onCommitted={async (result) => {
+            setPasteOpen(false);
+            await refresh();
+            if (result.created.length > 0) setSelectedId(result.created[0].recipe_id);
+          }}
+        />
+      )}
+      {suggestOpen && (
+        <SuggestForMenuModal
+          restaurantId={restaurantId}
+          menuItems={menuItems}
+          onClose={() => setSuggestOpen(false)}
+          onDone={async () => {
+            setSuggestOpen(false);
+            await refresh();
+          }}
+        />
+      )}
     </RestaurantWorkspaceLayout>
+  );
+}
+
+function EmptyStatePicker({
+  onPaste,
+  onSuggest,
+  onManual,
+  unlinkedCount,
+}: {
+  onPaste: () => void;
+  onSuggest: () => void;
+  onManual: () => void;
+  unlinkedCount: number;
+}) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-6 md:p-10">
+      <div className="max-w-2xl mx-auto text-center space-y-1">
+        <ChefHat size={28} className="mx-auto text-violet-700" />
+        <h2 className="text-lg font-extrabold" style={{ color: '#1A1A2E' }}>
+          Start your recipes
+        </h2>
+        <p className="text-sm text-slate-600">
+          Pick the path that matches what you have — three ways to get from zero to a full menu.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-6 max-w-3xl mx-auto">
+        <PickerCard
+          icon={<ClipboardPaste size={20} className="text-violet-700" />}
+          title="Paste from spreadsheet"
+          desc="Got a TSV of items, ingredients, qty, unit? Paste it. We preview, you confirm."
+          cta="Paste TSV"
+          onClick={onPaste}
+        />
+        <PickerCard
+          icon={<Sparkles size={20} className="text-violet-700" />}
+          title="Suggestions for my menu"
+          desc={
+            unlinkedCount > 0
+              ? `Draft recipes for ${unlinkedCount} menu item${unlinkedCount === 1 ? '' : 's'} from common recipe templates.`
+              : 'Connect a POS or add menu items first — then we can suggest drafts.'
+          }
+          cta={unlinkedCount > 0 ? 'See suggestions' : 'Need menu items'}
+          onClick={onSuggest}
+          disabled={unlinkedCount === 0}
+        />
+        <PickerCard
+          icon={<Pencil size={20} className="text-violet-700" />}
+          title="Build manually"
+          desc="Start one recipe at a time. Slowest path — but full control."
+          cta="New recipe"
+          onClick={onManual}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PickerCard({
+  icon, title, desc, cta, onClick, disabled = false,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+  cta: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`text-left bg-slate-50 hover:bg-violet-50 border border-slate-200 rounded-xl p-4 transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
+    >
+      <div className="mb-2">{icon}</div>
+      <div className="font-bold text-sm" style={{ color: '#1A1A2E' }}>{title}</div>
+      <div className="text-xs text-slate-600 mt-1 leading-snug">{desc}</div>
+      <div className="text-xs font-semibold text-violet-700 mt-3">{cta} →</div>
+    </button>
   );
 }
 
@@ -203,8 +339,9 @@ function CreateRecipeForm({ onCreate, disabled }: { onCreate: (name: string) => 
 }
 
 function RecipeEditor({
-  recipe, catalog, onAdd, onRemove,
+  restaurantId, recipe, catalog, onAdd, onRemove,
 }: {
+  restaurantId: string;
   recipe: RecipeWithIngredients;
   catalog: IngredientCatalogItem[];
   onAdd: (payload: { ingredient_key: string; qty: number; unit: string }) => void;
@@ -219,8 +356,6 @@ function RecipeEditor({
     for (const ing of recipe.ingredients ?? []) {
       const cat = catalog.find((c) => c.ingredient_key === ing.ingredient_key);
       if (!cat) continue;
-      // Naïve same-unit total — proper conversion happens server-side
-      // in PlateCostService. This is just a hint for the operator.
       if (cat.unit === ing.unit) total += Math.round(cat.market_price_cents * Number(ing.qty));
     }
     return total;
@@ -291,20 +426,11 @@ function RecipeEditor({
         <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Add ingredient</h3>
         <div className="grid grid-cols-12 gap-2">
           <div className="col-span-6">
-            <input
-              list="catalog-keys"
-              className="input h-9 text-sm w-full"
-              placeholder="ingredient_key (e.g. tomato_roma)"
+            <IngredientAutocomplete
+              restaurantId={restaurantId}
               value={key}
-              onChange={(e) => setKey(e.target.value)}
+              onChange={setKey}
             />
-            <datalist id="catalog-keys">
-              {catalog.map((c) => (
-                <option key={c.ingredient_key} value={c.ingredient_key}>
-                  {c.ingredient_key} — ${(c.market_price_cents / 100).toFixed(2)}/{c.unit}
-                </option>
-              ))}
-            </datalist>
           </div>
           <input
             type="number"
@@ -327,7 +453,7 @@ function RecipeEditor({
           </button>
         </div>
         <p className="text-[10px] text-slate-500 mt-2">
-          Type any ingredient_key. {catalog.length} have benchmark prices — others save but won't contribute to plate cost until added to <code>cogs_benchmark</code>.
+          Most-used ingredients surface first. {catalog.length} have benchmark prices — others save but won't contribute to plate cost until added to <code>cogs_benchmark</code>.
         </p>
       </div>
     </div>

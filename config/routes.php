@@ -374,6 +374,10 @@ return function (Router $r) {
     $r->get('/api/ingredient-catalog',                          [MenuController::class, 'listIngredientCatalog'], $auth);
     $r->post('/api/restaurants/{id}/plate-costs/recompute',     [MenuController::class, 'recomputePlateCosts'],   $auth);
     $r->get('/api/restaurants/{id}/cogs/overpay',               [MenuController::class, 'overpayFlags'],          $auth);
+    $r->post('/api/restaurants/{id}/recipes/paste/preview',     [MenuController::class, 'previewPaste'],          $auth);
+    $r->post('/api/restaurants/{id}/recipes/paste/commit',      [MenuController::class, 'commitPaste'],           $auth);
+    $r->post('/api/restaurants/{id}/recipes/suggest',           [MenuController::class, 'suggestRecipe'],         $auth);
+    $r->get('/api/restaurants/{id}/ingredient-autocomplete',    [MenuController::class, 'ingredientAutocomplete'],$auth);
 
     // Menu engineering — recommendations + accept/dismiss ledger.
     $r->post('/api/menu-items/{id}/recommend',                  [MenuEngineeringController::class, 'recommendForItem'],       $auth);
