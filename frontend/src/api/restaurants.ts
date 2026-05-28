@@ -1,6 +1,8 @@
 import { api } from './client';
 import type { Restaurant, MenuItem, Recommendation } from '../stores/restaurantStore';
 
+export type { MenuItem } from '../stores/restaurantStore';
+
 export interface ImportBatch { batch_id: string; }
 
 export interface Recipe {
@@ -37,6 +39,79 @@ export interface IngredientCatalogItem {
   unit: string;
   source: string;
   as_of: string;
+}
+
+export interface PastePreviewRow {
+  ingredient_key: string;
+  qty: number;
+  unit: string;
+  status: 'ok' | 'warning' | 'error';
+  message: string | null;
+  raw_ingredient: string;
+  line: number;
+}
+
+export interface PastePreviewGroup {
+  item_name: string;
+  normalized_name: string;
+  rows: PastePreviewRow[];
+  row_count: number;
+  ok_count: number;
+  warning_count: number;
+  error_count: number;
+}
+
+export interface PastePreviewResult {
+  groups: PastePreviewGroup[];
+  summary: {
+    total_rows: number;
+    ok: number;
+    warnings: number;
+    errors: number;
+    recipes: number;
+  };
+}
+
+export interface PasteCommitResult {
+  created: Array<{
+    recipe_id: string;
+    name: string;
+    ingredient_count: number;
+    linked_menu_item_id: string | null;
+  }>;
+  created_count: number;
+  linked_count: number;
+  skipped: Array<{ item_name: string; reason: string }>;
+  plate_costs_recomputed: number | null;
+}
+
+export interface SuggestedRecipeIngredient {
+  ingredient_key: string;
+  qty: number;
+  unit: string;
+  benchmark: {
+    market_price_cents: number;
+    unit: string;
+    source: string;
+  } | null;
+}
+
+export interface SuggestedRecipe {
+  name: string;
+  category: string | null;
+  ingredients: SuggestedRecipeIngredient[];
+  matched: boolean;
+  source_key: string | null;
+}
+
+export interface IngredientSuggestion {
+  key: string;
+  has_benchmark: boolean;
+  market_price_cents: number | null;
+  unit: string | null;
+  own_freq: number;
+  org_freq: number;
+  match_score: number;
 }
 
 export const restaurantsApi = {
@@ -128,6 +203,30 @@ export const menuApi = {
   async recomputePlateCosts(restaurantId: string): Promise<{ recomputed: number }> {
     const { data } = await api.post(`/api/restaurants/${restaurantId}/plate-costs/recompute`);
     return data.data;
+  },
+  async previewPaste(restaurantId: string, text: string): Promise<PastePreviewResult> {
+    const { data } = await api.post(`/api/restaurants/${restaurantId}/recipes/paste/preview`, { text });
+    return data.data;
+  },
+  async commitPaste(restaurantId: string, text: string, includeWarnings = true): Promise<PasteCommitResult> {
+    const { data } = await api.post(`/api/restaurants/${restaurantId}/recipes/paste/commit`, {
+      text,
+      include_warnings: includeWarnings,
+    });
+    return data.data;
+  },
+  async suggestRecipe(restaurantId: string, name: string, category?: string | null): Promise<SuggestedRecipe> {
+    const { data } = await api.post(`/api/restaurants/${restaurantId}/recipes/suggest`, {
+      name,
+      category: category ?? undefined,
+    });
+    return data.data.draft;
+  },
+  async ingredientAutocomplete(restaurantId: string, q: string, limit = 30): Promise<IngredientSuggestion[]> {
+    const { data } = await api.get(`/api/restaurants/${restaurantId}/ingredient-autocomplete`, {
+      params: { q, limit },
+    });
+    return data.data.suggestions ?? [];
   },
 };
 
