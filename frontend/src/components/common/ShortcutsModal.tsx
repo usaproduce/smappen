@@ -12,7 +12,8 @@ const GROUPS: { title: string; rows: { keys: string[]; label: string }[] }[] = [
     title: 'Global',
     rows: [
       { keys: ['?'], label: 'Show this cheat sheet' },
-      { keys: ['⌘/Ctrl', 'K'], label: 'Open project switcher' },
+      { keys: ['g', 'p'], label: 'Open project switcher (press in sequence)' },
+      { keys: ['Esc'], label: 'Close any open menu / dropdown' },
       { keys: ['⌘/Ctrl', 'Z'], label: 'Undo last action' },
       { keys: ['⇧⌘/Ctrl', 'Z'], label: 'Redo' },
       { keys: ['⌘/Ctrl', 'S'], label: 'Save project snapshot' },

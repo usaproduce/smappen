@@ -61,29 +61,31 @@ export default function RestaurantWorkspaceLayout({ children }: { children: Reac
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <AppNav />
-
-      {/* Restaurant header strip */}
-      <div className="bg-white border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-3">
-          <Link to="/app/restaurants" className="text-xs font-semibold text-slate-500 hover:text-violet-700 flex items-center gap-1">
+      <AppNav>
+        {/* Restaurant breadcrumb in AppNav's context slot — single cohesive
+            top bar instead of two stacked rows. */}
+        <div className="flex items-center gap-2 min-w-0">
+          <Link
+            to="/app/restaurants"
+            className="text-[12px] font-semibold text-slate-500 hover:text-violet-700 flex items-center gap-1 flex-shrink-0"
+          >
             <ArrowLeft size={12} /> Restaurants
           </Link>
           <span className="text-slate-300">/</span>
           {loadingRestaurant ? (
-            <div className="skeleton h-5 w-48" />
+            <div className="skeleton h-4 w-40" />
           ) : (
-            <div className="font-extrabold text-base truncate" style={{ color: '#1A1A2E' }}>
+            <div className="font-extrabold text-[13px] truncate" style={{ color: 'var(--nav-text-strong)' }}>
               {currentRestaurant?.name ?? 'Restaurant'}
             </div>
           )}
           {currentRestaurant?.is_sample === 1 && (
-            <span className="text-[10px] font-bold uppercase tracking-wider text-violet-700 bg-violet-50 rounded px-1.5 py-0.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-violet-700 bg-violet-50 rounded px-1.5 py-0.5 flex-shrink-0">
               Sample
             </span>
           )}
         </div>
-      </div>
+      </AppNav>
 
       <div className="max-w-7xl mx-auto px-6 py-6 grid grid-cols-12 gap-6">
         {/* Sidebar tabs */}
@@ -114,7 +116,7 @@ export default function RestaurantWorkspaceLayout({ children }: { children: Reac
         </aside>
 
         {/* Tab content */}
-        <main className="col-span-12 md:col-span-10">
+        <main id="main-content" tabIndex={-1} className="col-span-12 md:col-span-10 focus:outline-none">
           {children}
         </main>
       </div>

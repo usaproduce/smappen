@@ -23,7 +23,64 @@
   --line-soft: #E8E8EE;
   --bg-panel: #F3F3F7;
   --bg: #F9F9FB;
+
+  /* ── Carafe semantic layer ──────────────────────────────────────────────
+     Layered on top of Smappen's --brand/--cta/ink scale. Carafe surfaces
+     terminate every paid feature in a dollar number, so the visual language
+     of money lives here. Use these tokens — never hardcode hex in money
+     components. Reds and greens are intentionally muted so a "+$1,240" tile
+     doesn't read as an alarm and a "-$80" tile doesn't read as success. */
+  --money-positive:    #0F8A4A;   /* calm forest green, not neon */
+  --money-positive-bg: #E6F4EC;
+  --money-negative:    #B14242;   /* muted clay, softer than --cta */
+  --money-negative-bg: #FBECEC;
+  --money-neutral:     #1A1A2E;   /* matches --ink */
+  --money-neutral-bg:  #F1F1F5;
+
+  /* Carafe accent — sits next to Smappen violet so the two products read
+     as related but distinguishable. Chosen as a warm amber/terracotta that
+     pairs naturally with food-cost copy without colliding with --brand. */
+  --carafe-accent:       #C2541A;
+  --carafe-accent-dark:  #A6440E;
+  --carafe-accent-light: #FBE6D5;
+  --carafe-accent-50:    #FDF3EA;
+
+  /* Freshness chip palette — fresh / aging / stale. */
+  --fresh-fresh:   #0F8A4A;
+  --fresh-fresh-bg:#E6F4EC;
+  --fresh-aging:   #92670E;
+  --fresh-aging-bg:#FBEFD2;
+  --fresh-stale:   #8A4A4A;
+  --fresh-stale-bg:#F1DEDE;
+
+  /* Nav tokens — change these in one place to retheme every authenticated
+     surface. AppNav, RestaurantWorkspaceLayout, SettingsLayout, and any
+     future shell all read from these. */
+  --nav-bg: #ffffff;
+  --nav-border: #e2e8f0;        /* slate-200 */
+  --nav-text: #475569;          /* slate-600 */
+  --nav-text-strong: var(--ink);
+  --nav-active-bg: var(--brand-light);
+  --nav-active-fg: #5b21b6;     /* violet-800 — preserves current contrast */
+  --nav-ring: #a78bfa;          /* violet-400, for focus-visible */
 }
+
+/* Skip-to-main link — visually hidden until focused via Tab, then springs
+   into view at the top-left of the viewport. WCAG 2.4.1. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -40px;
+  background: var(--nav-active-fg);
+  color: #ffffff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  z-index: 1000;
+  transition: top 0.16s ease;
+}
+.skip-link:focus { top: 8px; outline: 2px solid var(--nav-ring); outline-offset: 2px; }
 
 html, body, #root {
   height: 100%;
@@ -221,6 +278,28 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
   font-family: 'Nunito', sans-serif;
 }
 
+/* Wizard-scoped dropdown rules (#18): the pac-container is appended to
+   <body> with absolute positioning Google computes against the input.
+   On small viewports (iPhone SE = 375px) that calc easily overflows the
+   right edge. Cap the width so the dropdown wraps inside the modal. */
+.pac-container.cf-wizard-pac {
+  max-width: calc(100vw - 32px) !important;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+.pac-container.cf-wizard-pac .pac-item {
+  /* Bump line-height + padding so the tap target clears 44px on iOS. */
+  padding: 10px 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+@media (max-width: 480px) {
+  .pac-container.cf-wizard-pac .pac-item {
+    padding: 12px;
+    font-size: 14px;
+  }
+}
+
 /* Hide overflow-x scrollbars on chip rows. The scrollbar track was visible
    under the All/Favorites/Travel/Radius/Drawn chips in the left panel and
    the chip row read as vertically clipped. Chips wrap to the next line if
@@ -246,6 +325,27 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
   --bg: #0f172a;
   --brand-50: #1e1b2e;
   --brand-light: #2d2147;
+
+  /* Carafe money palette — lighter foregrounds + darker tinted backgrounds
+     so the contrast stays AA against the dark panel (#1f2937). */
+  --money-positive:    #4ADE80;
+  --money-positive-bg: #0E2E1F;
+  --money-negative:    #F4A8A8;
+  --money-negative-bg: #3A1A1A;
+  --money-neutral:     #F3F4F6;
+  --money-neutral-bg:  #1F2937;
+
+  --carafe-accent:       #F5A77A;
+  --carafe-accent-dark:  #E78D5C;
+  --carafe-accent-light: #3A2418;
+  --carafe-accent-50:    #2A1B12;
+
+  --fresh-fresh:    #4ADE80;
+  --fresh-fresh-bg: #0E2E1F;
+  --fresh-aging:    #F5C16C;
+  --fresh-aging-bg: #2E2210;
+  --fresh-stale:    #F4A8A8;
+  --fresh-stale-bg: #3A1A1A;
 }
 :root[data-theme="dark"] body {
   background: var(--bg);
@@ -515,6 +615,33 @@ button, a, .clickable { transition: background-color 0.18s ease, color 0.18s eas
 @keyframes cardExpand {
   from { opacity: 0; transform: scaleY(0.85) translateY(-4px); }
   to   { opacity: 1; transform: scaleY(1)    translateY(0); }
+}
+
+/* ── Recommendation card — accept/dismiss feedback motion ───────────────
+   Operator-serious tone: no confetti, no bounce. Accept shows a brief
+   checkmark scale-up, then the card collapses to height: 0 over ~280ms
+   so the next rec slides up into its slot. Dismiss skips the checkmark.
+   Reduced-motion users see an instant unmount (no animation). */
+.rec-decision-check {
+  animation: recCheckPop 0.32s cubic-bezier(0.34, 1.4, 0.5, 1) both;
+}
+@keyframes recCheckPop {
+  0%   { opacity: 0; transform: scale(0.6); }
+  60%  { opacity: 1; transform: scale(1.06); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.rec-card-collapse {
+  animation: recCardCollapse 0.28s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  overflow: hidden;
+}
+@keyframes recCardCollapse {
+  0%   { opacity: 1; max-height: 600px; margin-bottom: var(--rec-card-mb, 8px); }
+  60%  { opacity: 0; }
+  100% { opacity: 0; max-height: 0;     margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-decision-check { animation: none !important; }
+  .rec-card-collapse  { animation: none !important; opacity: 0; max-height: 0; margin: 0; padding: 0; border-width: 0; }
 }
 
 /* List stagger — when a list of items first renders, animate them in with a
