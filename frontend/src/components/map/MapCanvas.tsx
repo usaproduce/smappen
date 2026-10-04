@@ -107,7 +107,7 @@ export default function MapCanvas() {
           zoomControl: false,
           styles: activeStyle ?? undefined,
           mapTypeId: activeMapTypeId,
-          draggableCursor: drawingType === 'pin' ? 'crosshair' : undefined,
+          draggableCursor: drawingType ? 'crosshair' : undefined,
         }}
       >
         {showHeatmap && <ChoroplethLayer metric={heatmapMetric} onMetaChange={setHeatmapMeta} />}

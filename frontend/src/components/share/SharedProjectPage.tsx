@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { GoogleMap, useJsApiLoader, Polygon } from '@react-google-maps/api';
 import axios from 'axios';
+import { GOOGLE_MAPS_LIBRARIES } from '../../utils/mapsLoader';
 
 interface Area {
   id: string;
@@ -18,7 +19,7 @@ interface Payload {
   view_count: number;
 }
 
-const LIBRARIES: any[] = ['drawing', 'visualization', 'geometry', 'places'];
+const LIBRARIES = GOOGLE_MAPS_LIBRARIES;
 
 /**
  * Read-only public view of a shared project. No auth — backend validates

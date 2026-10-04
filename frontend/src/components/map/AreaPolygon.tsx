@@ -25,7 +25,7 @@ const MODE_BG: Record<string, string> = {
 };
 
 export default function AreaPolygon({ area, heatmapOn = false }: { area: Area; heatmapOn?: boolean }) {
-  const { selectedAreaId, selectArea, hoveredAreaId, mapInstance } = useMapStore();
+  const { selectedAreaId, selectArea, hoveredAreaId, mapInstance, drawingType } = useMapStore();
   const { areas } = useProjectStore();
   const showLabels = useUiPrefsStore((s) => s.showPolygonLabels);
   // #18 — track the current zoom so the label-visibility gate re-evaluates
@@ -137,7 +137,9 @@ export default function AreaPolygon({ area, heatmapOn = false }: { area: Area; h
             strokeColor,
             strokeWeight,
             strokeOpacity: 1,
-            clickable: true,
+            // While a polygon is being drawn, let clicks fall through to the
+            // map so vertices can be placed on top of existing areas.
+            clickable: drawingType !== 'polygon',
             zIndex: isSelected ? 5 : 1,
           }}
           onClick={() => selectArea(area.id)}

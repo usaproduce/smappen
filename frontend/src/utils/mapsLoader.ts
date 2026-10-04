@@ -9,10 +9,12 @@
  * Every component that calls `useJsApiLoader` MUST pass this constant
  * — never an inline array, never a subset. AppLayout, SharedProjectPage,
  * EmbedProjectPage, and VendorMapPage all load this same set.
+ *
+ * `drawing` and `visualization` are deliberately absent: Google removed
+ * DrawingManager and HeatmapLayer in Maps JS v3.65 and both now throw on
+ * construction. Drawing is hand-rolled in components/map/DrawingTools.tsx.
  */
-export const GOOGLE_MAPS_LIBRARIES: ('drawing' | 'visualization' | 'geometry' | 'places')[] = [
-  'drawing',
-  'visualization',
+export const GOOGLE_MAPS_LIBRARIES: ('geometry' | 'places')[] = [
   'geometry',
   'places',
 ];
