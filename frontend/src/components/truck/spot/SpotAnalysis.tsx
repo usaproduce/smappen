@@ -146,7 +146,8 @@ export default function SpotAnalysis({ subject, termsOverride, layout, onSaveAsS
     }
   }, [vectors]);
 
-  // The window the money section adds up: best window 1 until a row is chosen; a new window length starts over.
+  // The window the money section adds up: best window 1 until a row is chosen. The choice belongs to
+  // one window length: another length starts on its own best window.
   const [chosen, setChosen] = useState({ hours: 0, index: 0 });
   const slots = useMemo(() => est.best.map(windowSlot), [est.best]);
   const index = chosen.hours === windowHours && chosen.index < slots.length ? chosen.index : 0;
@@ -349,12 +350,15 @@ export default function SpotAnalysis({ subject, termsOverride, layout, onSaveAsS
 
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pb-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pb-2.5">
         <p className="min-w-0 text-[13px] font-semibold tabular-nums" style={{ color: 'var(--body)' }}>
           {fmtCoord(lat, lng)}
           {county !== null ? ' · ' + county : ''}
         </p>
-        {!page ? spot !== null ? <OpenInMaps href={spot.maps_url} /> : <OpenInMaps point={{ lat, lng }} /> : null}
+        {/* On a touch screen the link is 44 px tall; it gives 8 px of that back at each end, where nothing else is. */}
+        {!page ? (
+          <span className="-my-2 inline-flex md:my-0">{spot !== null ? <OpenInMaps href={spot.maps_url} /> : <OpenInMaps point={{ lat, lng }} />}</span>
+        ) : null}
         {tag !== null ? (
           <span className="tp-chip" role="status">
             {tag}

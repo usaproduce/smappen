@@ -1,10 +1,11 @@
-import { useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronRight, MapPin, MapPinned, PenLine, TriangleAlert } from 'lucide-react';
 import { REGION_REBUILD_SENTENCE, type HostHint, type Spot, type SpotBody } from '../../../api/truck';
 import { useTruckUiStore } from '../../../stores/truckUiStore';
+import { coord6, linkedHostKey } from '../../../utils/truck/assemble';
 import { fmtCoord, fmtWeekday, fmtWindow, parseCoords } from '../../../utils/truck/format';
-import type { Visibility } from '../../../utils/truck/model';
+import type { Host, LatLng, Visibility } from '../../../utils/truck/model';
 import {
   SPOT_LIMITS,
   bodyFromDraft,
@@ -51,6 +52,16 @@ const ADDRESS_UNAVAILABLE = 'Address search is unavailable. Enter coordinates in
 
 const VISIBILITIES: Visibility[] = ['hidden', 'normal', 'prominent'];
 const DAYS = [0, 1, 2, 3, 4, 5, 6];
+/** How long the point and the host have to rest before new vectors are asked for. */
+const VECTOR_DEBOUNCE_MS = 400;
+
+/** What the server computes vectors from: the point, the linked place and the host. */
+interface VectorInputs {
+  key: string;
+  point: LatLng | null;
+  placeKey: string | null;
+  host: Host | null;
+}
 
 /**
  * The spot form (docs/truck-planner/05_FRONTEND.md 4.4): place, host, visibility, fee, days and
@@ -86,12 +97,30 @@ export default function SpotForm({ mode, initial, spotId, nearbyHosts, presentat
   const [coordsText, setCoordsText] = useState('');
   const form = useRef<HTMLFormElement>(null);
 
-  const terms = useMemo(() => draftModelTerms(draft, editing && spotId !== undefined ? spotId : null), [draft, editing, spotId]);
+  const liveTerms = useMemo(() => draftModelTerms(draft, editing && spotId !== undefined ? spotId : null), [draft, editing, spotId]);
+  const livePlaceKey = draftPlaceKey(draft);
+
+  // A change of the point, the linked place, the segment or the size of a worker or resident host
+  // needs new vectors from the server. Those four rest for 400 ms first (a size stepped with the
+  // arrow keys is one request, not ten); everything else is recomputed in the browser at once.
+  const vectorKey =
+    (draft.point === null ? '' : coord6(draft.point.lat) + ',' + coord6(draft.point.lng)) + '#' + linkedHostKey(livePlaceKey, liveTerms.host);
+  const [settled, setSettled] = useState<VectorInputs>(() => ({ key: vectorKey, point: draft.point, placeKey: livePlaceKey, host: liveTerms.host }));
+  const waiting = settled.key !== vectorKey;
+  const pendingInputs = useRef<VectorInputs>(settled);
+  pendingInputs.current = { key: vectorKey, point: draft.point, placeKey: livePlaceKey, host: liveTerms.host };
+  useEffect(() => {
+    if (!waiting) return undefined;
+    const timer = window.setTimeout(() => setSettled(pendingInputs.current), VECTOR_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [waiting, vectorKey]);
+  const terms = useMemo(() => (waiting ? { ...liveTerms, host: settled.host } : liveTerms), [waiting, liveTerms, settled.host]);
+
   const est = useSpotEstimate({
-    point: draft.point,
+    point: waiting ? settled.point : draft.point,
     spot: saved,
     terms,
-    hostPlaceKey: draftPlaceKey(draft),
+    hostPlaceKey: waiting ? settled.placeKey : livePlaceKey,
     editing: true,
     // A saved spot is estimated from its stored vectors; the places around it are asked for only
     // when the owner wants to pick one.
@@ -127,6 +156,9 @@ export default function SpotForm({ mode, initial, spotId, nearbyHosts, presentat
     if (bestWindow === null || est.terms === null || est.vectors === null) return null;
     return windowFigures(est.terms, est.vectors, A, profile, cal, typical, choiceOfBest(bestWindow));
   }, [bestWindow, est.terms, est.vectors, A, profile, cal, typical]);
+
+  // The figures on screen belong to the place and host from before: new vectors are on their way.
+  const stale = est.dim || waiting;
 
   const change = (next: SpotDraft) => {
     setDraft(next);
@@ -195,7 +227,17 @@ export default function SpotForm({ mode, initial, spotId, nearbyHosts, presentat
   return (
     // The form sits in a 720 px modal and in the narrow column of the spot page: its grids follow
     // the width the form itself has (a container query), not the width of the window.
-    <form ref={form} onSubmit={submit} noValidate className="@container space-y-5">
+    <form
+      ref={form}
+      onSubmit={submit}
+      // Enter in a field commits that field and nothing more: only the "Save spot" button saves.
+      // (A browser would otherwise submit the form on Enter, before the field's value has arrived.)
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && e.target instanceof HTMLInputElement) e.preventDefault();
+      }}
+      noValidate
+      className="@container space-y-5"
+    >
       {question !== null ? (
         <div className="rounded-xl border p-3 sm:p-4" style={{ background: 'var(--bg-panel)', borderColor: 'var(--line-soft)' }}>
           <p className="text-sm font-bold" style={{ color: 'var(--ink)' }}>
@@ -489,6 +531,10 @@ export default function SpotForm({ mode, initial, spotId, nearbyHosts, presentat
         <div className="mt-2">
           {draft.point === null ? (
             <Sentence>Pick the place of the spot to see an estimate.</Sentence>
+          ) : waiting && settled.point === null ? (
+            <div aria-busy="true">
+              <SkeletonRows rows={2} rowHeight={28} />
+            </div>
           ) : est.status === 'rebuilding' && figures === null ? (
             <Sentence>{REGION_REBUILD_SENTENCE}</Sentence>
           ) : est.status === 'error' ? (
@@ -522,10 +568,10 @@ export default function SpotForm({ mode, initial, spotId, nearbyHosts, presentat
                     </span>
                   </p>
                   <div className="grid gap-3 @[420px]:grid-cols-2">
-                    <RangeValue estimate={figures.window.orders} unit="orders" size="md" label="ORDERS" dim={est.dim} />
-                    <RangeValue estimate={figures.money.contribution} unit="money" size="md" label="LEFT AFTER FOOD AND FEES" dim={est.dim} />
+                    <RangeValue estimate={figures.window.orders} unit="orders" size="md" label="ORDERS" dim={stale} />
+                    <RangeValue estimate={figures.money.contribution} unit="money" size="md" label="LEFT AFTER FOOD AND FEES" dim={stale} />
                   </div>
-                  {est.dim ? <Sentence>Updating for the new place or host. These are the figures from before.</Sentence> : null}
+                  {stale ? <Sentence>Updating for the new place or host. These are the figures from before.</Sentence> : null}
                 </>
               )}
             </div>

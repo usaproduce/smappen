@@ -19,6 +19,8 @@ type PointerKind = 'move' | 'click' | 'leave';
 
 /** Google fires the map's click within a millisecond of the DOM click: a click this soon after one on a pin is that click. */
 const PIN_CLICK_GUARD_MS = 80;
+/** A pointer that comes up further than this from where it went down has dragged. */
+const CLICK_SLOP_PX = 4;
 
 /**
  * A host on a Google map that is already constructed. `startCamera` answers `getCamera` until the
@@ -65,12 +67,30 @@ export function createGoogleOverlayHost(map: google.maps.Map, startCamera: MapCa
   // has no press at all).
   let pressOnPin = false;
   let pinClickAt = -1e9;
+  let pressX = 0;
+  let pressY = 0;
+  let pressDragged = false;
 
-  function onPress(e: Event): void {
+  function onPress(e: PointerEvent): void {
     pressOnPin = pinLayer !== null && e.target instanceof Node && pinLayer.contains(e.target);
+    pressX = e.clientX;
+    pressY = e.clientY;
+    pressDragged = false;
   }
 
-  function onPinClick(): void {
+  function onRelease(e: PointerEvent): void {
+    if (Math.hypot(e.clientX - pressX, e.clientY - pressY) > CLICK_SLOP_PX) pressDragged = true;
+  }
+
+  function onPinClick(e: Event): void {
+    // The map can be dragged by a pin, and the pin travels with the pointer: the release then lands on
+    // the same pin and the browser calls that a click. It was a drag: the pin must not open.
+    // (A click from the keyboard has detail 0 and no press: it always goes through.)
+    if (pressOnPin && pressDragged && (e as MouseEvent).detail !== 0) {
+      e.stopPropagation();
+      e.preventDefault();
+      return;
+    }
     pinClickAt = performance.now();
   }
 
@@ -166,6 +186,7 @@ export function createGoogleOverlayHost(map: google.maps.Map, startCamera: MapCa
     mapListeners = [];
     try {
       map.getDiv().removeEventListener('pointerdown', onPress, true);
+      map.getDiv().removeEventListener('pointerup', onRelease, true);
     } catch {
       // as above
     }
@@ -224,6 +245,7 @@ export function createGoogleOverlayHost(map: google.maps.Map, startCamera: MapCa
 
       // Capture phase: before Google's own handlers and before anything can stop the event.
       map.getDiv().addEventListener('pointerdown', onPress, true);
+      map.getDiv().addEventListener('pointerup', onRelease, true);
       pins.addEventListener('click', onPinClick, true);
 
       if (typeof ResizeObserver !== 'undefined') {

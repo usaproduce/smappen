@@ -9,8 +9,9 @@
 //   more            nothing: the layer says "Zoom in to see the colours."
 //
 // Many hexagons are never merged into one path: that measured slower. Cells are painted opaque and
-// the canvas element carries the layer's opacity, so the overlapping boxes of the middle tier and the
-// shared edges of neighbouring hexagons are not blended twice.
+// the canvas element carries the layer's opacity, so the overlapping boxes of the middle tier are not
+// blended twice. A hexagon is drawn three quarters of a pixel larger than it is, so the soft edges of
+// two neighbours leave no light seam between them.
 
 import type { HexMesh } from '../../../../utils/truck/map/mesh';
 import { cullCells, worldRect } from '../../../../utils/truck/map/viewport';

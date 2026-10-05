@@ -288,7 +288,8 @@ function GettingThere({ spot }: { spot: Spot }) {
 
   return (
     <div className="mt-1 space-y-2">
-      <StatList>
+      {/* In the narrow column the label keeps its one line; the source under the time wraps instead. */}
+      <StatList className="[&_dt]:flex-none">
         <StatRow
           label="Drive from base"
           value={fmtDuration(leg.minutes) + ', ' + fmtMiles(leg.miles)}

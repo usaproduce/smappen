@@ -44,8 +44,12 @@ export const VERTICES_PER_CELL = 6;
 export const POSITIONS_PER_CELL = 12;
 /** Indices per cell: four triangles. */
 export const INDICES_PER_CELL = 12;
-/** The build hands control back to the event loop after this many cells, so no task runs long. */
-export const MESH_YIELD_EVERY = 8192;
+/**
+ * The build calls `onYield` after every this many cells. The caller decides there whether to hand
+ * control back to the event loop (the layer does when ten milliseconds have passed), so no task
+ * runs long on a slow device either.
+ */
+export const MESH_YIELD_EVERY = 1024;
 
 /** The fan over six vertices: (0,1,2) (0,2,3) (0,3,4) (0,4,5). */
 const FAN = [0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 5];
@@ -98,7 +102,7 @@ function toSix(count: number): void {
  *
  * `boundaryOf(id)` returns the outline of a cell as `[lat, lng]` pairs (the order h3-js uses).
  * `bounds` is the box of the cell centres from the pack header: its centre becomes the mesh origin.
- * `onYield`, when given, is awaited every 8,192 cells.
+ * `onYield`, when given, is awaited every 1,024 cells; it may return nothing to go straight on.
  */
 export async function buildMesh(
   ids: readonly string[],

@@ -47,6 +47,8 @@ interface Drag {
   lastX: number;
   lastY: number;
   moved: boolean;
+  /** The press went down on a pin: a release without a drag is the pin's click, not the map's. */
+  onPin: boolean;
 }
 
 /** A host inside `root`, an element the caller has sized and made focusable. */
@@ -77,6 +79,8 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
   let drag: Drag | null = null;
   let pinch: { dist: number; midX: number; midY: number } | null = null;
   let cursorBeforeDrag: string | null = null;
+  // A press that went down on a pin and then dragged the map: the click that may follow is not the pin's.
+  let draggedFromPin = false;
 
   function emit(kind: PointerKind, e: MapPointerEvent): void {
     listeners[kind].forEach((cb) => cb(e));
@@ -172,21 +176,29 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
     }
   }
 
-  function onPointerDown(e: PointerEvent): void {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    // A press on a pin is the pin's.
-    if (onPin(e.target)) return;
-    const at = local(e);
-    pointers.set(e.pointerId, at);
+  function capture(id: number): void {
     try {
-      root.setPointerCapture(e.pointerId);
+      root.setPointerCapture(id);
     } catch {
       // a pointer that is already gone cannot be captured
     }
+  }
+
+  function onPointerDown(e: PointerEvent): void {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const at = local(e);
+    const pin = onPin(e.target);
+    draggedFromPin = false;
+    pointers.set(e.pointerId, at);
+    // A press on a pin stays the pin's (its click must reach it) until it turns into a drag: the map
+    // can be dragged by a pin, as on the Google map. A finger that lands next to a pin is often given
+    // to the pin by the browser, so ignoring such presses would make the map stick.
+    if (!pin) capture(e.pointerId);
     if (pointers.size === 1) {
-      drag = { id: e.pointerId, startX: at.x, startY: at.y, lastX: at.x, lastY: at.y, moved: false };
+      drag = { id: e.pointerId, startX: at.x, startY: at.y, lastX: at.x, lastY: at.y, moved: false, onPin: pin };
     } else {
       if (drag !== null) drag.moved = true;
+      for (const id of pointers.keys()) capture(id);
       pinch = pinchNow();
     }
   }
@@ -219,6 +231,10 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
     if (drag !== null && drag.id === e.pointerId) {
       if (!drag.moved && Math.hypot(at.x - drag.startX, at.y - drag.startY) > CLICK_SLOP_PX) {
         drag.moved = true;
+        if (drag.onPin) {
+          draggedFromPin = true;
+          capture(e.pointerId);
+        }
         cursorBeforeDrag = root.style.cursor;
         root.style.cursor = 'grabbing';
         emit('leave', pointerEvent(at, e));
@@ -242,7 +258,8 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
       // already released
     }
     if (drag !== null && drag.id === e.pointerId) {
-      const wasClick = click && !drag.moved && pointers.size === 0;
+      // A release without a drag is a click: the map's, unless the press went down on a pin.
+      const wasClick = click && !drag.moved && !drag.onPin && pointers.size === 0;
       drag = null;
       endDragCursor();
       if (wasClick && width > 0 && height > 0) emit('click', pointerEvent(at, e));
@@ -251,8 +268,16 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
     if (pointers.size === 1 && drag === null) {
       // One finger of a pinch stays down: it goes on dragging, and its release is not a click.
       const [id, p] = pointers.entries().next().value as [number, Point];
-      drag = { id, startX: p.x, startY: p.y, lastX: p.x, lastY: p.y, moved: true };
+      drag = { id, startX: p.x, startY: p.y, lastX: p.x, lastY: p.y, moved: true, onPin: false };
     }
+  }
+
+  /** Capture phase, on the pin layer: the click that ends a drag which began on a pin never reaches the pin. */
+  function onPinClick(e: Event): void {
+    if (!draggedFromPin) return;
+    draggedFromPin = false;
+    e.stopPropagation();
+    e.preventDefault();
   }
 
   function onPointerUp(e: PointerEvent): void {
@@ -322,6 +347,8 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
     root.removeEventListener('pointerleave', onPointerLeave);
     root.removeEventListener('wheel', onWheel);
     root.removeEventListener('keydown', onKeyDown);
+    if (pinLayer !== null) pinLayer.removeEventListener('click', onPinClick, true);
+    draggedFromPin = false;
     if (resizeObserver !== null) {
       resizeObserver.disconnect();
       resizeObserver = null;
@@ -376,6 +403,7 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
       root.addEventListener('pointerleave', onPointerLeave);
       root.addEventListener('wheel', onWheel, { passive: false });
       root.addEventListener('keydown', onKeyDown);
+      pins.addEventListener('click', onPinClick, true);
 
       if (typeof ResizeObserver !== 'undefined') {
         resizeObserver = new ResizeObserver(() => {

@@ -158,7 +158,7 @@ export default function TruckCostsTab({ draft, onChange, onSaved, onDiscard }: T
           </div>
           <fieldset>
             <legend className="label">How well your menu fits each part of the day</legend>
-            <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+            <div className="grid items-end gap-3 grid-cols-2 lg:grid-cols-4">
               {DAYPARTS.map((part) => (
                 <NumberField
                   key={part}
@@ -255,7 +255,7 @@ export default function TruckCostsTab({ draft, onChange, onSaved, onDiscard }: T
         </Card>
 
         <Card title="Day routine">
-          <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+          <div className="grid items-end gap-4 grid-cols-2 lg:grid-cols-4">
             <NumberField {...number('prep_minutes')} suffix="min" />
             <NumberField {...number('setup_minutes')} suffix="min" />
             <NumberField {...number('teardown_minutes')} suffix="min" />

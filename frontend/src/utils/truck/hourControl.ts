@@ -269,6 +269,15 @@ export function pointParam(point: LatLng): string {
 }
 
 /**
+ * A place as the page hands it on: six decimals each (about 0.1 m), the precision `pt` has in the
+ * URL. The card's point, a picked base and the point of a new spot are then the same numbers
+ * whichever way the place was chosen, and a map centre comes without the noise of its projection.
+ */
+export function placePoint(point: LatLng): LatLng {
+  return { lat: Number(fmtFixed(point.lat, 6)), lng: Number(fmtFixed(point.lng, 6)) };
+}
+
+/**
  * The query string after a change, with its question mark, or an empty string when nothing is left.
  * The page's own keys come out in a fixed order and in their canonical spelling (centre with six
  * decimals, zoom with one), so writing what was read changes nothing; keys of other owners

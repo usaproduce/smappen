@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { MAP_DOMAIN, cellScores, dayContext, mapWeightRows, scoreByte, seed, typicalContext } from '../model';
 import type { Assumptions, CalibrationState, MapLayer, Regime, TruckProfile } from '../model';
 import { minByte } from '../palette';
-import { createFrameSource, meanByte } from '../map/frames';
+import { FRAME_CACHE_BYTES, createFrameSource, meanByte } from '../map/frames';
 import { decodePack } from '../map/pack';
 import { PACK_K, diskIds, encodePack, syntheticValues } from './_packFixture';
 import { assume, clone, goldenCase, spec } from './_kitFixtures';
@@ -266,6 +266,109 @@ describe('setInputs', () => {
     // People nearby does not depend on the menu, the truck factor or the capacity.
     const people = Array.from(frame(createFrameSource(pack, { A, profile: PROFILE, cal: null }), 'people', 84));
     expect(Array.from(frame(source, 'people', 84))).toEqual(people);
+  });
+});
+
+describe('kept frames', () => {
+  const n = 300;
+  const pack = decodePack(encodePack({ ids: diskIds(n), values: syntheticValues(n, 31) }).buffer);
+
+  it('keeps a frame once it is scored and hands out copies', () => {
+    const source = createFrameSource(pack, { A, profile: PROFILE, cal: null });
+    expect(source.kept()).toBe(0);
+    expect(source.has('opportunity', 84, null)).toBe(false);
+    const first = frame(source, 'opportunity', 84);
+    expect(source.kept()).toBe(1);
+    expect(source.has('opportunity', 84, null)).toBe(true);
+    expect(source.has('opportunity', 85, null)).toBe(false);
+    expect(source.has('people', 84, null)).toBe(false);
+    expect(source.has('opportunity', 84 + 168, null)).toBe(true);
+    // The caller's buffer is its own: writing to it does not reach the kept frame.
+    first.fill(1);
+    const fresh = createFrameSource(pack, { A, profile: PROFILE, cal: null });
+    expect(Array.from(frame(source, 'opportunity', 84))).toEqual(Array.from(frame(fresh, 'opportunity', 84)));
+    expect(source.kept()).toBe(1);
+  });
+
+  it('warms a frame without handing it out', () => {
+    const source = createFrameSource(pack, { A, profile: PROFILE, cal: null });
+    expect(source.warm('people', 90, null)).toBe(true);
+    expect(source.warm('people', 90, null)).toBe(false);
+    expect(source.has('people', 90, null)).toBe(true);
+    expect(source.kept()).toBe(1);
+    const fresh = createFrameSource(pack, { A, profile: PROFILE, cal: null });
+    expect(Array.from(frame(source, 'people', 90))).toEqual(Array.from(frame(fresh, 'people', 90)));
+  });
+
+  it('keeps the whole week of one layer, and every kept frame equals a frame scored afresh', () => {
+    const source = createFrameSource(pack, { A, profile: PROFILE, cal: null });
+    for (let how = 0; how < 168; how++) source.warm('opportunity', how, null);
+    expect(source.kept()).toBe(168);
+    for (const how of [0, 3, 84, 90, 141, 167]) {
+      const fresh = createFrameSource(pack, { A, profile: PROFILE, cal: null });
+      expect(source.has('opportunity', how, null)).toBe(true);
+      expect(Array.from(frame(source, 'opportunity', how))).toEqual(Array.from(frame(fresh, 'opportunity', how)));
+    }
+  });
+
+  it('starts again for another layer, another date and other inputs', () => {
+    const source = createFrameSource(pack, { A, profile: PROFILE, cal: null });
+    for (let how = 80; how < 90; how++) source.warm('opportunity', how, null);
+    expect(source.kept()).toBe(10);
+    frame(source, 'people', 84);
+    expect(source.kept()).toBe(1);
+    expect(source.has('opportunity', 84, null)).toBe(false);
+    // a date keeps its own frames: at most the 24 hours of its day
+    for (let how = 0; how < 168; how++) source.warm('people', how, '2026-11-26');
+    expect(source.kept()).toBe(24);
+    expect(source.has('people', 84, '2026-11-26')).toBe(true);
+    expect(source.has('people', 12, '2026-11-26')).toBe(true); // the hour of day decides
+    expect(source.has('people', 84, null)).toBe(false);
+    frame(source, 'people', 84);
+    expect(source.kept()).toBe(1);
+    // inputs the map does not read change nothing ...
+    expect(source.setInputs({ A, profile: { ...PROFILE, avg_ticket: 30 }, cal: null })).toBe(false);
+    expect(source.kept()).toBe(1);
+    // ... the capacity does (frames may differ), and so does the menu fit
+    expect(source.setInputs({ A, profile: { ...PROFILE, capacity_orders_per_hour: 9 }, cal: null })).toBe(true);
+    expect(source.kept()).toBe(0);
+    frame(source, 'opportunity', 84);
+    const dinner = { ...PROFILE, capacity_orders_per_hour: 9, daypart_fit: { ...PROFILE.daypart_fit, dinner: 0.2 } };
+    expect(source.setInputs({ A, profile: dinner, cal: null })).toBe(true);
+    expect(source.kept()).toBe(0);
+    expect(source.has('opportunity', 84, null)).toBe(false);
+  });
+
+  it('competition keeps its two frames apart from the week', () => {
+    const source = createFrameSource(pack, { A, profile: PROFILE, cal: null });
+    expect(source.has('competition', 84, null)).toBe(false);
+    expect(source.warm('competition', 84, null)).toBe(true);
+    expect(source.has('competition', 85, null)).toBe(true); // another hour of the day regime
+    expect(source.has('competition', 90, null)).toBe(false); // the evening regime
+    expect(source.warm('competition', 90, null)).toBe(true);
+    expect(source.warm('competition', 3, null)).toBe(false);
+    expect(source.kept()).toBe(0);
+    // and they do not disturb the kept week of another layer
+    source.warm('opportunity', 84, null);
+    frame(source, 'competition', 84);
+    expect(source.has('opportunity', 84, null)).toBe(true);
+  });
+
+  it('never keeps more than 16 MB: a very large region keeps fewer hours', () => {
+    expect(FRAME_CACHE_BYTES).toBe(16 * 1024 * 1024);
+    // 120,000 cells: 139 frames fit. Features are zeros: only the bookkeeping is under test.
+    const big = { n: 120000, features: new Float32Array(120000 * 50) };
+    const source = createFrameSource(big, { A, profile: PROFILE, cal: null });
+    for (let how = 0; how < 168; how++) source.warm('people', how, null);
+    expect(source.kept()).toBe(139);
+    expect(source.has('people', 0, null)).toBe(false); // the oldest made room
+    expect(source.has('people', 28, null)).toBe(false);
+    expect(source.has('people', 29, null)).toBe(true);
+    expect(source.has('people', 167, null)).toBe(true);
+    // a dropped frame is simply scored again
+    expect(source.warm('people', 0, null)).toBe(true);
+    expect(source.kept()).toBe(139);
+    expect(frame(source, 'people', 0).length).toBe(120000);
   });
 });
 

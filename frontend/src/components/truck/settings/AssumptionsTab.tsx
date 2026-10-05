@@ -331,12 +331,29 @@ function SourceNote({ source }: { source: string }) {
 }
 
 /** Tag, "Your value", "Source" and "Reset" of one seed, on one wrapping line. */
-function RowMeta({ row, overridden, onReset, resetLabel }: { row: AssumptionRow; overridden: boolean; onReset: () => void; resetLabel?: string }) {
+function RowMeta({
+  row,
+  overridden,
+  onReset,
+  resetLabel,
+  showReset = true,
+  children,
+}: {
+  row: AssumptionRow;
+  overridden: boolean;
+  onReset: () => void;
+  resetLabel?: string;
+  /** False where another "Reset" for the same seed is on screen (an open curve has its own). */
+  showReset?: boolean;
+  /** One more control on the same line (the "Edit curve" button of a curve). */
+  children?: ReactNode;
+}) {
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1">
       {row.meta.tag !== null ? <SeedTag tag={row.meta.tag} size="sm" /> : null}
       {overridden ? <YourValueChip /> : null}
-      {overridden ? <ResetButton label={resetLabel} onClick={onReset} /> : null}
+      {children}
+      {overridden && showReset ? <ResetButton label={resetLabel} onClick={onReset} /> : null}
       <SourceNote source={row.meta.source} />
     </div>
   );
@@ -408,6 +425,8 @@ function WeatherTable({
 }) {
   const first = table.rows[0];
   const version = useContext(FieldVersion);
+  const columns = '@[520px]:grid-cols-[minmax(0,1fr)_150px_150px]';
+  const headCell = 'text-[11px] font-bold uppercase tracking-wider';
   return (
     <div className="mt-4">
       <h3 className="text-sm font-extrabold" style={{ color: 'var(--ink)' }}>
@@ -417,69 +436,64 @@ function WeatherTable({
         Share of the usual orders that is left in this weather.
         {first !== undefined ? ' ' + rangeText(first.open) + '.' : ''}
       </p>
-      {/* `relative`: the field labels are there for screen readers only and must stay inside the box that scrolls. */}
-      <div className="tp-scroll-x relative mt-2 rounded-lg border" style={{ borderColor: 'var(--line-soft)' }}>
-        <table className="w-full text-sm" style={{ minWidth: 560 }}>
-          <caption className="sr-only">{table.title}: share of the usual orders, by setting</caption>
-          <thead style={{ background: 'var(--bg-panel)' }}>
-            <tr>
-              <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--slate)' }}>
-                {table.title}
-              </th>
-              <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--slate)', width: 150 }}>
-                {WEATHER_SETTING_LABELS.open}
-              </th>
-              <th scope="col" className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--slate)', width: 150 }}>
-                {WEATHER_SETTING_LABELS.captive}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {table.rows.map((r) => {
-              const overridden = isOverridden(draft, r.open.path) || isOverridden(draft, r.captive.path);
-              const cell = (cellRow: AssumptionRow) => {
-                const value = draftValue(draft, cellRow.path);
-                return (
-                  <td className="px-3 py-2 align-top">
-                    <NumberField
-                      key={version}
-                      id={domId(idPrefix, cellRow.path)}
-                      label={cellRow.label}
-                      className="[&_.label]:sr-only"
-                      format="percent"
-                      value={typeof value === 'number' ? value : null}
-                      onCommit={(next) => put(cellRow.path, next)}
-                      min={cellRow.meta.min === null ? undefined : cellRow.meta.min}
-                      max={cellRow.meta.max === null ? undefined : cellRow.meta.max}
-                      error={errors[cellRow.path]}
-                    />
-                  </td>
-                );
-              };
+      {/*
+        A table from 520 px of room: one row per band, a column per setting. With less room (a
+        phone) each band keeps its two fields side by side under its name, and each field shows
+        its own label, so nothing is scrolled sideways.
+      */}
+      <div className="@container mt-2 rounded-lg border" style={{ borderColor: 'var(--line-soft)' }}>
+        <div aria-hidden className={'hidden gap-x-3 rounded-t-lg border-b px-3 py-2 @[520px]:grid ' + columns} style={{ background: 'var(--bg-panel)', borderColor: 'var(--line-soft)', color: 'var(--slate)' }}>
+          <span className={headCell}>{table.title}</span>
+          <span className={headCell}>{WEATHER_SETTING_LABELS.open}</span>
+          <span className={headCell}>{WEATHER_SETTING_LABELS.captive}</span>
+        </div>
+        <div className="tp-stat-list">
+          {table.rows.map((r) => {
+            const overridden = isOverridden(draft, r.open.path) || isOverridden(draft, r.captive.path);
+            const cell = (cellRow: AssumptionRow, label: string) => {
+              const value = draftValue(draft, cellRow.path);
               return (
-                <tr key={r.id} className="border-t" style={{ borderColor: 'var(--line-soft)' }}>
-                  <th scope="row" className="px-3 py-2 text-left align-top font-bold" style={{ color: 'var(--ink)' }}>
-                    {r.label}
-                    <RowMeta
-                      row={r.open}
-                      overridden={overridden}
-                      resetLabel="Reset row"
-                      // both cells of the row in one change of the draft
-                      onReset={() =>
-                        apply([
-                          [r.open.path, null],
-                          [r.captive.path, null],
-                        ])
-                      }
-                    />
-                  </th>
-                  {cell(r.open)}
-                  {cell(r.captive)}
-                </tr>
+                <NumberField
+                  key={cellRow.path + ':' + String(version)}
+                  id={domId(idPrefix, cellRow.path)}
+                  label={label}
+                  className="@[520px]:[&_.label]:sr-only"
+                  format="percent"
+                  value={typeof value === 'number' ? value : null}
+                  onCommit={(next) => put(cellRow.path, next)}
+                  min={cellRow.meta.min === null ? undefined : cellRow.meta.min}
+                  max={cellRow.meta.max === null ? undefined : cellRow.meta.max}
+                  error={errors[cellRow.path]}
+                />
               );
-            })}
-          </tbody>
-        </table>
+            };
+            return (
+              <div key={r.id} role="group" aria-label={r.label} className={'grid gap-x-3 gap-y-2 px-3 py-2.5 ' + columns}>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold" style={{ color: 'var(--ink)' }}>
+                    {r.label}
+                  </p>
+                  <RowMeta
+                    row={r.open}
+                    overridden={overridden}
+                    resetLabel="Reset row"
+                    // both cells of the row in one change of the draft
+                    onReset={() =>
+                      apply([
+                        [r.open.path, null],
+                        [r.captive.path, null],
+                      ])
+                    }
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3 @[520px]:contents">
+                  {cell(r.open, WEATHER_SETTING_LABELS.open)}
+                  {cell(r.captive, WEATHER_SETTING_LABELS.captive)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -638,7 +652,7 @@ function CurveRow({
   const view = useMemo(() => curveView(value), [value]);
   return (
     <div className="py-2.5">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
         <span className="text-sm font-bold" style={{ color: 'var(--ink)', minWidth: 76 }}>
           {title}
         </span>
@@ -647,19 +661,20 @@ function CurveRow({
             {view.peakPercent > 0 ? 'Highest at ' + fmtClockShort(view.peakHour * 60) + ': ' + fmtPlain(view.peakPercent, 2) + '%' : 'Zero in every hour'}
           </span>
         )}
+      </div>
+      <RowMeta row={row} overridden={overridden} resetLabel="Reset curve" showReset={!open} onReset={() => put(row.path, null)}>
         <button
           type="button"
-          className="ml-auto inline-flex min-h-[44px] md:min-h-0 items-center gap-0.5 text-[13px] font-bold underline underline-offset-2"
+          className="inline-flex min-h-[44px] md:min-h-0 items-center gap-0.5 text-[13px] font-bold underline underline-offset-2"
           style={{ color: 'var(--ink)' }}
           aria-expanded={open}
           aria-controls={panel}
           onClick={() => setOpen(!open)}
         >
           {open ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
-          {open ? 'Close' : 'Edit curve'}
+          {open ? 'Close the curve' : 'Edit curve'}
         </button>
-      </div>
-      <RowMeta row={row} overridden={overridden} resetLabel="Reset curve" onReset={() => put(row.path, null)} />
+      </RowMeta>
       {error !== undefined && !open ? (
         <p role="alert" className="mt-1 text-xs font-semibold" style={{ color: 'var(--money-negative)' }}>
           {error}

@@ -1,9 +1,9 @@
-import type { ReactNode } from 'react';
-import { TriangleAlert } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { ChevronRight, TriangleAlert } from 'lucide-react';
 import type { HostHint } from '../../../api/truck';
 import { SEGMENTS } from '../../../utils/truck/model';
 import type { SegmentKey } from '../../../utils/truck/model';
-import { fmtPlain } from '../../../utils/truck/format';
+import { fmtCount, fmtPlain } from '../../../utils/truck/format';
 import {
   SPOT_LIMITS,
   distanceText,
@@ -62,6 +62,11 @@ export default function HostPicker({ idPrefix, draft, onChange, places, placesSt
   // The saved link of a spot may be missing from the list (the list holds the ten nearest).
   const linkedMissing =
     draft.hostChoice === 'place' && draft.placeKey !== null && (places === null || !places.some((p) => p.place_key === draft.placeKey));
+  // A form that starts with a linked place shows that place alone; the others are one press away.
+  const [listOpen, setListOpen] = useState(draft.placeKey === null);
+  const linked = places === null ? undefined : places.find((p) => p.place_key === draft.placeKey);
+  const shownPlaces = places === null ? [] : listOpen || linked === undefined ? places : [linked];
+  const hiddenCount = places === null ? 0 : places.length - shownPlaces.length;
 
   return (
     <fieldset className="space-y-3">
@@ -134,7 +139,7 @@ export default function HostPicker({ idPrefix, draft, onChange, places, placesSt
                     </label>
                   </div>
                 ) : null}
-                {(places ?? []).map((place) => {
+                {shownPlaces.map((place) => {
                   const on = draft.placeKey === place.place_key;
                   return (
                     <div key={place.place_key}>
@@ -161,6 +166,17 @@ export default function HostPicker({ idPrefix, draft, onChange, places, placesSt
                   );
                 })}
               </div>
+              {hiddenCount > 0 ? (
+                <button
+                  type="button"
+                  className="inline-flex min-h-[44px] md:min-h-0 items-center gap-0.5 text-[13px] font-bold underline underline-offset-2"
+                  style={{ color: 'var(--ink)' }}
+                  onClick={() => setListOpen(true)}
+                >
+                  <ChevronRight size={13} aria-hidden />
+                  {hiddenCount === 1 ? 'Show the other place nearby' : 'Show the other ' + fmtCount(hiddenCount) + ' places nearby'}
+                </button>
+              ) : null}
               {placesCredit}
             </>
           ) : null}

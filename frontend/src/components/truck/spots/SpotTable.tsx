@@ -68,7 +68,7 @@ function noEstimate(row: SpotTableRow): string {
  * window of the typical week, its orders and what it leaves after food and fees. Each estimate is a
  * RangeValue: value, range and confidence label together.
  *
- * The six columns need about 900 px. Where the list has less room (a phone, a tablet held upright)
+ * The six columns need about 960 px. Where the list has less room (a phone, a tablet held upright)
  * the same facts are cards, two to a row from 620 px, so nothing has to be scrolled sideways.
  */
 export default function SpotTable({ rows, ticked, tickLimit, onTick, onOpen, hrefOf, rebuilding, empty }: SpotTableProps) {
@@ -136,7 +136,7 @@ export default function SpotTable({ rows, ticked, tickLimit, onTick, onOpen, hre
 
   const columns: Column<SpotTableRow>[] = [
     { key: 'tick', header: 'Compare', width: '4.5rem', render: tickBox },
-    { key: 'spot', header: 'Spot', width: '26%', render: nameBlock },
+    { key: 'spot', header: 'Spot', width: '22%', render: nameBlock },
     {
       key: 'window',
       header: 'Best window (typical week)',
@@ -144,7 +144,7 @@ export default function SpotTable({ rows, ticked, tickLimit, onTick, onOpen, hre
     },
     { key: 'orders', header: 'Orders', render: ordersCell },
     { key: 'left', header: 'Left after food and fees', render: leftCell },
-    { key: 'fee', header: 'Fee', render: (row) => feeText(row.spot.terms) },
+    { key: 'fee', header: 'Fee', width: '15%', render: (row) => feeText(row.spot.terms) },
   ];
 
   const card = (row: SpotTableRow) => (
@@ -172,11 +172,14 @@ export default function SpotTable({ rows, ticked, tickLimit, onTick, onOpen, hre
 
   return (
     <div className="@container">
-      {/* The kit's table scrolls sideways in its own box; `relative` keeps its hidden header text inside that box. */}
-      <div className="hidden @[900px]:block [&_.tp-scroll-x]:relative">
+      {/*
+        The kit's table scrolls sideways in its own box; `relative` keeps its hidden header text
+        inside that box. The two long headings may take two lines, so the width goes to the cells.
+      */}
+      <div className="hidden @[960px]:block [&_.tp-scroll-x]:relative [&_th]:whitespace-normal [&_th]:align-bottom">
         <DataTable caption="Saved spots" columns={columns} rows={rows} rowKey={(row) => row.spot.id} onRowClick={(row) => onOpen(row.spot.id)} empty={empty} />
       </div>
-      <div className="@[900px]:hidden">
+      <div className="@[960px]:hidden">
         {rows.length === 0 ? (
           <div className="rounded-xl border bg-white p-6 text-center text-sm font-semibold" style={{ borderColor: 'var(--line-soft)', color: 'var(--body)' }}>
             {empty}

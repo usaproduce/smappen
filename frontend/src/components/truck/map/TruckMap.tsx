@@ -9,7 +9,7 @@ import { useTruckUiStore } from '../../../stores/truckUiStore';
 import { MAX_ZOOM, MIN_ZOOM } from '../../../utils/truck/map/viewport';
 import { useTruckMapsLoader } from '../data/useMapsLoader';
 import { useThemeName } from '../ui/useThemeName';
-import { cellOutline, createHexLayer } from './HexLayer';
+import { cellOutline, createHexLayer, prepareMesh } from './HexLayer';
 import type { HexLayerEngine } from './HexLayer';
 import { MapPinContext } from './MapPin';
 import type { PinEntry, PinRegistry } from './MapPin';
@@ -364,6 +364,9 @@ const TruckMapInner = forwardRef<TruckMapHandle, TruckMapProps>(function TruckMa
   // ---- props that change while the layer lives ----------------------------------------------------
 
   useEffect(() => {
+    // The mesh needs the pack and nothing else: its build starts as soon as the pack is decoded, also
+    // while the Google map is still loading, and the layer finds it done or under way.
+    if (pack !== null && packState === 'ready') prepareMesh(pack, region !== null ? region.dataset_version : null);
     const engine = layerRef.current;
     if (engine === null) return;
     engine.setRegion(region);

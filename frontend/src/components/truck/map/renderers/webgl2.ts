@@ -171,6 +171,20 @@ export function createWebgl2Renderer(canvas: HTMLCanvasElement, events?: Webgl2E
       uAlpha: ctx.getUniformLocation(program, 'u_alpha'),
       uLut: ctx.getUniformLocation(program, 'u_lut'),
     };
+
+    // One triangle that draws nothing (its value is 0, which the shader discards): a driver finishes
+    // compiling a program at its first draw, and that wait belongs here, while the pack is still on
+    // its way, not in the task that shows the first frame.
+    ctx.bindBuffer(ctx.ARRAY_BUFFER, positions);
+    ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(6), ctx.STATIC_DRAW);
+    ctx.bindBuffer(ctx.ARRAY_BUFFER, values);
+    ctx.bufferData(ctx.ARRAY_BUFFER, new Uint8Array(3), ctx.DYNAMIC_DRAW);
+    ctx.useProgram(program);
+    ctx.uniform1i(objects.uLut, 0);
+    ctx.bindVertexArray(vao);
+    ctx.drawArrays(ctx.TRIANGLES, 0, 3);
+    ctx.bindVertexArray(null);
+
     if (ctx.isContextLost()) throw new Error('webgl2: context lost during setup');
   }
 

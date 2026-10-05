@@ -3,14 +3,15 @@
 // It owns the mesh, the frames and the renderer, and reacts to the pack, the inputs, the layer, the
 // hour and the theme. Per tick of the hour control it does: fill the frame, hand it to the renderer,
 // draw on the next animation frame. Per camera change it draws at once, inside the host's callback,
-// so the layer moves in the same frame as the base map.
+// so the layer moves in the same frame as the base map. While the browser is idle it scores the
+// hours that come next, so a tick usually finds its frame ready.
 //
 // It never throws. Every public method and every host callback runs inside try and catch; a caught
 // error is logged once, the canvas is cleared and the status becomes `failed`. Clicking the map,
 // pins and the spot card keep working, because they do not depend on the layer.
 
 import { cellToBoundary, latLngToCell } from 'h3-js';
-import { MODEL_VERSION } from '../../../utils/truck/model';
+import { HOURS_PER_WEEK, MODEL_VERSION } from '../../../utils/truck/model';
 import { LAYER_OPACITY, buildLut } from '../../../utils/truck/palette';
 import { createFrameSource, meanByte } from '../../../utils/truck/map/frames';
 import type { FrameSource } from '../../../utils/truck/map/frames';
@@ -60,10 +61,16 @@ export interface LayerStats {
   draw: Timing;
   /** One hover pick. */
   pick: Timing;
-  /** Building the mesh of the current pack, start to finish. Null when it came from the cache of this page. */
+  /** Building the mesh of the current pack, start to finish. */
   meshMs: number | null;
+  /** The same without the pauses between its slices: the main-thread work of the build. */
+  meshWorkMs: number | null;
+  /** The longest slice of the build: the longest task it put on the main thread. */
+  meshSliceMs: number | null;
   /** From the map's mount to its first coloured frame. */
   firstFrameMs: number | null;
+  /** Frames of the current layer that are scored and kept: 168 when the whole week is ready. */
+  framesKept: number;
 }
 
 class Samples {
@@ -101,12 +108,25 @@ function measure(name: string, start: number, end: number): void {
 // The pack lives in the query cache; leaving the map and coming back hands the layer the same object,
 // so the mesh and the index are built once per pack and found again here.
 const meshes = new WeakMap<CellPack, Promise<HexMesh>>();
-const meshTimes = new WeakMap<CellPack, number>();
+const meshTimes = new WeakMap<CellPack, { work: number; wall: number; slice: number }>();
 const indexes = new WeakMap<CellPack, Map<string, number>>();
 
-function yieldToEventLoop(): Promise<void> {
+/** A slice of the mesh build ends, and the event loop gets its turn, once it has run this long. */
+const MESH_SLICE_MS = 10;
+
+/** A new task: whatever waits in the event loop (input, a frame) runs first. No timer clamp. */
+function nextTask(): Promise<void> {
   return new Promise<void>((resolve) => {
-    window.setTimeout(resolve, 0);
+    if (typeof MessageChannel === 'undefined') {
+      window.setTimeout(resolve, 0);
+      return;
+    }
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
   });
 }
 
@@ -114,10 +134,31 @@ function meshOf(pack: CellPack): Promise<HexMesh> {
   let known = meshes.get(pack);
   if (known === undefined) {
     const t0 = performance.now();
-    const building = buildMesh(pack.ids, (id) => cellToBoundary(id), pack.header.bounds, yieldToEventLoop).then((mesh) => {
+    // Three times: the work (the slices of the build added up), the longest slice, and start to
+    // finish, which also holds whatever else the page did between the slices.
+    let work = 0;
+    let longest = 0;
+    let mark = t0;
+    const endSlice = (now: number): void => {
+      const slice = now - mark;
+      work += slice;
+      if (slice > longest) longest = slice;
+    };
+    // Asked every 1,024 cells: go on, or let the event loop run first.
+    const onYield = (): void | Promise<void> => {
+      const now = performance.now();
+      if (now - mark < MESH_SLICE_MS) return undefined;
+      endSlice(now);
+      return nextTask().then(() => {
+        mark = performance.now();
+      });
+    };
+    const building = buildMesh(pack.ids, (id) => cellToBoundary(id), pack.header.bounds, onYield).then((mesh) => {
       const t1 = performance.now();
-      meshTimes.set(pack, t1 - t0);
+      endSlice(t1);
+      meshTimes.set(pack, { work, wall: t1 - t0, slice: longest });
       measure('tp:mesh', t0, t1);
+      measure('tp:mesh-work', t1 - work, t1);
       return mesh;
     });
     meshes.set(pack, building);
@@ -137,6 +178,26 @@ function indexOf(pack: CellPack): Map<string, number> {
     indexes.set(pack, index);
   }
   return index;
+}
+
+/** A pack the layer does not draw (5.2): another model version, or the data of another dataset version than the region's. */
+function refusedPack(pack: CellPack, dataset: string | null): boolean {
+  return pack.header.model_version !== MODEL_VERSION || (dataset !== null && pack.header.dataset_version !== dataset);
+}
+
+/**
+ * Start the mesh of a pack before a layer asks for it. The mesh needs the pack and nothing else, so
+ * the map component calls this as soon as the pack is decoded, also while the Google map is still
+ * loading; the layer then finds the build done or under way. A pack the layer would refuse is left
+ * alone, and a build that fails is the layer's to report when it asks.
+ */
+export function prepareMesh(pack: CellPack, dataset: string | null): void {
+  try {
+    if (refusedPack(pack, dataset)) return;
+    meshOf(pack).catch(() => undefined);
+  } catch {
+    // nothing to prepare: the layer meets the same pack and reports it
+  }
 }
 
 /** The outline of a cell as `[lat, lng]` pairs: what the hover outline is drawn from. */
@@ -173,6 +234,10 @@ export interface HexLayerEngine extends HexLayer {
 
 /** If a lost WebGL context is not back after this long the layer goes on with the 2D renderer. */
 const CONTEXT_RESTORE_MS = 3000;
+/** An idle slice goes on scoring frames ahead while this much of it is left (milliseconds). */
+const WARM_SLICE_MS = 5;
+/** And never for longer than this, however long the idle period is. */
+const WARM_BUDGET_MS = 12;
 
 function makeCanvas(): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
@@ -182,7 +247,7 @@ function makeCanvas(): HTMLCanvasElement {
   return canvas;
 }
 
-type IdleDeadline = { timeRemaining(): number };
+type IdleDeadline = { timeRemaining(): number; didTimeout?: boolean };
 
 function whenIdle(run: (deadline: IdleDeadline | null) => void): void {
   const w = window as unknown as {
@@ -234,9 +299,13 @@ export function createHexLayer(options: HexLayerOptions): HexLayerEngine {
   const draws = new Samples();
   const picks = new Samples();
 
+  // The mesh whose origin the host has been told: only then do viewports say where that mesh sits.
+  let placed: HexMesh | null = null;
+
   let stripJob: { cancelled: boolean } | null = null;
   let stripScratch = new Uint8Array(0);
   let stripVisible = new Uint32Array(0);
+  let warming = false;
 
   // ---- status and failure -----------------------------------------------------------------------
 
@@ -246,7 +315,7 @@ export function createHexLayer(options: HexLayerOptions): HexLayerEngine {
     if (packState === 'error') return 'failed';
     if (packState === 'loading') return 'loading';
     if (packState === 'idle' || pack === null) return 'no-region';
-    if (mesh === null || frames === null) return 'building';
+    if (mesh === null || frames === null || placed !== mesh) return 'building';
     if (renderer === null) return 'failed';
     if (vp !== null && isZoomedOut(vp.scale)) return 'zoomed-out';
     if (renderer.kind === 'canvas2d') {
@@ -295,7 +364,7 @@ export function createHexLayer(options: HexLayerOptions): HexLayerEngine {
   // ---- drawing ----------------------------------------------------------------------------------
 
   function drawable(): boolean {
-    return !failed && !mismatch && packState === 'ready' && mesh !== null && frames !== null && hasValues;
+    return !failed && !mismatch && packState === 'ready' && mesh !== null && placed === mesh && frames !== null && hasValues;
   }
 
   function renderNow(): void {
@@ -381,6 +450,44 @@ export function createHexLayer(options: HexLayerOptions): HexLayerEngine {
     if (perf) measure('tp:tick', t0, t1);
     if (tickAt < 0) tickAt = t0;
     requestRender();
+    scheduleWarm();
+  }
+
+  // ---- the hours ahead, scored while the browser is idle -----------------------------------------
+
+  function warmStep(deadline: IdleDeadline | null): void {
+    warming = false;
+    if (destroyed || frames === null || !drawable()) return;
+    try {
+      // Too little of this idle period is left for a pass over every cell: wait for the next one.
+      if (deadline !== null && deadline.didTimeout !== true && deadline.timeRemaining() < WARM_SLICE_MS) {
+        scheduleWarm();
+        return;
+      }
+      const started = performance.now();
+      // In the order a playing week reaches them.
+      for (let ahead = 1; ahead < HOURS_PER_WEEK; ahead++) {
+        const next = (how + ahead) % HOURS_PER_WEEK;
+        if (frames.has(layerId, next, date)) continue;
+        frames.warm(layerId, next, date);
+        // A few frames per slice (each is a pass over every cell), and never a long task: an idle
+        // period can last 50 ms, which is longer than a press or a key should wait.
+        const spent = performance.now() - started;
+        // Without idle callbacks the slices come from a timer and stay short.
+        if (spent > (deadline !== null ? WARM_BUDGET_MS : WARM_SLICE_MS) || (deadline !== null && deadline.timeRemaining() < WARM_SLICE_MS)) {
+          scheduleWarm();
+          return;
+        }
+      }
+    } catch (e) {
+      fail(e);
+    }
+  }
+
+  function scheduleWarm(): void {
+    if (warming || destroyed) return;
+    warming = true;
+    whenIdle(warmStep);
   }
 
   // ---- renderers ---------------------------------------------------------------------------------
@@ -468,20 +575,28 @@ export function createHexLayer(options: HexLayerOptions): HexLayerEngine {
     mesh = null;
     index = null;
     frames = null;
+    placed = null;
     hasValues = false;
     mismatch = false;
   }
 
+  // A built mesh goes on screen in three short tasks instead of one long one: the index of its ids;
+  // then frames, the first frame and the buffers on the GPU; then the origin, which makes the host
+  // answer with a viewport measured to this mesh, and that one is drawn.
   function install(forPack: CellPack, built: HexMesh): void {
     mesh = built;
-    index = indexOf(forPack);
+    placed = null;
     values = new Uint8Array(built.n);
     hasValues = false;
     if (renderer !== null) renderer.setMesh(built);
     if (inputs !== null) frames = createFrameSource(forPack, inputs);
     refill();
-    // Last: the host answers with a viewport measured to the mesh origin, and that one is drawn.
+  }
+
+  function place(built: HexMesh): void {
+    placed = built;
     host.setOrigin(built.originLat, built.originLng);
+    renderNow();
     updateStatus();
   }
 
@@ -497,9 +612,7 @@ export function createHexLayer(options: HexLayerOptions): HexLayerEngine {
       updateStatus();
       return;
     }
-    const refused =
-      nextPack.header.model_version !== MODEL_VERSION ||
-      (expectedDataset !== null && nextPack.header.dataset_version !== expectedDataset);
+    const refused = refusedPack(nextPack, expectedDataset);
     if (nextPack === pack && packState === 'ready' && refused === mismatch && !failed) return;
 
     dropPack();
@@ -514,16 +627,26 @@ export function createHexLayer(options: HexLayerOptions): HexLayerEngine {
     }
     const token = buildToken;
     updateStatus();
-    meshOf(nextPack).then(
-      (built) => {
-        if (destroyed || token !== buildToken) return;
-        guard(() => install(nextPack, built));
-      },
-      (e) => {
+    const current = (): boolean => !destroyed && token === buildToken && !failed;
+    meshOf(nextPack)
+      .then((built) => {
+        if (!current()) return undefined;
+        guard(() => {
+          index = indexOf(nextPack);
+        });
+        return nextTask()
+          .then(() => {
+            if (current()) guard(() => install(nextPack, built));
+            return nextTask();
+          })
+          .then(() => {
+            if (current()) guard(() => place(built));
+          });
+      })
+      .catch((e) => {
         if (destroyed || token !== buildToken) return;
         fail(e);
-      },
-    );
+      });
   }
 
   // ---- start -------------------------------------------------------------------------------------
@@ -574,6 +697,7 @@ export function createHexLayer(options: HexLayerOptions): HexLayerEngine {
 
     setHour(nextHow: number, nextDate: string | null): void {
       guard(() => {
+        if (!Number.isFinite(nextHow)) return;
         if (nextHow === how && nextDate === date) return;
         how = nextHow;
         date = nextDate;
@@ -639,8 +763,9 @@ export function createHexLayer(options: HexLayerOptions): HexLayerEngine {
             frames.fill(layerId, day * 24 + hour, date, stripScratch);
             out[hour] = meanByte(stripScratch, stripVisible, count);
             hour++;
-            // A few hours per slice: each is a pass over every cell.
-            if (deadline !== null ? deadline.timeRemaining() < 4 : performance.now() - started > 6) break;
+            // A few hours per slice: each is a pass over every cell unless its frame is kept already.
+            const spent = performance.now() - started;
+            if (spent > (deadline !== null ? WARM_BUDGET_MS : WARM_SLICE_MS) || (deadline !== null && deadline.timeRemaining() < WARM_SLICE_MS)) break;
           }
           if (hour < 24) whenIdle(step);
           else finish();
@@ -680,8 +805,11 @@ export function createHexLayer(options: HexLayerOptions): HexLayerEngine {
         tickToFrame: tickFrames.timing(),
         draw: draws.timing(),
         pick: picks.timing(),
-        meshMs: pack !== null ? meshTimes.get(pack) ?? null : null,
+        meshMs: pack !== null ? meshTimes.get(pack)?.wall ?? null : null,
+        meshWorkMs: pack !== null ? meshTimes.get(pack)?.work ?? null : null,
+        meshSliceMs: pack !== null ? meshTimes.get(pack)?.slice ?? null : null,
         firstFrameMs,
+        framesKept: frames === null ? 0 : frames.kept(),
       };
     },
 

@@ -639,8 +639,14 @@ export function spotBodyOf(spot: Spot): SpotBody {
   };
 }
 
-/** A draft with a nearby place chosen as its host: the place's kind gives the segment, the typical size and the food default. */
+/**
+ * A draft with a nearby place chosen as its host: the place's kind gives the segment, the typical
+ * size and the food default, and its name becomes the host name, so the spot is listed with it. A
+ * host name the owner typed stays.
+ */
 export function linkPlace(draft: SpotDraft, hint: HostHint): SpotDraft {
+  const typed = draft.hostName.trim();
+  const ownName = typed !== '' && typed !== draft.placeName.trim();
   return {
     ...draft,
     hostChoice: 'place',
@@ -651,6 +657,7 @@ export function linkPlace(draft: SpotDraft, hint: HostHint): SpotDraft {
     placeName: hint.name,
     size: null,
     onlyFood: hint.kitchen === 'no',
+    hostName: ownName ? draft.hostName : hint.name,
   };
 }
 
@@ -823,7 +830,12 @@ function textOrNull(text: string): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
+/**
+ * The four host details as they are saved. Without a host their fields are not on screen, so they
+ * are saved empty: nothing the owner cannot see stays with the spot.
+ */
 function draftHostDetails(draft: SpotDraft): NonNullable<SpotBody['host_details']> {
+  if (draft.hostChoice === 'none') return { name: null, contact: null, phone: null, website: null };
   return {
     name: textOrNull(draft.hostName),
     contact: textOrNull(draft.hostContact),

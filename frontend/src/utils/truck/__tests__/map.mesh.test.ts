@@ -184,8 +184,8 @@ describe('buildMesh', () => {
     expect(Array.from(mesh.halfSizes)).toEqual([0, 0]);
   });
 
-  it('hands control back every 8,192 cells', async () => {
-    expect(MESH_YIELD_EVERY).toBe(8192);
+  it('asks its caller every 1,024 cells whether to hand control back', async () => {
+    expect(MESH_YIELD_EVERY).toBe(1024);
     const square = [
       [38.9, -77.0],
       [38.9, -77.01],
@@ -210,9 +210,18 @@ describe('buildMesh', () => {
       },
     );
     expect(mesh.n).toBe(20000);
-    expect(at).toEqual([8192, 16384]);
+    expect(at.length).toBe(19);
+    expect(at.slice(0, 3)).toEqual([1024, 2048, 3072]);
+    expect(at[18]).toBe(19456);
     // Without the callback the build still completes.
     expect((await buildMesh(ids, () => square, DC_BOUNDS)).n).toBe(20000);
+    // A callback that returns nothing lets the build go straight on: the same mesh either way.
+    let asked = 0;
+    const straight = await buildMesh(ids.slice(0, 5000), () => square, DC_BOUNDS, () => {
+      asked++;
+    });
+    expect(asked).toBe(4);
+    expect(Array.from(straight.positions.subarray(0, 12))).toEqual(Array.from(mesh.positions.subarray(0, 12)));
   });
 
   it('builds an empty mesh', async () => {

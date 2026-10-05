@@ -56,7 +56,9 @@ function Row({ label, people, share, group }: { label: string; people: number; s
  * "Who is here" of the spot card (docs/truck-planner/05_FRONTEND.md 4.3, section D): for the hour
  * on screen, the host's own people first, then the groups of people within walking distance that
  * would supply at least 1 % of the hour's orders, largest first. Counts of people carry no range
- * and are rounded; the shares are of expected orders, not a second estimate.
+ * and are rounded; the shares are of expected orders, not a second estimate. The counts are the
+ * distance-weighted ones of the map's "People nearby" layer, which the footnote says: the first
+ * step of "Why this number" counts everybody within the walking cutoff and shows larger numbers.
  */
 export default function WhoIsHere({ who, hostName, dim }: WhoIsHereProps) {
   const [all, setAll] = useState(false);
@@ -116,6 +118,7 @@ export default function WhoIsHere({ who, hostName, dim }: WhoIsHereProps) {
       ) : null}
 
       <p className="text-xs font-medium leading-snug" style={{ color: 'var(--body)' }}>
+        {!who.nobody && rows.length > 0 ? 'Nearer people count more. ' : ''}
         Workers are counted from jobs at nearby addresses and the share usually on site at this hour.
       </p>
     </div>

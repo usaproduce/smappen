@@ -49,11 +49,12 @@ describe('a region of 60,000 cells with 50 features per cell', () => {
     const source = createFrameSource(pack, { A, profile: PROFILE, cal: null });
     const out = new Uint8Array(N);
     for (const layer of ['opportunity', 'people', 'competition'] as const) {
-      // Warm up, then time 20 different hours.
+      // Warm up, then time 20 hours that have not been scored yet (a kept frame would only be a copy).
       for (let how = 0; how < 8; how++) source.fill(layer, how, null, out);
       const times: number[] = [];
       for (let run = 0; run < 20; run++) {
-        const how = (run * 37 + 11) % 168;
+        const how = 8 + ((run * 37) % 160);
+        if (layer !== 'competition') expect(source.has(layer, how, null)).toBe(false);
         const t0 = performance.now();
         source.fill(layer, how, null, out);
         times.push(performance.now() - t0);
@@ -78,7 +79,7 @@ describe('a region of 60,000 cells with 50 features per cell', () => {
     expect(mesh.n).toBe(N);
     expect(mesh.positions.length).toBe(N * 12);
     expect(mesh.indices.length).toBe(N * 12);
-    expect(yields).toBe(7);
+    expect(yields).toBe(58);
     expect(took).toBeLessThan(1500);
   });
 

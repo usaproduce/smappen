@@ -7,7 +7,7 @@
 // 02_MODEL 8.3 are fed in from the golden file and must print exactly what the specification states.
 
 import { describe, expect, it } from 'vitest';
-import { assume, goldenCase } from './_kitFixtures';
+import { assume, goldenCase, repoText, type GoldenCase } from './_kitFixtures';
 import { fmtEstimate } from '../format';
 import {
   CARD_WIDTH,
@@ -37,6 +37,7 @@ import {
   mapRegionLabel,
   markerShare,
   orderLeaves,
+  placePoint,
   pointParam,
   readMapParams,
   statusLines,
@@ -73,13 +74,22 @@ interface Anchor {
   vectors: LocationVectors;
 }
 
+/** The golden case an anchor of 02_MODEL 8.3 points at: the `anchors` array of the golden file names it. */
+const ANCHORS = (JSON.parse(repoText('tests/fixtures/truck-planner/golden_cases.json')) as { anchors: { id: string; case: string }[] }).anchors;
+
+function anchorCase(id: string): GoldenCase {
+  const found = ANCHORS.find((a) => a.id === id);
+  if (found === undefined) throw new Error('no anchor ' + id);
+  return goldenCase(found.case);
+}
+
 function anchor(id: string): Anchor {
-  const c = goldenCase(id);
+  const c = anchorCase(id);
   return { A: assume(c.args.A), profile: c.args.profile, terms: c.args.terms, vectors: c.args.vectors };
 }
 
-const office = anchor('g24-026'); // A1: the office park, visibility normal, no host
-const taproom = anchor('g24-027'); // A2: zero vectors, a taproom host of 120 as the only food
+const office = anchor('A1'); // the office park, visibility normal, no host
+const taproom = anchor('A2'); // zero vectors, a taproom host of 120 as the only food
 
 /** The best windows of the typical week with their orders, as the card's "Best windows" lists them. */
 function bestRows(a: Anchor, hours: number) {
@@ -321,6 +331,23 @@ describe('URL parameters of the map page', () => {
     expect(pointParam({ lat: -0.0000001, lng: 0 })).toBe('0.000000,0.000000');
     expect(writeMapParams('', { how: 84, layer: 'competition' })).toBe('?how=84&layer=competition');
     expect(writeMapParams('', { camera: { lat: 1, lng: 2, zoom: 30 } })).toBe('?lat=1.000000&lng=2.000000&z=19.0');
+  });
+
+  it('hands a place on with the six decimals the URL carries', () => {
+    expect(placePoint({ lat: 38.89977740297995, lng: -77.25800150839586 })).toEqual({ lat: 38.899777, lng: -77.258002 });
+    // The centre of the map comes back from the projection with noise in its last digits.
+    expect(placePoint({ lat: 38.92999999999999, lng: -77.30000000000001 })).toEqual({ lat: 38.93, lng: -77.3 });
+    expect(placePoint({ lat: 39.0105, lng: -77.4291 })).toEqual({ lat: 39.0105, lng: -77.4291 });
+    const tiny = placePoint({ lat: -0.0000001, lng: 0.0000004 });
+    expect(Object.is(tiny.lat, 0)).toBe(true);
+    expect(tiny.lng).toBe(0);
+    // What is handed on is exactly what the URL reads back.
+    for (const p of [{ lat: 38.89977740297995, lng: -77.25800150839586 }, { lat: -33.8688197, lng: 151.2092955 }, { lat: 89.9999996, lng: -179.9999996 }]) {
+      const placed = placePoint(p);
+      expect(readMapParams('?pt=' + pointParam(p)).pt).toEqual(placed);
+      expect(pointParam(placed)).toBe(pointParam(p));
+      expect(placePoint(placed)).toEqual(placed);
+    }
   });
 
   it('keeps what a write does not name, drops what it sets to null, and leaves the keys of others alone', () => {
@@ -600,7 +627,7 @@ describe('spot card: the anchors of 02_MODEL 8.3', () => {
     expect(rows[2].result.orders.low).toBeCloseTo(33.01, 2);
     expect(rows[2].result.orders.high).toBeCloseTo(93.19, 2);
     // The typical Thursday gives what the golden case gives for the dated Thursday without a forecast.
-    const golden = goldenCase('g24-026').expected.orders;
+    const golden = anchorCase('A1').expected.orders;
     expect(rows[2].result.orders).toEqual(golden);
     expect(rows[0].text).toBe('67 orders (37 to 98)');
     expect(rows[0].label).toBe('Rough');
@@ -613,7 +640,7 @@ describe('spot card: the anchors of 02_MODEL 8.3', () => {
     expect(rows[2].slot).toMatchObject({ dow: 3, open: 1020, close: 1200 });
     expect(rows[2].text).toBe('39 orders (21 to 62)');
     expect(rows[2].label).toBe('Rough');
-    expect(rows[2].result.orders).toEqual(goldenCase('g24-027').expected.orders);
+    expect(rows[2].result.orders).toEqual(anchorCase('A2').expected.orders);
     expect(rows[1].text).toBe('59 orders (32 to 92)');
     expect(rows[1].result.orders.value).toBeGreaterThan(rows[2].result.orders.value);
   });

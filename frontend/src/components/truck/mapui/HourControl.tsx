@@ -104,11 +104,20 @@ function DaySelect() {
   );
 }
 
-function HourSlider({ strip, stripHeight }: { strip: Uint8Array | null; stripHeight: number }) {
+/** Height of the hour strip in px. The slider's thumb starts right under it. */
+const STRIP_HEIGHT = 14;
+
+/**
+ * The hour slider with the hour strip over it. The slider is 44 px tall, so a finger can grab it
+ * anywhere in the row; its track runs through the middle, under the strip, which takes no pointer.
+ */
+function HourSlider({ strip }: { strip: Uint8Array | null }) {
   const how = useTruckHourStore((s) => s.how);
   return (
-    <div className="min-w-0 flex-1">
-      <HourStrip bytes={strip} height={stripHeight} />
+    <div className="relative h-11 min-w-0 flex-1">
+      <div className="pointer-events-none absolute inset-x-0 top-0">
+        <HourStrip bytes={strip} height={STRIP_HEIGHT} />
+      </div>
       <input
         type="range"
         min={0}
@@ -122,8 +131,8 @@ function HourSlider({ strip, stripHeight }: { strip: Uint8Array | null; stripHei
           const hour = Number(e.target.value);
           setHowByHand((current) => howAtHour(current, hour));
         }}
-        className="block w-full cursor-pointer"
-        style={{ accentColor: 'var(--brand)', height: 20, margin: 0 }}
+        className="absolute inset-0 h-full w-full cursor-pointer"
+        style={{ accentColor: 'var(--brand)', margin: 0 }}
       />
     </div>
   );
@@ -267,7 +276,7 @@ export default function HourControl({ nowHow, strip }: HourControlProps) {
             <HourLabel className="min-w-0 flex-1" />
           </div>
           <div className="flex items-center gap-2">
-            <HourSlider strip={strip} stripHeight={14} />
+            <HourSlider strip={strip} />
             <NowButton nowHow={nowHow} />
             <SpeedSelect />
           </div>
@@ -276,7 +285,7 @@ export default function HourControl({ nowHow, strip }: HourControlProps) {
         <div className="flex items-center gap-3 px-3 lg:px-4">
           <PlayButton />
           {mode === 'wide' ? <DayButtons /> : <DaySelect />}
-          <HourSlider strip={strip} stripHeight={18} />
+          <HourSlider strip={strip} />
           <HourLabel className="w-[204px] flex-none" />
           <NowButton nowHow={nowHow} />
           <SpeedSelect />

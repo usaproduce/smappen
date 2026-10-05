@@ -480,6 +480,26 @@ describe('the spot form: bodies', () => {
     expect(draftPlaceKey(validDraft())).toBeNull();
   });
 
+  it('a linked place gives the host its name until the owner types one', () => {
+    const draft = linkPlace(validDraft(), TAPROOM_HINT);
+    expect(draft.hostName).toBe('Lost Barrel Brewing');
+    expect(bodyFromDraft(draft).host_details).toEqual({ name: 'Lost Barrel Brewing', contact: null, phone: null, website: null });
+    // another place: the name follows the link
+    expect(linkPlace(draft, OFFICE_PARK_HINT).hostName).toBe('Park Center');
+    // a name the owner typed stays
+    expect(linkPlace({ ...draft, hostName: 'The Barrel' }, OFFICE_PARK_HINT).hostName).toBe('The Barrel');
+    // a place without a name leaves the field empty
+    expect(linkPlace(validDraft(), { ...TAPROOM_HINT, name: '' }).hostName).toBe('');
+  });
+
+  it('without a host no host detail is saved', () => {
+    const typed = { ...linkPlace(validDraft(), TAPROOM_HINT), hostContact: 'Sam', hostPhone: '+13017428261' };
+    expect(bodyFromDraft(typed).host_details).toEqual({ name: 'Lost Barrel Brewing', contact: 'Sam', phone: '+13017428261', website: null });
+    const none = bodyFromDraft({ ...typed, hostChoice: 'none' });
+    expect(none.terms?.host).toBeNull();
+    expect(none.host_details).toEqual({ name: null, contact: null, phone: null, website: null });
+  });
+
   it('a linked place whose kind brings no host is sent as the link alone', () => {
     const draft = linkPlace(validDraft(), MARKET_HINT);
     expect(validateSpotDraft(draft)).toEqual({});
@@ -592,13 +612,25 @@ describe('the spot form: editing a saved spot', () => {
     expect(patchFromDrafts(base, { ...base, fee_pct: 0.1, fee_min: 75 })).toEqual({ terms: { fee_pct: 0.1, fee_min: 75 } });
     expect(patchFromDrafts(base, { ...base, name: ' Herndon lot ' })).toEqual({ name: 'Herndon lot' });
     expect(patchFromDrafts(base, { ...base, notes: 'Gate code 4411' })).toEqual({ notes: 'Gate code 4411' });
-    expect(patchFromDrafts(base, { ...base, hostContact: 'Sam' })).toEqual({ host_details: { contact: 'Sam' } });
     expect(patchFromDrafts(base, { ...base, point: { lat: 38.97, lng: -77.36 } })).toEqual({ point: { lat: 38.97, lng: -77.36 } });
     expect(patchFromDrafts(base, { ...base, allowedOn: true, allowedOpen: 660, allowedClose: 840 })).toEqual({
       terms: { allowed: { days: [true, true, true, true, true, true, true], open_minute: 660, close_minute: 840 } },
     });
     const hosted = draftFromBody(spotBodyOf(taproom));
+    expect(patchFromDrafts(hosted, { ...hosted, hostContact: 'Sam' })).toEqual({ host_details: { contact: 'Sam' } });
     expect(patchFromDrafts(hosted, { ...hosted, hostChoice: 'none' })).toEqual({ terms: { host: null } });
+    // a spot without a host has no host details to save: their fields are not on screen
+    expect(patchFromDrafts(base, { ...base, hostContact: 'Sam' })).toEqual({});
+  });
+
+  it('removing the host clears the details it had, and only those', () => {
+    const base = draftFromBody(spotBodyOf(linked));
+    expect(patchFromDrafts(base, { ...base, hostChoice: 'none' })).toEqual({ terms: { host: null }, host_details: { contact: null, phone: null } });
+    // another place: the link changes and its name comes along
+    expect(patchFromDrafts(base, linkPlace(base, OFFICE_PARK_HINT))).toEqual({
+      terms: { host: { place_key: 'w77', segment: 'w_office', only_food: true } },
+      host_details: { name: 'Park Center' },
+    });
   });
 
   it('an edit that changes vectors waits for the server, every other edit is instant', () => {

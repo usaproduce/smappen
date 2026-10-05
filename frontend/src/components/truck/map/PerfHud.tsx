@@ -80,8 +80,10 @@ export default function PerfHud({ getStats }: PerfHudProps) {
         { key: 'draw', label: 'Camera frame script, last / p95', value: s === null ? '-' : pair(s.draw, 2) },
         { key: 'pick', label: 'Hover pick, last / p95', value: s === null ? '-' : pair(s.pick, 3) },
         { key: 'decode', label: 'Pack decode', value: ms(decode, 1) },
-        { key: 'mesh', label: 'Mesh build', value: s === null ? '-' : ms(s.meshMs, 1) },
+        { key: 'mesh', label: 'Mesh build, work / start to finish', value: s === null || s.meshMs === null ? '-' : ms(s.meshWorkMs, 1) + ' / ' + ms(s.meshMs, 1) },
+        { key: 'slice', label: 'Mesh build, longest slice', value: s === null ? '-' : ms(s.meshSliceMs, 1) },
         { key: 'firstFrame', label: 'First coloured frame', value: s === null ? '-' : ms(s.firstFrameMs, 0) },
+        { key: 'kept', label: 'Hours scored ahead', value: s === null ? '-' : String(s.framesKept) },
       ];
       return { rows: list, data: { ...(s ?? {}), frame: frames, decodeMs: decode } };
     };

@@ -13,6 +13,7 @@ import {
   initialCamera,
   legendStartsOpen,
   mapRegionLabel,
+  placePoint,
   pointParam,
   readMapParams,
   writeMapParams,
@@ -42,6 +43,8 @@ import { Modal } from '../ui';
 const WRITE_DELAY_MS = 300;
 /** From this zoom every saved spot shows its name. */
 const NAMES_FROM_ZOOM = 13;
+/** The path of this page: the only address its parameters are ever written to. */
+const MAP_PATH = /\/truck\/map\/?$/;
 
 const TIMEZONE_ASSUMED = 'We assumed Eastern time for this truck.';
 const BASE_OUTSIDE = 'Your base is outside the area we have data for. The map and the estimates will be empty.';
@@ -159,7 +162,9 @@ export default function MapPage() {
   // ---- writing the URL (1.2): always replace, always from what the address bar holds now ----------
   const write = useCallback(
     (patch: MapParamsPatch) => {
-      if (!alive.current) return;
+      // Never after the page has gone, and never into the address of another page (a write that was
+      // waiting when the owner moved on).
+      if (!alive.current || !MAP_PATH.test(window.location.pathname)) return;
       const current = window.location.search;
       const next = writeMapParams(current, patch);
       if (next !== current) navigate({ search: next }, { replace: true });
@@ -336,15 +341,17 @@ export default function MapPage() {
   /** A place was chosen: by a click on the map, on a pin, or as the centre of the map. */
   const choose = useCallback(
     (point: LatLng, spot: Spot | null) => {
+      // One precision for every place the page hands on: the six decimals `pt` has in the URL.
+      const at = placePoint(point);
       const mode = readMapParams(window.location.search).pick;
       if (mode === 'base') {
-        setBasePick({ lat: point.lat, lng: point.lng });
+        setBasePick(at);
       } else if (mode === 'spot') {
-        setForm({ point: { lat: point.lat, lng: point.lng }, hosts: [] });
+        setForm({ point: at, hosts: [] });
       } else if (spot !== null) {
         write({ spot: spot.id, pt: null });
       } else {
-        write({ pt: { lat: point.lat, lng: point.lng }, spot: null });
+        write({ pt: at, spot: null });
       }
     },
     [write],
@@ -405,7 +412,8 @@ export default function MapPage() {
       .then((answer) => {
         if (answer.warnings.includes('base_outside_region')) toast(BASE_OUTSIDE, { duration: 8000 });
         if (answer.warnings.includes('timezone_assumed')) toast(TIMEZONE_ASSUMED, { duration: 8000 });
-        leavePick();
+        // The owner may have left the page while the save was on its way: then there is nowhere to go back to.
+        if (alive.current) leavePick();
       })
       .catch(() => {
         // The hook has already shown the server's sentence.
