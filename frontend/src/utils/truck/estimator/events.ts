@@ -4,7 +4,7 @@ import { ModelError, max2, min2 } from './core';
 import { clockHours } from './demand';
 import { estFixed } from './estimate';
 import { evidenceFrom, intervalCapped } from './ranges';
-import { seed } from './seeds';
+import { seed, seedNumber } from './seeds';
 import { weatherMultiplier } from './weather';
 import type {
   Assumptions,
@@ -36,7 +36,7 @@ export function eventOrders(
 ): EventResult {
   if (!(0 <= open && open <= close && close <= 2880)) throw new ModelError('invalid_window');
   const buyers =
-    ev.attendance * seed<number>(A, 'events.attendance_haircut') * seed<number>(A, 'events.p_buy.' + ev.event_type);
+    ev.attendance * seed<number>(A, 'events.attendance_haircut') * seedNumber(A, 'events.p_buy.' + ev.event_type);
   const demand = (buyers / max2(1, ev.vendors)) * (cal != null ? cal.truck_factor : 1.0);
   const minutes = close - open;
   const hours: EventHour[] = [];

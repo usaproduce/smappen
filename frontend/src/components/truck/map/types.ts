@@ -1,80 +1,23 @@
 // Truck Planner map engine - the interfaces of docs/truck-planner/05_FRONTEND.md 5.1.
 //
-// These are final: the map page (FE-2) is written against them while the engine (FE-1) is built
-// behind them. The engine replaces the stub bodies in this directory and keeps every exported name
-// and every prop type. `CellPack` (5.2) and `HexMesh` (5.3) are declared here because the interfaces
-// refer to them; the engine may move the two declarations next to `decodePack` and `buildMesh` and
-// re-export them from this file.
+// The map page is written against these; the engine in this directory is built behind them.
+// `CellPack` (5.2), `HexMesh` (5.3) and `Viewport` are declared next to `decodePack`, `buildMesh` and
+// the viewport maths, which run in Node as well, and are re-exported from here.
 //
 // Types only: this file has no runtime content.
 
 import type { ReactNode } from 'react';
 import type { Assumptions, CalibrationState, TruckProfile } from '../../../utils/truck/model';
 import type { RegionInfo } from '../../../api/truck';
+import type { CellPack } from '../../../utils/truck/map/pack';
+import type { HexMesh } from '../../../utils/truck/map/mesh';
+import type { Viewport } from '../../../utils/truck/map/viewport';
+
+export type { CellPack, CellPackHeader } from '../../../utils/truck/map/pack';
+export type { HexMesh } from '../../../utils/truck/map/mesh';
+export type { Viewport } from '../../../utils/truck/map/viewport';
 
 export type MapLayerId = 'opportunity' | 'people' | 'competition';
-
-// -------------------------------------------------------------------------------------------------
-// The cell pack (5.2) and the mesh (5.3)
-// -------------------------------------------------------------------------------------------------
-
-/** The JSON header of a cell pack (03_DATA section 11). */
-export interface CellPackHeader {
-  format: string;
-  format_version: number;
-  region_id: string;
-  dataset_version: string;
-  model_version: string;
-  pipeline_version: string;
-  h3_res: number;
-  cell_count: number;
-  /** The box of the cell centres. */
-  bounds: { lat_min: number; lng_min: number; lat_max: number; lng_max: number };
-  /** The build-scope seed values the pack was built with. */
-  kernel: Record<string, unknown>;
-  segments: string[];
-  /** 50 names: `c_day_<seg>` x 16, `c_eve_<seg>` x 16, `n_<seg>` x 16, `r_day`, `r_eve`. */
-  columns: string[];
-  quant: { type: string; levels: number };
-  /** The largest value of each column: the decode scale. */
-  scale: number[];
-  sections: { name: string; type: string; layout?: string; offset: number; count: number }[];
-  vintages: { census_reference_date: string; lodes_year: number; osm_snapshot_date: string };
-  attribution: string[];
-}
-
-/** A decoded cell pack. It feeds colours only: no number printed anywhere comes from it. */
-export interface CellPack {
-  header: CellPackHeader;
-  /** Number of cells. */
-  n: number;
-  /** Features per cell (50). */
-  k: number;
-  /** H3 ids as 15-character strings, ascending. */
-  ids: string[];
-  /** Row-major: the `k` features of cell `i` start at `i * k`. */
-  features: Float32Array;
-}
-
-/** One static mesh of true H3 cell outlines, in world coordinates relative to the centre of the pack's bounds. */
-export interface HexMesh {
-  /** Number of cells. */
-  n: number;
-  /** The mesh origin: the centre of the pack's bounds. */
-  originLat: number;
-  originLng: number;
-  /** The same point in the 256-unit Mercator world. */
-  originX: number;
-  originY: number;
-  /** 12 numbers per cell: six vertices, x then y, relative to the origin. A pentagon repeats its last vertex. */
-  positions: Float32Array;
-  /** 12 indices per cell: a fan over its six vertices. */
-  indices: Uint32Array;
-  /** 2 numbers per cell: its centre, relative to the origin. */
-  centers: Float32Array;
-  /** 2 numbers per cell: half-width and half-height of its bounding box. */
-  halfSizes: Float32Array;
-}
 
 /** Where the pack request stands, as `useCellPack` reports it and `HexLayer.setPack` takes it. */
 export type PackState = 'idle' | 'loading' | 'error' | 'ready';
@@ -82,19 +25,6 @@ export type PackState = 'idle' | 'loading' | 'error' | 'ready';
 // -------------------------------------------------------------------------------------------------
 // Renderer, host, layer (5.1)
 // -------------------------------------------------------------------------------------------------
-
-export interface Viewport {
-  /** CSS px. */
-  width: number;
-  height: number;
-  /** min(devicePixelRatio, 2). */
-  dpr: number;
-  /** CSS px per world unit (256-unit world). */
-  scale: number;
-  /** Canvas position, CSS px, of the mesh origin. */
-  originX: number;
-  originY: number;
-}
 
 export interface Renderer {
   readonly kind: 'webgl2' | 'canvas2d';
@@ -123,9 +53,17 @@ export interface MapCamera {
 
 export interface MapHost {
   readonly kind: 'google' | 'blank';
+  /**
+   * Put the canvas under the pin layer on the base map and start reporting the viewport: once now
+   * and then on every camera change and resize. A host can be attached again after `detach`, with
+   * another canvas.
+   */
   attach(canvas: HTMLCanvasElement, pinLayer: HTMLElement, onViewport: (vp: Viewport) => void): void;
-  /** Position inside the pin layer. */
+  /** The place `Viewport.originX` and `originY` are measured to: the origin of the mesh. */
+  setOrigin(lat: number, lng: number): void;
+  /** Position inside the pin layer. Null while the host cannot tell (before its first viewport). */
   project(lat: number, lng: number): { x: number; y: number } | null;
+  /** Pointer events of the map itself: never of a pin. Returns the function that stops listening. */
   on(event: 'move' | 'click' | 'leave', cb: (e: MapPointerEvent) => void): () => void;
   getCamera(): MapCamera;
   setCamera(c: { lat: number; lng: number; zoom?: number }): void;
@@ -156,8 +94,9 @@ export interface HexLayer {
   setHour(how: number, date: string | null): void;
   setTheme(t: 'light' | 'dark'): void;
   cellAt(lat: number, lng: number): { index: number; id: string; byte: number } | null;
-  /** 24 mean bytes of the cells in view, computed when idle. */
+  /** 24 mean bytes of the cells in view, computed when idle. A newer request replaces one still waiting. */
   hourStrip(dow: number, done: (bytes: Uint8Array) => void): void;
+  /** The callback is called at once with the current status, then on every change. */
   onStatus(cb: (s: LayerStatus) => void): () => void;
   destroy(): void;
 }
@@ -186,12 +125,22 @@ export interface TruckMapProps {
   /** Use the blank base map even when Google is available (`?tp_basemap=blank`). */
   forceBlank?: boolean;
   cursor?: 'default' | 'crosshair';
+  /**
+   * The cell under the pointer, at most once per animation frame while the pointer moves over the
+   * map, and again when its byte changes with the hour. Null when the pointer leaves the map, moves
+   * onto a pin or is over no cell of the pack.
+   */
   onHover?: (hit: MapHit | null) => void;
   /** A click or tap on the map itself. A click on a pin never reaches it. */
   onClick?: (point: { lat: number; lng: number }) => void;
   /** The camera after it came to rest. */
   onCamera?: (camera: MapCamera) => void;
   onStatus?: (status: LayerStatus) => void;
+  /**
+   * When Google could not load and the blank base stands in, the map says so in a small status card
+   * of its own (bottom left). Pass false when the page shows that sentence itself. Default true.
+   */
+  hostNotice?: boolean;
   /** `MapPin` elements. */
   children?: ReactNode;
 }
@@ -210,6 +159,11 @@ export interface MapPinProps {
   lng: number;
   /** Decides the stacking order. Default `spot`. */
   kind?: MapPinKind;
-  /** The pin itself: a real button, positioned by the host on every viewport change. */
+  /**
+   * The pin itself: a real button. The host keeps a zero-size anchor on the coordinate and the pin
+   * is laid out from that point (its top left corner sits on it), so the pin moves itself to where
+   * it belongs: `transform: translate(-50%, -100%)` for a teardrop whose tip marks the place,
+   * `translate(-50%, -50%)` for a dot or a ring centred on it.
+   */
   children: ReactNode;
 }

@@ -39,8 +39,8 @@ final class Curves
             $presenceRow = [];
             $intentRow = [];
             for ($h = 0; $h < 24; $h++) {
-                $presenceRow[] = $p[$h] * $factor;
-                $intentRow[] = (float) $q[$h];
+                $presenceRow[] = Num::f($p[$h]) * $factor;        // an overridden curve is checked like any input
+                $intentRow[] = Num::f($q[$h]);
             }
             $presence[] = $presenceRow;
             $intent[] = $intentRow;
@@ -75,8 +75,8 @@ final class Curves
         for ($s = 0; $s < Vocab::NSEG; $s++) {
             $name = Vocab::SEGMENTS[$s];
             $dayType = $ctx['day_type'][$s];
-            $presence[] = Seeds::read($A, 'segments.' . $name . '.presence.' . $dayType)[$hour] * Num::f($ctx['dow_factor'][$s]);
-            $intent[] = (float) Seeds::read($A, 'segments.' . $name . '.intent.' . $dayType)[$hour];
+            $presence[] = Num::f(Seeds::read($A, 'segments.' . $name . '.presence.' . $dayType)[$hour]) * Num::f($ctx['dow_factor'][$s]);
+            $intent[] = Num::f(Seeds::read($A, 'segments.' . $name . '.intent.' . $dayType)[$hour]);
         }
         return [$presence, $intent];
     }

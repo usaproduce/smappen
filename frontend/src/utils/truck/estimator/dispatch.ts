@@ -3,7 +3,8 @@
 // The golden cases name a function of the model document in snake_case and carry its arguments by
 // parameter name. Each entry below unpacks those names into the typed call. `A` arrives as
 // { overrides, region } and gets this port's seed copy; validate_overrides gets the seed copy as its
-// `seeds` argument. A tuple result is returned as an array in the written order.
+// `seeds` argument unless the case carries a seed tree of its own. A tuple result is returned as an
+// array in the written order.
 
 import { hostCapture, hostExclusion, hostLinkPoint, captureAtPoint, rivalsAtOrigin } from './capture';
 import { accuracyReport, calibrate } from './calibration';
@@ -56,7 +57,7 @@ export const GOLDEN_DISPATCH: Record<string, (args: any) => unknown> = {
   round_half_away: (a) => roundHalfAway(a.x, a.decimals),
   qkey: (a) => qkey(a.x),
   seed: (a) => seed(assume(a.A), a.path),
-  validate_overrides: (a) => validateOverrides(SEEDS, a.overrides),
+  validate_overrides: (a) => validateOverrides(a.seeds !== undefined ? a.seeds : SEEDS, a.overrides),
   est_fixed: (a) => estFixed(a.x),
   est_levels: (a) => estLevels(a.v, a.l, a.h, a.c),
   weakest: (a) => weakest(a.labels),

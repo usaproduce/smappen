@@ -177,11 +177,13 @@ final class Estimator
     }
 
     /**
-     * Exactly "YYYY-MM-DD", a real date, 1970..2199; otherwise ModelError invalid_date.
+     * Exactly "YYYY-MM-DD", a real date, 1970..2199; otherwise ModelError invalid_date. Anything that is
+     * not a string (null, a number) is not a date either: invalid_date, as in the reference, for this and
+     * for every function below that takes a date.
      *
      * @return array{0: int, 1: int, 2: int} [y, m, d]
      */
-    public static function parseDate(string $s): array
+    public static function parseDate(mixed $s): array
     {
         return Dates::parseDate($s);
     }
@@ -192,12 +194,12 @@ final class Estimator
     }
 
     /** 0 = Monday ... 6 = Sunday. */
-    public static function dayOfWeek(string $date): int
+    public static function dayOfWeek(mixed $date): int
     {
         return Dates::dayOfWeek($date);
     }
 
-    public static function addDays(string $date, int $n): string
+    public static function addDays(mixed $date, int $n): string
     {
         return Dates::addDays($date, $n);
     }
@@ -225,7 +227,7 @@ final class Estimator
      * @param array<string, mixed> $flags
      * @return array<string, mixed>|null Holiday observed on the date
      */
-    public static function holidayOn(string $date, array $flags): ?array
+    public static function holidayOn(mixed $date, array $flags): ?array
     {
         return Dates::holidayOn($date, $flags);
     }
@@ -237,7 +239,7 @@ final class Estimator
      */
     public static function dayContext(
         array $A,
-        string $date,
+        mixed $date,
         ?string $treatAs,
         ?array $forecast,
         ?float $fuelPricePerGal,
@@ -662,7 +664,7 @@ final class Estimator
      * @param array<int, array<string, mixed>> $services ServiceLogEntry list
      * @return array<string, mixed> CalibrationState
      */
-    public static function calibrate(array $A, array $services, string $asOf): array
+    public static function calibrate(array $A, array $services, mixed $asOf): array
     {
         return Finite::check(Calibration::calibrate($A, $services, $asOf), __FUNCTION__);
     }
@@ -730,7 +732,7 @@ final class Estimator
      * @param array<string, mixed>|null $options
      * @return array<string, mixed> WeekSuggestion
      */
-    public static function suggestWeek(array $A, array $profile, string $weekStart, array $contexts, array $spots, array $legs, ?array $cal, ?array $options = null): array
+    public static function suggestWeek(array $A, array $profile, mixed $weekStart, array $contexts, array $spots, array $legs, ?array $cal, ?array $options = null): array
     {
         return Finite::check(Suggestions::suggestWeek($A, $profile, $weekStart, $contexts, $spots, $legs, $cal, $options), __FUNCTION__);
     }

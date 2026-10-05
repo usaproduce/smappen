@@ -219,17 +219,73 @@ describe('what JavaScript would let through', () => {
     expect(() => dayPlan(A, c.args.profile, { date: '2026-10-08', stops: [] }, noFuel, null, {}, null)).toThrow(TypeError);
   });
 
-  it('scouting needs a fuel price once there is a drive to cost', () => {
-    const c = casesOf('scout_estimate').find((x) => x.expected !== null && x.expected.best_window !== null) as GoldenCase;
+  it('scouting refuses a fuel price that is not a number, whether or not the place has a drive to cost', () => {
+    const withWindow = casesOf('scout_estimate').find((x) => x.expected !== null && x.expected.best_window !== null) as GoldenCase;
+    const noWindow = casesOf('scout_estimate').find((x) => x.expected !== null && x.expected.best_window === null) as GoldenCase;
+    const notAHost = casesOf('scout_estimate').find((x) => x.expected === null) as GoldenCase;
+    for (const c of [withWindow, noWindow, notAHost]) {
+      const A = assume(c.args.A);
+      for (const price of [null, undefined, true, '4.195']) {
+        expect(
+          () => scoutEstimate(A, c.args.profile, c.args.place as PlaceInput, c.args.legs, c.args.cal, price as unknown as number),
+          `${c.id} with a fuel price of ${String(price)}`,
+        ).toThrow(TypeError);
+      }
+      // with a number (zero is a price) the case is the golden one again
+      expect(scoutEstimate(A, c.args.profile, c.args.place as PlaceInput, c.args.legs, c.args.cal, 0)).not.toBeUndefined();
+    }
+  });
+
+  it('a word outside the vocabulary that names another key of a seed table stops, it does not become NaN', () => {
+    const event = casesOf('event_orders')[0];
+    const A = assume(event.args.A);
+    for (const eventType of ['unit', 'tag', 'scope', 'source']) {
+      expect(
+        () => GOLDEN_DISPATCH.event_orders({ ...event.args, ev: { ...event.args.ev, event_type: eventType } }),
+        eventType,
+      ).toThrow(TypeError);
+    }
+    expect(() => GOLDEN_DISPATCH.event_orders({ ...event.args, ev: { ...event.args.ev, event_type: 'street_fair' } })).toThrow();
+    const capture = casesOf('capture_at_point')[0];
+    const host = casesOf('host_capture').find((c) => c.expected.mode === 'open') as GoldenCase;
+    for (const visibility of ['unit', 'tag', 'scope', 'source', 'Normal', '']) {
+      expect(() => GOLDEN_DISPATCH.capture_at_point({ ...capture.args, visibility }), visibility).toThrow();
+      expect(() => GOLDEN_DISPATCH.host_capture({ ...host.args, visibility }), visibility).toThrow();
+    }
+    const weather = casesOf('weather_multiplier').find((c) => c.expected.missing === false && c.expected.temp_band !== null) as GoldenCase;
+    for (const setting of ['tag', 'source', 'upper_f', 'match']) {
+      expect(() => GOLDEN_DISPATCH.weather_multiplier({ ...weather.args, setting }), setting).toThrow();
+    }
+    const rivals = casesOf('rivals_at_origin').find((c) => c.args.outlets.length > 0 && c.expected.day > 0) as GoldenCase;
+    for (const kind of ['unit', 'scope']) {
+      const outlets = rivals.args.outlets.map((o: { kind: string }) => ({ ...o, kind }));
+      expect(() => GOLDEN_DISPATCH.rivals_at_origin({ ...rivals.args, outlets }), kind).toThrow(TypeError);
+    }
+    // a host segment that names a member of Object.prototype is no segment either
+    const excluded = casesOf('host_exclusion').find((c) => c.args.host !== null) as GoldenCase;
+    const hosted = casesOf('host_capture').find((c) => c.args.host !== null && c.args.host.size > 0) as GoldenCase;
+    for (const segment of ['toString', '__proto__', 'constructor', 'valueOf', 'office']) {
+      expect(() => GOLDEN_DISPATCH.host_exclusion({ ...excluded.args, host: { ...excluded.args.host, segment } }), segment).toThrow();
+      expect(() => GOLDEN_DISPATCH.host_capture({ ...hosted.args, host: { ...hosted.args.host, segment } }), segment).toThrow();
+    }
+    // the vocabulary itself still answers
+    expect(walkWeight(A, 0)).toBe(1);
+  });
+
+  it('a model error raised inside a day is the error of the day', () => {
+    const c = casesOf('day_plan')[0];
     const A = assume(c.args.A);
-    expect(() =>
-      scoutEstimate(A, c.args.profile, c.args.place as PlaceInput, c.args.legs, c.args.cal, null as unknown as number),
-    ).toThrow(TypeError);
-    const none = casesOf('scout_estimate').find((x) => x.expected !== null && x.expected.best_window === null) as GoldenCase;
-    // no window, no drive: the fuel price is never read (as in the reference)
-    expect(
-      scoutEstimate(assume(none.args.A), none.args.profile, none.args.place, none.args.legs, none.args.cal, null as unknown as number),
-    ).toEqual(none.expected);
+    const stop = { ...c.args.plan.stops[1], open_minute: 1380, close_minute: 1500 }; // 23:00 to 01:00
+    const plan = { date: c.args.plan.date, stops: [stop] };
+    let code = 'no error';
+    try {
+      dayPlan(A, c.args.profile, plan, c.args.ctx, null, c.args.legs, c.args.cal);
+    } catch (error) {
+      code = error instanceof ModelError ? error.code : String(error);
+    }
+    expect(code).toBe('missing_context');
+    expect(() => GOLDEN_DISPATCH.evaluate({ ...c.args, plan, ctx_next: null })).toThrow(ModelError);
+    expect(dayPlan(A, c.args.profile, plan, c.args.ctx, c.args.ctx_next, c.args.legs, c.args.cal).date).toBe(c.args.plan.date);
   });
 
   it('a division by zero stops instead of putting Infinity or NaN on screen', () => {

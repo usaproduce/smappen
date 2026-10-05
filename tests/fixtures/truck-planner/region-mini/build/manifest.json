@@ -1,0 +1,1266 @@
+{
+  "schema": 1,
+  "dataset_version": "mini-20261003-8d5536a4",
+  "region_id": "mini",
+  "pipeline_version": "tp-etl-1.0.0",
+  "model_version": "tps-0.1.0",
+  "region": {
+    "schema": 1,
+    "id": "mini",
+    "name": "Falls Church test region",
+    "timezone": "America/New_York",
+    "h3_res": 9,
+    "membership": "geoid_prefix",
+    "block_point": "census_intpt",
+    "map_center": {
+      "lat": 38.8847,
+      "lng": -77.1756
+    },
+    "fetch_box": {
+      "south": 38.868,
+      "west": -77.2,
+      "north": 38.904,
+      "east": -77.1
+    },
+    "states": [
+      {
+        "usps": "va",
+        "fips": "51",
+        "pl_dir": "Virginia",
+        "geofabrik": "virginia"
+      }
+    ],
+    "census": {
+      "product": "PL 94-171",
+      "year": 2020,
+      "reference_date": "2020-04-01"
+    },
+    "lodes": {
+      "release": "LODES8",
+      "format": "8.4",
+      "year": 2023,
+      "segment": "S000",
+      "job_type": "JT00",
+      "vintage": "20251202_1657"
+    },
+    "fuel_area_by_state": {
+      "VA": "R1Z"
+    },
+    "holidays": {
+      "inauguration_day": true,
+      "inauguration_day_counties": [
+        "51610"
+      ]
+    },
+    "job_review": {
+      "total_min": 500,
+      "single_sector_min": 200,
+      "single_sector_share": 0.9
+    },
+    "counties": [
+      {
+        "fips": "51610",
+        "name": "Falls Church city",
+        "state": "VA",
+        "residents": 14658,
+        "housing_units": 6172,
+        "jobs": 10691,
+        "blocks": 164
+      }
+    ],
+    "checks": {
+      "state_residents": {
+        "51": 43409
+      },
+      "state_blocks": {
+        "51": 418
+      },
+      "residents": 14658,
+      "housing_units": 6172,
+      "jobs": 10691,
+      "blocks": 164,
+      "blocks_with_residents": 136,
+      "blocks_with_jobs": 106,
+      "blocks_with_either": 152,
+      "jobs_by_segment": {
+        "w_office": 2632,
+        "w_health": 2152,
+        "w_edu": 1073,
+        "w_retail": 1359,
+        "w_industrial": 1017,
+        "w_hospitality": 1463,
+        "w_public": 995
+      },
+      "cns04_jobs": 720,
+      "res9_cells_with_residents_or_jobs": 59,
+      "res9_max_residents": 982,
+      "res9_max_jobs_raw": 1668,
+      "res9_max_jobs_after": 2153,
+      "job_review": {
+        "blocks": 6,
+        "jobs": 3755
+      },
+      "job_movement": {
+        "discarded_share_max": 0.1,
+        "moved_share_max": 0.5
+      },
+      "halo_residents_share_max": 10,
+      "places": {
+        "min": 203,
+        "max": 249
+      },
+      "rivals": {
+        "min": 131,
+        "max": 161
+      },
+      "hosts_with_contact_share": {
+        "min": 0.1,
+        "max": 0.7
+      },
+      "cells_kept": {
+        "min": 177,
+        "max": 217
+      },
+      "anchors": [
+        {
+          "geoid": "516105002004003",
+          "label": "Largest block of the fixture (kept)",
+          "column": "CNS15",
+          "min": 560
+        }
+      ],
+      "h3_probe": {
+        "lat": 38.9696,
+        "lng": -77.3861,
+        "res": 9,
+        "cell": "892aaab3043ffff"
+      }
+    }
+  },
+  "bounds": {
+    "lat_min": 38.87247,
+    "lng_min": -77.195,
+    "lat_max": 38.89989,
+    "lng_max": -77.1497
+  },
+  "inputs": {
+    "region_file_sha256": "02e42917d537b2fba74497939992225ea6e1e3e43501412cc58739a01c108ab5",
+    "seeds_revision": 1,
+    "seeds_sha256": "b0975f02885ab99364d68fafa63a7b15b231356355de54fa17a098813282f336",
+    "corrections_version": "2026-10-05.1",
+    "corrections_sha256": "1872057740ef3aebacae461d018180f4f771db094dfecbd5caf45c6b62cdbb6b",
+    "places_source": "geofabrik"
+  },
+  "parameters": {
+    "walk_decay_m": 400,
+    "walk_cutoff_m": 1200,
+    "earth_radius_m": 6371008.8,
+    "cns04_weight": 0.3,
+    "cell_min_nearby": 100,
+    "cell_min_venue": 15,
+    "segment_cns": {
+      "w_office": [
+        "CNS09",
+        "CNS10",
+        "CNS11",
+        "CNS12",
+        "CNS13",
+        "CNS14"
+      ],
+      "w_health": [
+        "CNS16"
+      ],
+      "w_edu": [
+        "CNS15"
+      ],
+      "w_retail": [
+        "CNS07"
+      ],
+      "w_industrial": [
+        "CNS01",
+        "CNS02",
+        "CNS03",
+        "CNS04",
+        "CNS05",
+        "CNS06",
+        "CNS08"
+      ],
+      "w_hospitality": [
+        "CNS17",
+        "CNS18"
+      ],
+      "w_public": [
+        "CNS19",
+        "CNS20"
+      ]
+    },
+    "place_types": {
+      "taproom": {
+        "visitor_segment": "v_nightlife",
+        "default_size": 40,
+        "rival_kind": null,
+        "host_fit": 1,
+        "kitchen_default": "no"
+      },
+      "bar": {
+        "visitor_segment": "v_nightlife",
+        "default_size": 45,
+        "rival_kind": "bar",
+        "host_fit": 0.3,
+        "kitchen_default": "yes"
+      },
+      "restaurant": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": "full",
+        "host_fit": 0,
+        "kitchen_default": "yes"
+      },
+      "fast_food": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": "quick",
+        "host_fit": 0,
+        "kitchen_default": "yes"
+      },
+      "cafe": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": "cafe",
+        "host_fit": 0,
+        "kitchen_default": "yes"
+      },
+      "convenience": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": "convenience",
+        "host_fit": 0,
+        "kitchen_default": "yes"
+      },
+      "gym": {
+        "visitor_segment": "v_leisure",
+        "default_size": 50,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "no"
+      },
+      "park": {
+        "visitor_segment": "v_leisure",
+        "default_size": 38,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "no"
+      },
+      "shopping_centre": {
+        "visitor_segment": "v_shopping",
+        "default_size": 150,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "yes"
+      },
+      "big_box": {
+        "visitor_segment": "v_shopping",
+        "default_size": 200,
+        "rival_kind": null,
+        "host_fit": 0.5,
+        "kitchen_default": "no"
+      },
+      "campus": {
+        "visitor_segment": "v_campus",
+        "default_size": 400,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "yes"
+      },
+      "hospital": {
+        "visitor_segment": "v_hospital",
+        "default_size": 120,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "yes"
+      },
+      "transit_station": {
+        "visitor_segment": "v_transit",
+        "default_size": 300,
+        "rival_kind": null,
+        "host_fit": 0.1,
+        "kitchen_default": "no"
+      },
+      "events_venue": {
+        "visitor_segment": "v_events",
+        "default_size": 80,
+        "rival_kind": null,
+        "host_fit": 0.6,
+        "kitchen_default": "no"
+      },
+      "stadium": {
+        "visitor_segment": "v_events",
+        "default_size": 0,
+        "rival_kind": null,
+        "host_fit": 0.3,
+        "kitchen_default": "yes"
+      },
+      "hotel": {
+        "visitor_segment": "v_lodging",
+        "default_size": 90,
+        "rival_kind": null,
+        "host_fit": 0.3,
+        "kitchen_default": "yes"
+      },
+      "attraction": {
+        "visitor_segment": "v_events",
+        "default_size": 150,
+        "rival_kind": null,
+        "host_fit": 0.3,
+        "kitchen_default": "yes"
+      },
+      "farmers_market": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": null,
+        "host_fit": 0.8,
+        "kitchen_default": "no"
+      },
+      "office_park": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": null,
+        "host_fit": 0.8,
+        "kitchen_default": "no"
+      },
+      "apartment_community": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": null,
+        "host_fit": 0.7,
+        "kitchen_default": "no"
+      },
+      "industrial_site": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": null,
+        "host_fit": 0.6,
+        "kitchen_default": "no"
+      },
+      "car_dealership": {
+        "visitor_segment": "v_shopping",
+        "default_size": 15,
+        "rival_kind": null,
+        "host_fit": 0.5,
+        "kitchen_default": "no"
+      }
+    },
+    "h3_res": 9,
+    "job_review": {
+      "total_min": 500,
+      "single_sector_min": 200,
+      "single_sector_share": 0.9
+    }
+  },
+  "sources": [
+    {
+      "kind": "census_pl",
+      "state": "va",
+      "path": "census/pl2020/va2020.pl.zip",
+      "url": "https://www2.census.gov/programs-surveys/decennial/2020/data/01-Redistricting_File--PL_94-171/Virginia/va2020.pl.zip",
+      "final_url": null,
+      "bytes": 14128,
+      "sha256": "11324b6abfb9071fb159514e9f6c3b4c09cc4c1a538fe3195d00c902970d3f60",
+      "last_modified": null
+    },
+    {
+      "kind": "lodes_wac",
+      "state": "va",
+      "path": "lodes8/va/va_wac_S000_JT00_2023.csv.gz",
+      "url": "https://lehd.ces.census.gov/data/lodes/LODES8/va/wac/va_wac_S000_JT00_2023.csv.gz",
+      "final_url": null,
+      "bytes": 7519,
+      "sha256": "44ccbc1f1b38b5e4e75adbbed68e9b780b8405db30d377bc4de8e6650e829c93",
+      "last_modified": null
+    },
+    {
+      "kind": "lodes_xwalk",
+      "state": "va",
+      "path": "lodes8/va/va_xwalk.csv.gz",
+      "url": "https://lehd.ces.census.gov/data/lodes/LODES8/va/va_xwalk.csv.gz",
+      "final_url": null,
+      "bytes": 7271,
+      "sha256": "0567b969c949fa51ea267e1a125ecc88639d862edda04402dd56c676ef2f477e",
+      "last_modified": null
+    },
+    {
+      "kind": "lodes_version",
+      "state": "va",
+      "path": "lodes8/va/version.txt",
+      "url": "https://lehd.ces.census.gov/data/lodes/LODES8/va/version.txt",
+      "final_url": null,
+      "bytes": 123,
+      "sha256": "85b7858142357233815fa3c191d9ac040dec8b0960602b7199275359484779e7",
+      "last_modified": null
+    },
+    {
+      "kind": "tigerweb",
+      "state": null,
+      "path": "tigerweb/counties_mini.geojson",
+      "url": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/1/query?where=GEOID%20IN%20('51610')&outFields=GEOID,NAME,AREALAND,INTPTLAT,INTPTLON&returnGeometry=true&outSR=4326&geometryPrecision=5&f=geojson",
+      "final_url": null,
+      "bytes": 8058,
+      "sha256": "0a296e88ed7c5fc46d2e7b75fc9d643eee4cdb564f79fc4e4d503d4edaae3950",
+      "last_modified": null
+    },
+    {
+      "kind": "osm_pbf",
+      "state": "va",
+      "path": "geofabrik/virginia-261003.osm.pbf",
+      "url": "https://download.geofabrik.de/north-america/us/virginia-latest.osm.pbf",
+      "final_url": null,
+      "bytes": 118855,
+      "sha256": "f6102f14c345e38b3af0b9e5cfe906e532d0ce4f4794ac838c1b9f107694a111",
+      "last_modified": null
+    }
+  ],
+  "vintages": {
+    "census_reference_date": "2020-04-01",
+    "lodes_year": 2023,
+    "lodes_format": "8.4",
+    "lodes_vintage": "20251202_1657",
+    "osm_snapshot_date": "2026-10-03",
+    "osm_replication_timestamp": "2026-10-03T20:20:50Z"
+  },
+  "counts": {
+    "blocks": {
+      "state": 418,
+      "by_state": {
+        "51": 418
+      },
+      "region": 164,
+      "with_residents": 136,
+      "with_jobs": 106,
+      "with_either": 152
+    },
+    "points": {
+      "total": 363,
+      "block": 152,
+      "place": 49,
+      "halo_block": 109,
+      "halo_place": 53
+    },
+    "places": {
+      "total": 420,
+      "in_region": 226,
+      "halo": 194,
+      "named": 226,
+      "by_type": {
+        "taproom": 2,
+        "bar": 3,
+        "restaurant": 81,
+        "fast_food": 25,
+        "cafe": 23,
+        "convenience": 14,
+        "gym": 12,
+        "park": 15,
+        "shopping_centre": 2,
+        "big_box": 2,
+        "campus": 0,
+        "hospital": 0,
+        "transit_station": 0,
+        "events_venue": 2,
+        "stadium": 1,
+        "hotel": 3,
+        "attraction": 1,
+        "farmers_market": 1,
+        "office_park": 15,
+        "apartment_community": 17,
+        "industrial_site": 0,
+        "car_dealership": 7
+      },
+      "by_geom_kind": {
+        "area": 21,
+        "building": 63,
+        "point": 142
+      }
+    },
+    "rivals": {
+      "total": 146,
+      "by_kind": {
+        "quick": 25,
+        "full": 81,
+        "cafe": 23,
+        "bar": 3,
+        "convenience": 14
+      }
+    },
+    "visitor_sources": {
+      "total": 49,
+      "by_type": {
+        "taproom": 2,
+        "bar": 3,
+        "restaurant": 0,
+        "fast_food": 0,
+        "cafe": 0,
+        "convenience": 0,
+        "gym": 12,
+        "park": 15,
+        "shopping_centre": 2,
+        "big_box": 2,
+        "campus": 0,
+        "hospital": 0,
+        "transit_station": 0,
+        "events_venue": 2,
+        "stadium": 0,
+        "hotel": 3,
+        "attraction": 1,
+        "farmers_market": 0,
+        "office_park": 0,
+        "apartment_community": 0,
+        "industrial_site": 0,
+        "car_dealership": 7
+      }
+    },
+    "hosts": {
+      "total": 83,
+      "with_contact": 40
+    },
+    "halo": {
+      "residents": 7887,
+      "jobs_raw": 4978,
+      "blocks_capped": 1,
+      "visitor_places": 53,
+      "rival_places": 143
+    },
+    "cells": {
+      "candidates": 211,
+      "kept": 197,
+      "kept_by_venue_test_only": 16,
+      "point_cell_pairs": 11831,
+      "max_points_in_range": 153,
+      "occupied": 59,
+      "max_residents": 982,
+      "max_jobs_raw": 1668,
+      "max_jobs_after": 1721.7005044136192,
+      "max_jobs_after_cell": "892aa84dd33ffff"
+    },
+    "elements_read": 1028,
+    "dropped_relation_type": 12,
+    "dropped_closed": 7,
+    "dropped_no_rule": 236,
+    "dropped_unnamed": 101,
+    "dropped_no_geometry": 0,
+    "dropped_outside_box": 30,
+    "merged_identity": 0,
+    "merged_same_venue": 3,
+    "merged_site_part": 5,
+    "dropped_outside_region": 214,
+    "coverage": {
+      "phone_raw": 114,
+      "phone_ok": 114,
+      "website_raw": 132,
+      "website_ok": 132,
+      "hours_raw": 73,
+      "hours_parsed": 65
+    }
+  },
+  "totals": {
+    "residents": 14658,
+    "housing_units": 6172,
+    "jobs": 10691,
+    "jobs_by_sector": {
+      "CNS01": 0,
+      "CNS02": 0,
+      "CNS03": 22,
+      "CNS04": 720,
+      "CNS05": 73,
+      "CNS06": 81,
+      "CNS07": 1359,
+      "CNS08": 121,
+      "CNS09": 335,
+      "CNS10": 262,
+      "CNS11": 321,
+      "CNS12": 1437,
+      "CNS13": 29,
+      "CNS14": 248,
+      "CNS15": 1073,
+      "CNS16": 2152,
+      "CNS17": 375,
+      "CNS18": 1088,
+      "CNS19": 725,
+      "CNS20": 270
+    },
+    "base_by_segment": {
+      "res": 14658,
+      "w_office": 2632.000000000001,
+      "w_health": 2151.9999999999977,
+      "w_edu": 1072.9999999999998,
+      "w_retail": 1092.9999999999998,
+      "w_industrial": 513,
+      "w_hospitality": 1462.9999999999995,
+      "w_public": 994.9999999999995,
+      "v_nightlife": 215,
+      "v_shopping": 805,
+      "v_leisure": 1170,
+      "v_campus": 0,
+      "v_hospital": 0,
+      "v_transit": 0,
+      "v_events": 310,
+      "v_lodging": 270
+    },
+    "jobs_spread": 1288,
+    "jobs_discarded": 266,
+    "halo_jobs_capped": 4066,
+    "jobs_spread_lost": 0,
+    "blocks_adjusted": 4,
+    "review_blocks": 6,
+    "review_jobs": 3755,
+    "by_county": [
+      {
+        "fips": "51610",
+        "residents": 14658,
+        "housing_units": 6172,
+        "jobs": 10691,
+        "blocks": 164
+      }
+    ]
+  },
+  "gates": [
+    {
+      "id": "G1",
+      "part": "files",
+      "level": "fail",
+      "check": "raw files complete and verified",
+      "value": 6,
+      "expected": 6,
+      "pass": true
+    },
+    {
+      "id": "G1",
+      "part": "sidecars",
+      "level": "warn",
+      "check": "files without a checksum sidecar",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G2",
+      "part": null,
+      "level": "fail",
+      "check": "PL geo rows without 97 fields (WAC and crosswalk headers are checked while reading)",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G3",
+      "part": "format",
+      "level": "fail",
+      "check": "LODES release format of every state",
+      "value": [
+        "8.4"
+      ],
+      "expected": "8.4",
+      "pass": true
+    },
+    {
+      "id": "G3",
+      "part": "vintage",
+      "level": "warn",
+      "check": "LODES data vintage of every state",
+      "value": [
+        "20251202_1657"
+      ],
+      "expected": "20251202_1657",
+      "pass": true
+    },
+    {
+      "id": "G4",
+      "part": null,
+      "level": "fail",
+      "check": "residents per state, exactly",
+      "value": {
+        "51": 43409
+      },
+      "expected": {
+        "51": 43409
+      },
+      "pass": true
+    },
+    {
+      "id": "G5",
+      "part": "wac_in_pl",
+      "level": "fail",
+      "check": "WAC blocks missing from the PL block set",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G5",
+      "part": "state_blocks",
+      "level": "fail",
+      "check": "blocks per state",
+      "value": {
+        "51": 418
+      },
+      "expected": {
+        "51": 418
+      },
+      "pass": true
+    },
+    {
+      "id": "G5",
+      "part": "xwalk",
+      "level": "fail",
+      "check": "crosswalk block set equals the PL block set",
+      "value": {
+        "rows": 418,
+        "not_in_pl": 0,
+        "duplicates": 0,
+        "missing": 0
+      },
+      "expected": {
+        "rows": 418,
+        "not_in_pl": 0,
+        "duplicates": 0,
+        "missing": 0
+      },
+      "pass": true
+    },
+    {
+      "id": "G6",
+      "part": null,
+      "level": "fail",
+      "check": "WAC rows whose sectors do not add up to C000",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "residents",
+      "level": "fail",
+      "check": "region residents",
+      "value": 14658,
+      "expected": 14658,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "housing_units",
+      "level": "fail",
+      "check": "region housing units",
+      "value": 6172,
+      "expected": 6172,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "blocks",
+      "level": "fail",
+      "check": "region blocks",
+      "value": 164,
+      "expected": 164,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "blocks_with_residents",
+      "level": "fail",
+      "check": "region blocks with residents",
+      "value": 136,
+      "expected": 136,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "counties",
+      "level": "fail",
+      "check": "county rows whose residents, housing units or blocks differ from the region file",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "county_jobs",
+      "level": "fail",
+      "check": "county rows whose raw jobs differ from the region file",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "jobs",
+      "level": "fail",
+      "check": "region raw jobs",
+      "value": 10691,
+      "expected": 10691,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "jobs.w_office",
+      "level": "fail",
+      "check": "raw jobs of w_office (CNS04 at weight 1, before corrections)",
+      "value": 2632,
+      "expected": 2632,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "jobs.w_health",
+      "level": "fail",
+      "check": "raw jobs of w_health (CNS04 at weight 1, before corrections)",
+      "value": 2152,
+      "expected": 2152,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "jobs.w_edu",
+      "level": "fail",
+      "check": "raw jobs of w_edu (CNS04 at weight 1, before corrections)",
+      "value": 1073,
+      "expected": 1073,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "jobs.w_retail",
+      "level": "fail",
+      "check": "raw jobs of w_retail (CNS04 at weight 1, before corrections)",
+      "value": 1359,
+      "expected": 1359,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "jobs.w_industrial",
+      "level": "fail",
+      "check": "raw jobs of w_industrial (CNS04 at weight 1, before corrections)",
+      "value": 1017,
+      "expected": 1017,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "jobs.w_hospitality",
+      "level": "fail",
+      "check": "raw jobs of w_hospitality (CNS04 at weight 1, before corrections)",
+      "value": 1463,
+      "expected": 1463,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "jobs.w_public",
+      "level": "fail",
+      "check": "raw jobs of w_public (CNS04 at weight 1, before corrections)",
+      "value": 995,
+      "expected": 995,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "cns04_jobs",
+      "level": "fail",
+      "check": "raw construction jobs (CNS04)",
+      "value": 720,
+      "expected": 720,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "blocks_with_jobs",
+      "level": "fail",
+      "check": "region blocks with jobs",
+      "value": 106,
+      "expected": 106,
+      "pass": true
+    },
+    {
+      "id": "G7",
+      "part": "blocks_with_either",
+      "level": "fail",
+      "check": "region blocks with residents or jobs",
+      "value": 152,
+      "expected": 152,
+      "pass": true
+    },
+    {
+      "id": "G8",
+      "part": "segments",
+      "level": "fail",
+      "check": "largest relative error of a worker segment: block rows against raw total less discarded",
+      "value": 1.0565691238068405e-15,
+      "expected": "<= 1e-9",
+      "pass": true
+    },
+    {
+      "id": "G8",
+      "part": "residents",
+      "level": "fail",
+      "check": "residents in region block rows",
+      "value": 14658,
+      "expected": 14658,
+      "pass": true
+    },
+    {
+      "id": "G8",
+      "part": "places",
+      "level": "fail",
+      "check": "places read = places kept + dropped + merged",
+      "value": {
+        "read": 1028,
+        "kept": 420,
+        "dropped_and_merged": 608
+      },
+      "expected": "read = kept + dropped_and_merged",
+      "pass": true
+    },
+    {
+      "id": "G8b",
+      "part": "discarded",
+      "level": "fail",
+      "check": "share of raw region jobs discarded (cap, drop, spread without receivers)",
+      "value": 0.024880740810027127,
+      "expected": "<= 0.1",
+      "pass": true
+    },
+    {
+      "id": "G8b",
+      "part": "moved",
+      "level": "fail",
+      "check": "share of raw region jobs moved by spread and auto_spread",
+      "value": 0.12047516602749976,
+      "expected": "<= 0.5",
+      "pass": true
+    },
+    {
+      "id": "G8b",
+      "part": "review_sums",
+      "level": "fail",
+      "check": "job_review.csv sums equal the manifest totals and every adjusted block has a row",
+      "value": {
+        "jobs_spread": 1288,
+        "jobs_discarded": 266,
+        "blocks_without_row": 0
+      },
+      "expected": {
+        "jobs_spread": 1288,
+        "jobs_discarded": 266,
+        "blocks_without_row": 0
+      },
+      "pass": true
+    },
+    {
+      "id": "G9",
+      "part": "fetch_box",
+      "level": "fail",
+      "check": "points and places outside the fetch box",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G9",
+      "part": "county",
+      "level": "fail",
+      "check": "in-region places outside every county polygon",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G9",
+      "part": "cells",
+      "level": "fail",
+      "check": "cells that are not valid resolution-9 cells",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G9",
+      "part": "h3_probe",
+      "level": "fail",
+      "check": "H3 probe cell",
+      "value": "892aaab3043ffff",
+      "expected": "892aaab3043ffff",
+      "pass": true
+    },
+    {
+      "id": "G10",
+      "part": null,
+      "level": "warn",
+      "check": "resolution-9 cells holding a region block with raw residents or jobs (within 1 %)",
+      "value": 59,
+      "expected": 59,
+      "pass": true
+    },
+    {
+      "id": "G11",
+      "part": "residents",
+      "level": "warn",
+      "check": "largest resolution-9 cell, residents (within 1 %)",
+      "value": 982,
+      "expected": 982,
+      "pass": true
+    },
+    {
+      "id": "G11",
+      "part": "jobs_raw",
+      "level": "warn",
+      "check": "largest resolution-9 cell, raw jobs",
+      "value": 1668,
+      "expected": 1668,
+      "pass": true
+    },
+    {
+      "id": "G11",
+      "part": "caps",
+      "level": "fail",
+      "check": "treated blocks that keep more than their cap in the affected sectors",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G11",
+      "part": "jobs_after",
+      "level": "warn",
+      "check": "largest resolution-9 cell, jobs after corrections (cell 892aa84dd33ffff)",
+      "value": 1721.7005044136192,
+      "expected": "<= 2153",
+      "pass": true
+    },
+    {
+      "id": "G12",
+      "part": "places",
+      "level": "warn",
+      "check": "region places",
+      "value": 226,
+      "expected": "203 to 249",
+      "pass": true
+    },
+    {
+      "id": "G12",
+      "part": "rivals",
+      "level": "warn",
+      "check": "region rivals",
+      "value": 146,
+      "expected": "131 to 161",
+      "pass": true
+    },
+    {
+      "id": "G12",
+      "part": "named",
+      "level": "warn",
+      "check": "share of region places with a name",
+      "value": 1,
+      "expected": ">= 0.97",
+      "pass": true
+    },
+    {
+      "id": "G12",
+      "part": "host_contact",
+      "level": "warn",
+      "check": "share of possible hosts with phone or website",
+      "value": 0.4819277108433735,
+      "expected": "0.1 to 0.7",
+      "pass": true
+    },
+    {
+      "id": "G12",
+      "part": "hours",
+      "level": "warn",
+      "check": "share of raw opening_hours values that parse",
+      "value": 0.8904109589041096,
+      "expected": ">= 0.93",
+      "pass": false
+    },
+    {
+      "id": "G12",
+      "part": "coordinates",
+      "level": "fail",
+      "check": "places without coordinates",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G12",
+      "part": "types",
+      "level": "warn",
+      "check": "place types of the vocabulary absent from the region",
+      "value": [
+        "campus",
+        "hospital",
+        "transit_station",
+        "industrial_site"
+      ],
+      "expected": [],
+      "pass": false
+    },
+    {
+      "id": "G13",
+      "part": null,
+      "level": "fail",
+      "check": "anchor blocks keep their jobs after corrections",
+      "value": [
+        {
+          "geoid": "516105002004003",
+          "column": "CNS15",
+          "jobs": 560
+        }
+      ],
+      "expected": [
+        {
+          "geoid": "516105002004003",
+          "column": "CNS15",
+          "min": 560
+        }
+      ],
+      "pass": true
+    },
+    {
+      "id": "G14",
+      "part": null,
+      "level": "fail",
+      "check": "every state contributes its counties: residents and raw jobs per state",
+      "value": [
+        {
+          "fips": "51",
+          "residents": 14658,
+          "jobs": 10691
+        }
+      ],
+      "expected": [
+        {
+          "fips": "51",
+          "residents": 14658,
+          "jobs": 10691
+        }
+      ],
+      "pass": true
+    },
+    {
+      "id": "G15",
+      "part": "flagged",
+      "level": "warn",
+      "check": "flagged blocks and their jobs",
+      "value": {
+        "blocks": 6,
+        "jobs": 3755
+      },
+      "expected": {
+        "blocks": 6,
+        "jobs": 3755
+      },
+      "pass": true
+    },
+    {
+      "id": "G15",
+      "part": "entries",
+      "level": "warn",
+      "check": "stale or orphan corrections entries",
+      "value": {
+        "stale": 1,
+        "orphan": 1
+      },
+      "expected": {
+        "stale": 0,
+        "orphan": 0
+      },
+      "pass": false
+    },
+    {
+      "id": "G15",
+      "part": "review_pending",
+      "level": "warn",
+      "check": "share of flagged jobs under automatic treatment (review pending above one half)",
+      "value": 0.2452729693741678,
+      "expected": "<= 0.5",
+      "pass": true
+    },
+    {
+      "id": "G15",
+      "part": "unconfirmed",
+      "level": "warn",
+      "check": "job corrections that await the owner's confirmation",
+      "value": 1,
+      "expected": 0,
+      "pass": false
+    },
+    {
+      "id": "G16",
+      "part": "share",
+      "level": "fail",
+      "check": "halo residents as a share of region residents",
+      "value": 0.5380679492427344,
+      "expected": "<= 10",
+      "pass": true
+    },
+    {
+      "id": "G16",
+      "part": "totals",
+      "level": "fail",
+      "check": "halo rows counted in a total or flagged in_region",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G17",
+      "part": "ring5",
+      "level": "fail",
+      "check": "candidate cells accepted in ring 5 of a source point",
+      "value": 0,
+      "expected": 0,
+      "pass": true
+    },
+    {
+      "id": "G17",
+      "part": "kept",
+      "level": "warn",
+      "check": "kept cells",
+      "value": 197,
+      "expected": "177 to 217",
+      "pass": true
+    }
+  ],
+  "outputs": [
+    {
+      "file": "points.tsv",
+      "bytes": 51374,
+      "sha256": "d4a8314dc3ca5cf556ebded7d65cdde5c369bd43da45c07593bdf87b520211d9",
+      "rows": 363
+    },
+    {
+      "file": "places.ndjson",
+      "bytes": 247494,
+      "sha256": "07f022b8504c1c48de603562be171791b24807bb60da560390176704e26e1bcb",
+      "rows": 420
+    },
+    {
+      "file": "cells.tsv",
+      "bytes": 13225,
+      "sha256": "b7ab2184caea7554f6bae2f370b3233b497076a3388ddc775d9d54568f74db33",
+      "rows": 197
+    },
+    {
+      "file": "job_review.csv",
+      "bytes": 2239,
+      "sha256": "7c7171a347183604e787f804299bff7dbd0c82a994ab25872957d6a36afe056b",
+      "rows": 7
+    }
+  ],
+  "attribution": {
+    "osm": "© OpenStreetMap contributors",
+    "osm_long": "Place data © OpenStreetMap contributors, available under the Open Database License (ODbL).",
+    "residents": "Residents: U.S. Census Bureau, 2020 Census Redistricting Data (Public Law 94-171). Counts as of April 1, 2020, not adjusted for growth.",
+    "jobs": "Jobs: U.S. Census Bureau, LEHD Origin-Destination Employment Statistics (LODES), version 8.4, 2023, all jobs. Job counts are jobs of record with statistical noise added by the Census Bureau, not people present. {blocks_adjusted} payroll-address blocks holding {jobs_spread} jobs were spread over their county (corrections {corrections_version}); construction jobs count at {cns04_weight_percent} %.",
+    "places": "Places: OpenStreetMap snapshot of 2026-10-03 (Geofabrik extracts). © OpenStreetMap contributors, ODbL 1.0. The places table is a database derived from OpenStreetMap and is available under the ODbL on request: {contact}.",
+    "boundaries": "County boundaries: U.S. Census Bureau, TIGERweb."
+  }
+}

@@ -14,12 +14,14 @@ corrections file `2026-10-05.1`, giving dataset `dc-20261003-d0514a63` with ever
 **[proto]** prototype figure: measured for this document with the seed values of revision 1 (construction jobs at 0.3,
 both pruning tests of 7.2), the seven starting entries of 4.3 with the automatic treatment for the other 79 flagged
 blocks, and the tile-set places, which hold no stations. A [proto] figure is indicative. Where a [run] figure stands
-beside it, the [run] figure is the one to expect. Gate ranges, not [proto] or [run] figures, decide a build. **[S]**
+beside it, the [run] figure is the one to expect. Gate ranges, not [proto] or [run] figures, decide a build.
+**[load]** measured by the first load of that build with `scripts/truck/load-region.php` (2026-10-05: PHP 8.2 without
+opcache on a laptop, MySQL 8.0.45 on the same machine), every loader gate of section 12 passed. **[S]**
 specified, not yet exercised. **[M]** from memory, confirm before relying on it. Not exercised at all: Overpass
 `out tags bb` and the tile fetch helper against the live server, the pipeline's downloads against the real hosts (the
 download code is tested against a local HTTP server and a stand-in for the hosts, and the first run made no request:
-it used files fetched earlier and adopted from the raw cache), the PHP loader's run time and memory, the Google
-requests of 13.3 and 13.4, EIA with a registered key.
+it used files fetched earlier and adopted from the raw cache), the loader on the production server (2 vCPU, PHP 8.3),
+the Google requests of 13.3 and 13.4, EIA with a registered key.
 
 ## 0. Fixed choices and names
 
@@ -1299,8 +1301,9 @@ bit with native prepares and a `PDO::PARAM_LOB` bind]. The value is the place's 
 with the place's own source point excluded, computed by the loader (section 10, step 8a). Scout decodes it and never
 computes vectors per candidate (02_MODEL.md 4.4).
 
-Expected size per dataset version for `dc`: 60,678 point rows and 25,276 place rows [run] (about 15 MB each in MySQL
-[proto]), plus 4.8 MB for the 11,941 host vectors, and one pack row (about 3.4 MB). Two versions are kept.
+Size per dataset version for `dc`: 60,678 point rows and 25,276 place rows [run]. In MySQL [load]: `tp_points` 16.6 MB
+of rows and 6.5 MB of indexes, `tp_places` 19.6 MB and 5.0 MB (4.6 MB of it are the 11,941 host vectors, and writing
+them after the insert splits pages), and one pack row of 3.5 MB. Two versions are kept.
 
 ### 9.2 Versioned loads
 
@@ -1309,6 +1312,8 @@ Expected size per dataset version for `dc`: 60,678 point rows and 25,276 place r
 - Activation is one transaction, run only when the version's `load_state` is `ready`. The switch itself is a single
   row update: `UPDATE tp_regions SET previous_version = active_version, active_version = ?, updated_at = NOW() WHERE region_id = ?`,
   followed by `UPDATE tp_region_packs SET activated_at = NOW() WHERE region_id = ? AND dataset_version = ?`.
+  Activating the version that is already active changes nothing (the switch would otherwise overwrite
+  `previous_version` with the active one).
 - Readers resolve the version once per request (9.3, query Q0) and pass it to every later query, so a request never
   mixes two versions even if the switch happens while it runs.
 - Rollback is the same statement with the previous version. It works for as long as that version's rows exist.
@@ -1360,7 +1365,7 @@ Q1, source points near a point. Parameters: `region_id, dataset_version, lat - d
 SELECT point_id, src_kind, src_ref, lat, lng, rivals_day, rivals_eve,
        b_res, b_w_office, b_w_health, b_w_edu, b_w_retail, b_w_industrial, b_w_hospitality, b_w_public,
        b_v_nightlife, b_v_shopping, b_v_leisure, b_v_campus, b_v_hospital, b_v_transit, b_v_events, b_v_lodging
-  FROM tp_points
+  FROM tp_points FORCE INDEX (idx_tpp_geo)
  WHERE region_id = ? AND dataset_version = ?
    AND lat BETWEEN ? AND ?
    AND lng BETWEEN ? AND ?
@@ -1371,7 +1376,7 @@ Q2, rival outlets near a point. Same parameters.
 
 ```sql
 SELECT place_key, place_type, rival_kind, lat, lng, name, kitchen, hours_mask
-  FROM tp_places
+  FROM tp_places FORCE INDEX (idx_tpl_geo)
  WHERE region_id = ? AND dataset_version = ?
    AND lat BETWEEN ? AND ?
    AND lng BETWEEN ? AND ?
@@ -1381,7 +1386,8 @@ SELECT place_key, place_type, rival_kind, lat, lng, name, kitchen, hours_mask
 
 Q3, possible hosts in a box (Scout). Parameters of Q1 plus the last `place_key` of the previous page (the empty string
 for the first page). Any box size. The caller pages by `place_key`: it repeats the query until a page holds fewer than
-2,000 rows. `host_vec` is decoded as described in 9.1.
+2,000 rows. `host_vec` comes back as its 400 bytes and is decoded as described in 9.1. This statement names no
+index: over a large box, paging along the primary key is the right plan.
 
 ```sql
 SELECT place_key, place_type, name, brand, lat, lng, county_fips, host_fit, kitchen, size_default, visitor_segment,
@@ -1401,7 +1407,7 @@ r = 2,400 m (2 x `walk_cutoff_m`, the halo depth).
 
 ```sql
 SELECT point_id, src_ref, in_region, lat, lng
-  FROM tp_points
+  FROM tp_points FORCE INDEX (idx_tpp_geo)
  WHERE region_id = ? AND dataset_version = ?
    AND lat BETWEEN ? AND ?
    AND lng BETWEEN ? AND ?
@@ -1434,8 +1440,14 @@ Q5, one place by key, is defined with the host link rule in 6.2.
 
 Rules. `ORDER BY` fixes the summation order, so the request path and the loader add the same doubles in the same
 order. Q1 returns at most about 900 rows for 1,200 m in `dc` (581 points lie within 1,200 m of the densest cell [run]).
-Plan of Q1 and Q2: range scan on `idx_tpp_geo` or `idx_tpl_geo` with index condition pushdown [V on MySQL 8.0.45: range
-scan with `Using index condition; Using filesort`]. Q4 uses the same range scan, and Q3 returned every host of a
+Plan of Q1, Q2 and Q4: range scan on `idx_tpp_geo` or `idx_tpl_geo` with index condition pushdown and a filesort. The
+three statements name their index (`FORCE INDEX`) because the optimizer does not always choose it on the loaded
+region: a latitude band through Washington holds 4,052 of the 60,678 points, and MySQL 8.0.45 then prefers to read the
+whole dataset version through the primary key, which already has the wanted order. Medians of seven runs [load]: at a
+downtown Washington point Q1 took 77 ms, Q2 28 ms and Q4 32 ms that way, and Q4 took 35 ms in Herndon and Sterling
+too; with the index named each of the three takes 6 ms downtown and 1 to 3 ms in Herndon and Sterling, and a whole
+capture for three visibility levels (Q1 to Q4 and the model) takes 27 ms downtown and 6 to 7 ms in Herndon and
+Sterling. Q3 returned every host of a
 synthetic table exactly once across its pages [V]. With native prepares `DOUBLE` columns arrive as PHP floats, and a
 float bound directly loses digits (38.91006831234568 is stored as 38.910068312346), so every double parameter is bound
 as its `json_encode` string [V]. A web request never reads a region's rows without a box: 57,000 rows of 23 columns as
@@ -1450,31 +1462,44 @@ php scripts/truck/load-region.php --region=dc --list
 php scripts/truck/load-region.php --region=dc --prune
 ```
 
-House script skeleton (`require vendor/autoload.php`, `Config::load(dirname(__DIR__))`, `getopt`). At the top:
-`ini_set('memory_limit', '1024M')`, `set_time_limit(0)`, `ini_set('serialize_precision', '-1')`, `ini_set('precision', '17')`.
+The script starts with `scripts/truck/_bootstrap.php` (04_BACKEND.md 7.2: the autoloader, the environment,
+`set_time_limit(0)`, `ini_set('serialize_precision', '-1')`, `ini_set('precision', '17')` and the option reader) and
+sets `ini_set('memory_limit', '1024M')`. The work is done by `App\TruckPlanner\Services\RegionLoader`.
 Exit 0 on success, 2 on a failed check (the version stays `failed` and is never activated), 1 on usage or I/O errors.
+
+The four forms. `--build` names the directory that holds the five files of one build. The name of the directory is
+not read: region and version come from the manifest. `--region=<id> --activate=<version>` is the switch of 9.2 and
+nothing else: it needs a version whose `load_state` is `ready` (exit 2 otherwise, exit 1 for a region or a version that
+does not exist), it prunes nothing, and it prints a warning when the kernel recorded with that version differs from
+this server's seeds (a way back may come before the code goes back, and requests answer 409 until the two agree).
+`--list` prints the region's ledger: version, active or previous, state, counts, pack size, load and activation time.
+`--prune` deletes every version but the active and the previous one (9.2). The loader reads no wall clock: the
+timings it prints are differences of the monotonic `hrtime()`.
 
 Model calls. Steps 6, 8 and 8a call the PHP model functions of 02_MODEL.md 4.4 with one `Assumptions` object:
 `A` = `{model_version, seeds_revision, seeds, overrides: {}, region: {id, traffic_matrix, flags}}`, built from the PHP
 seed loader and `manifest.region` (`id`; `traffic_matrix`, or `us_mean` when the key is absent;
 `flags.inauguration_day` from `holidays.inauguration_day`). `overrides` must be empty. Every ordering of ids in these
 steps uses `strcmp` (byte order). PHP's default `sort()` compares numeric-looking strings as numbers and must not be
-used.
+used on ids. The loader checks while it reads them that `points.tsv`, `places.ndjson` and `cells.tsv` are in strictly
+ascending byte order of their ids (8.1 to 8.3) and refuses a build that is not (exit 2), so a list of row numbers in
+ascending order is in `strcmp` order of its ids. It refuses in the same way a row that does not have the columns,
+types and vocabulary of section 8.
 
 Steps:
 
-1. Read `manifest.json`. Verify the SHA-256 and row count of the four data files. Require every `fail` gate to have
-   passed, `model_version` to equal the PHP model's version, every seed value in `manifest.parameters` to equal
-   what the PHP model's seed loader returns (numbers compared as doubles, lists and strings exactly), and the region's
-   traffic matrix and its typical value to exist in the PHP model's seeds (G19). Any mismatch stops here: rebuild the
-   region.
+1. Read `manifest.json`. Verify the size, the SHA-256 and the row count of the four data files. Require every `fail`
+   gate to have passed, `model_version` to equal the PHP model's version, every seed value in `manifest.parameters`
+   to equal what the PHP model's seed loader returns (numbers compared as doubles, lists and strings exactly), and
+   the region's traffic matrix and its typical value to exist in the PHP model's seeds (G19). Any mismatch stops
+   here: rebuild the region.
 2. Upsert `tp_regions` from `manifest.region` and `manifest.bounds` (name, CBSA, zone, resolution, box, `map_center`,
    `config_json`). `active_version` is not touched.
 3. If a `tp_region_packs` row for this version exists: when its `kernel_json` is not null and differs from the one
    this run would write (step 12, compared as in the kernel check of 9.3), exit 2 with the message
-   `build-scope seeds changed: raise seeds_revision and rebuild the region`. Otherwise stop if it is the active
-   version. Otherwise delete the version's rows in batches and start again. Insert the pack row with
-   `load_state = 'loading'`.
+   `build-scope seeds changed: raise seeds_revision and rebuild the region` and leave that row as it is. Otherwise
+   stop if it is the active version (exit 0: there is nothing to load). Otherwise delete the version's rows in
+   batches (points, places, then the pack row) and start again. Insert the pack row with `load_state = 'loading'`.
 4. Read `places.ndjson` line by line. Insert into `tp_places` in batches of 500 rows per statement (29 columns, 14,500
    placeholders; `host_vec` stays NULL until step 8a), ten statements per transaction. Collect rivals into flat arrays
    `place_key[]`, `lat[]`, `lng[]`, `kind[]`, and possible hosts (`in_region = 1` and `host_fit > 0`) into flat arrays
@@ -1500,12 +1525,15 @@ Steps:
    step 6, both sorted with `strcmp` on `id`, and call
    `capture_at_point(A, cell.lat, cell.lng, "normal", sources, outlets, {point_ids: [], segment: null, amount: 0.0})`.
    The model applies the cutoff. The 50 numbers are `capture.day[0..15]`, `capture.eve[0..15]`, `nearby[0..15]`,
-   `rivals.day`, `rivals.eve`, kept in 50 flat column arrays.
-   **Step 8a, host vectors.** For every place with `in_region = 1` and `host_fit > 0`, in `place_key` order, take
+   `rivals.day`, `rivals.eve`, kept in 50 flat column arrays. The two lists of a bucket's neighbourhood may be kept
+   for the next cells that fall into the same bucket, within a fixed bound (some thousands of points): never the
+   whole region as row arrays.
+   **Step 8a, host vectors.** For every place with `in_region = 1` and `host_fit > 0`, take
    `sources` and `outlets` as in step 8 around the place's `lat, lng` and call
    `capture_at_point(A, lat, lng, "normal", sources, outlets, {point_ids: P, segment: null, amount: 0.0})` with
-   `P = ["p" + place_key]` when the place has a point row (`has_point`) and `P = []` otherwise. Write the 50 numbers,
-   in the order of step 8, with
+   `P = ["p" + place_key]` when the place has a point row (`has_point`) and `P = []` otherwise. The vectors may be
+   computed in any order (bucket by bucket, so that neighbouring hosts share their lists). Write the 50 numbers, in
+   the order of step 8 and in `place_key` order, with
    `UPDATE tp_places SET host_vec = ? WHERE region_id = ? AND dataset_version = ? AND place_key = ?`, the value
    `pack('e50', ...$v)` bound as `PDO::PARAM_LOB`, 500 updates per transaction.
 9. Pruning cross-check: for every cell `|sum(nearby) - nearby_etl| <= 1e-9 * max(1, nearby_etl)`. A failure means the
@@ -1517,19 +1545,29 @@ Steps:
     cell centre with visibility normal. All 50 numbers must match the bulk result within `1e-12` relative (absolute
     floor `1e-12`). Then the possible hosts with index `i % hstep == 0` in `place_key` order,
     `hstep = max(1, floor(H / 50))` (H = number of possible hosts): the same service, at the place point with the
-    exclusion of step 8a, must reproduce the `host_vec` read back from MySQL within the same tolerance. This proves
-    that the rows in MySQL, queries Q1 and Q2 and the API code path reproduce the pack and the host vectors.
+    exclusion of step 8a, must reproduce the `host_vec` read back from MySQL (through Q3 around the place) within the
+    same tolerance. This proves that the rows in MySQL, queries Q1 and Q2 and the API code path reproduce the pack
+    and the host vectors. For `dc` the sample is 225 cells and 51 hosts, and both differences are exactly 0 [load].
 11. Build the pack (section 11), gzip it with `gzencode($bytes, 9)`, decode it again and verify every value against the
-    quantisation bound. Fail above 16 MB compressed.
+    quantisation bound (with a relative 1e-9 added to the bound, for the rounding of the comparison itself). Fail
+    above 16 MB compressed.
 12. `UPDATE tp_region_packs` with counts, `pack_len`, `pack_gz_len`, `pack_sha256` (of the uncompressed bytes),
-    `kernel_json`, `manifest_json`, the blob bound as `PDO::PARAM_LOB`, and `load_state = 'ready'`.
+    `kernel_json`, `manifest_json` (the text of `manifest.json` as the pipeline wrote it), the blob bound as
+    `PDO::PARAM_LOB`, and `load_state = 'ready'`. It is one statement of about 3.5 MB for `dc`: the server's
+    `max_allowed_packet` (64 MB by default in MySQL 8.0) must admit it.
     `kernel_json` = `{"seeds_revision": n, "kernel": <the pack header's kernel object>}`.
-13. With `--activate`: the switch of 9.2, then prune. Print region, version, counts, pack size and timings.
+13. With `--activate`: the switch of 9.2, then prune. Print region, version, counts, pack size, one line per check
+    (the files, the pipeline's gates, G19 to G22), the time of each step, wall-clock time and peak memory.
 
 `--dry-run` does steps 1, 4 (reading only, no inserts), 5, 6, 8, 8a (no updates), 9 and 11 from the files and writes
-nothing. Expected cost for `dc`: 2,324,212 point-to-cell pairs for the 61,460 cells (38 points per cell on average, 581
-at most) [run] and about 1.5 million point-to-host pairs for the 11,941 hosts (130 points per host, because hosts stand
-where blocks are small) [proto], an estimated two to three minutes and 400 MB at most in PHP [S]. Run it with the same
+nothing: it does not open a database connection, and `--activate` given with it is not applied. Cost for `dc`:
+2,324,212 point-to-cell pairs for the 61,460 cells (38 points per cell on average, 581 at most) [run] and about 1.5
+million point-to-host pairs for the 11,941 hosts (130 points per host, because hosts stand where blocks are small)
+[proto]. Measured [load], two loads of the whole build: 47 and 51 s wall clock and 222 MiB peak memory, of which the
+rival pull of the 60,678 points takes 4 to 5 s, the cell vectors 14 to 16 s, the host vectors 12 to 16 s, the
+inserts 6 s, the self-check 3 s and the pack 2 to 3 s. A dry run takes 28 to 29 s and 206 MiB. `--prune` removed a
+whole version (60,678 points, 25,276 places, the pack row) in 2.5 s. The production server (2 vCPU, PHP 8.3) was not
+measured: allow two to three minutes there [S]. `memory_limit` 1024M leaves a wide margin. Run it with the same
 PHP minor version as the web tier (`php8.3` on the server). The kernel constants written to the pack come from the PHP
 model. Changing any of them means a new `seeds_revision`, a rebuild and a reload of the region (section 8).
 
@@ -1563,19 +1601,20 @@ decode = scale[j] * (code / 65535)^2
 ```
 
 Error bound: `|decode - v| <= sqrt(v * scale) / 65535 + scale / (4 * 65535^2)`. Relative error is 1.5e-5 at `v = scale`,
-1.5e-4 at `0.01 * scale`, 1.5e-3 at `1e-4 * scale`, and below 1 % for every `v >= 2.33e-6 * scale`. Zero is exact. The
-largest absolute error is `1.53e-5 * scale`. Measured on the `dc` prototype pack: no value outside the bound [V]. The
+1.5e-4 at `0.01 * scale`, 1.5e-3 at `1e-4 * scale`, and below 1 % for every `v >= 2.35e-6 * scale`. Zero is exact, and
+so is the largest value of a column. The largest absolute error is `1.53e-5 * scale`. Measured on the `dc` pack: of
+its 3,073,000 values none is outside the bound, and the worst one uses 0.999998 of it [load]. The
 pack feeds the map layer only. Every number shown to the owner comes from exact vectors computed by the server.
 
-JSON header (keys in this order, numbers as shortest round-trip decimals):
+JSON header (keys in this order, numbers as shortest round-trip decimals, a whole number without a fraction):
 
 ```json
 {
   "format": "tp-cell-pack", "format_version": 1,
-  "region_id": "dc", "dataset_version": "dc-20261003-3fa9c2d1",
+  "region_id": "dc", "dataset_version": "dc-20261003-d0514a63",
   "model_version": "tps-0.1.0", "pipeline_version": "tp-etl-1.0.0",
-  "h3_res": 9, "cell_count": 61228,
-  "bounds": {"lat_min": 38.00484, "lng_min": -78.34937, "lat_max": 39.72058, "lng_max": -76.66133},
+  "h3_res": 9, "cell_count": 61460,
+  "bounds": {"lat_min": 38.00483902797089, "lng_min": -78.34937127065517, "lat_max": 39.72057772678223, "lng_max": -76.66133495242785},
   "kernel": {"earth_radius_m": 6371008.8, "walk_decay_m": 400, "walk_cutoff_m": 1200, "a0": 1.6, "visibility": 1,
              "regime_of_hour": ["eve","eve","eve","eve","eve","day","day","day","day","day","day","day",
                                 "day","day","day","day","eve","eve","eve","eve","eve","eve","eve","eve"],
@@ -1585,9 +1624,9 @@ JSON header (keys in this order, numbers as shortest round-trip decimals):
                "v_nightlife", "v_shopping", "v_leisure", "v_campus", "v_hospital", "v_transit", "v_events", "v_lodging"],
   "columns": ["c_day_res", "c_day_w_office", "r_eve"],
   "quant": {"type": "u16-sqrt", "levels": 65535},
-  "scale": [2115.0, 1666.14, 112.697],
-  "sections": [{"name": "h3", "type": "u64le", "offset": 0, "count": 61228},
-               {"name": "features", "type": "u16le", "layout": "column-major", "offset": 489824, "count": 3061400}],
+  "scale": [2114.9956820673206, 1824.2004122670173, 112.69707005810689],
+  "sections": [{"name": "h3", "type": "u64le", "offset": 0, "count": 61460},
+               {"name": "features", "type": "u16le", "layout": "column-major", "offset": 491680, "count": 3073000}],
   "vintages": {"census_reference_date": "2020-04-01", "lodes_year": 2023, "osm_snapshot_date": "2026-10-03"},
   "attribution": ["© OpenStreetMap contributors", "U.S. Census Bureau, 2020 Census", "U.S. Census Bureau, LEHD LODES 8.4 (2023)"]
 }
@@ -1595,39 +1634,49 @@ JSON header (keys in this order, numbers as shortest round-trip decimals):
 
 `columns` and `scale` are shortened here: both have exactly 50 entries in column order. The `kernel` block carries the
 PHP model's build-scope seed values (shown: seeds revision 1). Section offsets are relative to `D`. `bounds` covers the
-cell centres. The header `attribution` array is exactly the three strings shown, with the LODES format and year taken
-from the manifest (`vintages.lodes_format`, `vintages.lodes_year`). The example numbers are those of the prototype
-pack [proto].
+cell centres. `vintages` holds exactly the three keys shown, taken from the manifest. The header `attribution` array is
+exactly the three strings shown, with the LODES format and year taken from the manifest (`vintages.lodes_format`,
+`vintages.lodes_year`). The example is the header of the first load [load], with `columns` and `scale` cut to three
+entries each.
 
 Writing in PHP: `pack('VV', hexdec(substr($h, -8)), hexdec(substr($h, 0, -8)))` per id (low word first) and
 `pack('v*', ...$codes)` per column chunk. Formatting hex is not H3 arithmetic. The uncompressed bytes can differ in a
 few codes between platforms because `exp()` comes from the C library. The header JSON is deterministic.
 
 Size for `dc`: the first build has N = 61,460 cells [run], so the two sections take 108 x N = 6,637,680 bytes (491,680
-for the ids, 6,146,000 for the codes), plus the prefix, the header of about 3 kB and its padding. The prototype pack of
-N = 61,228 was 6,612,624 bytes of sections and 3.41 MB gzipped (level 9) [proto], so expect about 3.4 MB. 44 % of the
-codes are zero. Splitting high and low bytes into planes saves only 6 %, so it is not done. Largest values seen: 32,731
-distance-weighted office jobs near one cell, rival pull 88 by day and 113 in the evening.
+for the ids, 6,146,000 for the codes), plus the prefix, the header and its padding. The first load wrote a header of
+3,116 bytes with no padding: 6,640,808 bytes in all, 3,413,224 gzipped (level 9) [load]. 45 % of the codes are zero.
+Splitting high and low bytes into planes saves only 6 % [proto], so it is not done. Largest values [load]: 32,952
+distance-weighted office jobs near one cell, rival pull 87.8 by day and 112.7 in the evening.
 
 ### 11.1 Serving
 
 Route (final name in `04_BACKEND.md`): `GET /api/truck/regions/{region_id}/pack/{dataset_version}`, behind the existing
 auth middleware, no rate-limit middleware. The version is part of the URL, so a response never changes.
 
-1. Read `pack_gz, pack_gz_len, pack_sha256, load_state, kernel_json` for the key. Missing or not `ready`:
-   `Response::error('Not found', 404)`. Then apply the kernel check of 9.3 to this row's `kernel_json`: on a difference
-   answer `Response::error('Region data was built with different model constants', 409)`.
-2. `ini_set('zlib.output_compression', 'Off')` and close every output buffer, so nothing compresses twice. Apache
+1. Read `pack_gz_len, pack_sha256, load_state, kernel_json` for the key, not the blob yet. Missing, not `ready`, or
+   ids that do not have the form of a region id (section 1) and of a dataset version (section 8):
+   `Response::error('Not found', 404)`. Then apply the
+   kernel check of 9.3 to this row's `kernel_json`: on a difference answer
+   `Response::error('Region data was built with different model constants', 409)`.
+2. `etag = '"' . substr(pack_sha256, 0, 32) . '-gz"'` when `Accept-Encoding` contains `gzip`, without `-gz` for the
+   identity encoding. If `If-None-Match` names it (the header may hold a list, and a weak mark `W/` is ignored): the
+   headers of step 5, status 304, no body, `exit`. The blob is not read for a 304.
+3. Read `pack_gz`. For the identity encoding `gzdecode` it. This happens before any header is sent, so that an error
+   answer never carries the cache headers.
+4. `ini_set('zlib.output_compression', 'Off')` and close every output buffer, so nothing compresses twice. Apache
    `mod_deflate` leaves a response alone when it already has a `Content-Encoding`.
-3. `etag = '"' . substr(pack_sha256, 0, 32) . '-gz"'` (without `-gz` for the identity encoding).
-4. Headers: `Content-Type: application/octet-stream`, `Cache-Control: private, max-age=31536000, immutable`,
-   `ETag`, `Vary: Accept-Encoding`, `X-Content-Type-Options: nosniff`, plus `Response::corsHeaders()`. Do **not** call
-   `Response::cacheable()`: it adds `Vary: Authorization`, and a new login token would then invalidate the cached pack.
-5. If `If-None-Match` equals the ETag: status 304, no body, `exit`.
-6. If `Accept-Encoding` contains `gzip`: `Content-Encoding: gzip`, `Content-Length: pack_gz_len`, echo the blob as
-   stored. Otherwise `gzdecode` it and send it plain. Then `exit`.
+5. Headers: `Response::corsHeaders()`, then `Content-Type: application/octet-stream`,
+   `Cache-Control: private, max-age=31536000, immutable`, `ETag`, `Vary: Accept-Encoding` (appended),
+   `X-Content-Type-Options: nosniff`. Do **not** call `Response::cacheable()`: it adds `Vary: Authorization`, and a
+   new login token would then invalidate the cached pack.
+6. With gzip: `Content-Encoding: gzip`, `Content-Length: pack_gz_len`, echo the blob as stored. Otherwise send the
+   decoded bytes with their own length. Then `exit`.
 
 The response is not the JSON envelope. Errors are. Never return 401 here for anything but a missing login.
+Exercised through `php -S` [load]: for the `dc` pack 200 with `Content-Encoding: gzip` and 3,413,224 bytes, 304 with
+the validator, and 200 with 6,640,808 plain bytes under the validator without `-gz`; 404 in the envelope for a version
+that is not loaded, and 409 for a pack row whose recorded kernel was changed by hand.
 
 ### 11.2 Decoding in the browser
 
@@ -1716,10 +1765,10 @@ is `warn` and passes within 2 %.
 | G17.ring5 | Cells (P) | zero ring-5 acceptances (7.1) | fail |
 | G17.kept | Cells (P) | kept cells within `checks.cells_kept` (54,000 to 64,000; 61,460 in the first build) | warn |
 | G18 | Determinism (P, test suite) | two runs on the same inputs give byte-identical files. Not an entry of the manifest | fail |
-| G19 | Model match (L) | manifest model version and every seed value in `manifest.parameters` equal the PHP model's. The load fails if `traffic.<name>` or `traffic.<name>_typical` is missing from the PHP model's seeds for the region's `traffic_matrix` (`us_mean` when the key is absent) | fail |
-| G20 | Pruning cross-check (L) | step 9 of section 10 | fail |
-| G21 | Request-path self-check (L) | step 10 of section 10: sampled cells and sampled host vectors | fail |
-| G22 | Pack (L) | decode within the quantisation bound. `cell_count` equals rows of `cells.tsv`. Compressed size at most 16 MB | fail |
+| G19 | Model match (L) | manifest model version and every seed value in `manifest.parameters` equal the PHP model's. The load fails if `traffic.<name>` or `traffic.<name>_typical` is missing from the PHP model's seeds for the region's `traffic_matrix` (`us_mean` when the key is absent). Printed as `G19.model_version`, `G19.parameters` and `G19.traffic_matrix` | fail |
+| G20 | Pruning cross-check (L) | step 9 of section 10 (largest relative difference in the first load: 4.97e-12, of a limit of 1e-9 [load]) | fail |
+| G21 | Request-path self-check (L) | step 10 of section 10: sampled cells (`G21.cells`: 225 in the first load) and sampled host vectors (`G21.hosts`: 51), both reproduced with a difference of exactly 0 [load] | fail |
+| G22 | Pack (L) | decode within the quantisation bound. `cell_count` equals rows of `cells.tsv` and the ids are those of the file. Compressed size at most 16 MB (3.4 MB [load]) | fail |
 
 Pipeline tests (`tools/truck-etl/test/*.test.mjs`, run in the Truck Planner CI job with `npm test`, which is
 `node --test` in the package directory; about 150 tests, 3 s): varint, zigzag, packed arrays and the PBF reader on
@@ -1753,8 +1802,12 @@ one entry per treatment, one stale and one orphan, and a frozen copy of the seed
 file does not move the recorded result. Fixture files are marked `-text` in `tools/truck-etl/.gitattributes` so
 checksums survive Windows checkouts, and the region and corrections files are marked `eol=lf` so that their hashes in
 the manifest are the same on every platform. The fixture build is a valid pipeline build with real H3 ids. Built with
-the repository seed file (`--region-file`, `--corrections`, `--raw-dir` pointing into the fixture, `--offline`), it is
-the mini region that the backend tests load.
+the repository seed file (`--region-file`, `--corrections`, `--raw-dir` pointing into a copy of the fixture's raw
+directory, `--offline`), it is the mini region that the backend tests load: 363 source points, 420 places and 197
+cells, `mini-20261003-8d5536a4` at seeds revision 1. Its five files are committed as
+`tests/fixtures/truck-planner/region-mini/build/`, and `node tests/fixtures/truck-planner/region-mini/make-fixture.mjs`
+runs that build again and replaces them. It must be run again, and the files committed, whenever a build-scope seed
+or a rule of the pipeline changes: gate G19 refuses a build whose recorded seed values are not the model's.
 
 ## 13. Runtime data notes for the live services
 

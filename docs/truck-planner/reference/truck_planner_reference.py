@@ -21,8 +21,11 @@ goes through qkey(); rounding only through round_half_away().
 Command line:
 
     python truck_planner_reference.py --self-test            every golden case + property checks
-    python truck_planner_reference.py --write-golden PATH    write the golden file (refuses on any problem)
+    python truck_planner_reference.py --write-golden PATH    write the golden file (refuses on any problem; names
+                                                             every id of the replaced file that moved)
     python truck_planner_reference.py --check-golden PATH    regenerate in memory and compare with the file
+    python truck_planner_reference.py --reach                which lines and branches of the model the cases reach
+                                                             (Python 3.11+; branches need 3.12+)
 """
 
 import json
@@ -161,11 +164,30 @@ def _is_number(x):
     return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
+def _is_finite_number(x):
+    """A number with a finite binary64 value. An integer too large for a double (a JSON literal of 310
+    digits, which the other runtimes read as infinity) is not one."""
+    if not _is_number(x):
+        return False
+    try:
+        return math.isfinite(float(x))
+    except OverflowError:
+        return False
+
+
+def require_number(x, name):
+    """7 "A missing number": stop on a value that is not a number (null, a boolean, a string). A
+    programming error of the caller, not a model error: it has no code and no golden case."""
+    if not _is_number(x):
+        raise TypeError(name + " must be a number")
+    return x
+
+
 def _same_shape(value, target):
     """2.2 step 5: number for number (finite), string for string, array of the same length whose elements
     have the same type as the seed's."""
     if _is_number(target):
-        return _is_number(value) and (isinstance(value, int) or math.isfinite(value))
+        return _is_finite_number(value)
     if isinstance(target, str):
         return isinstance(value, str)
     if isinstance(target, bool):
@@ -208,9 +230,11 @@ def _override_error(seeds, path, value):
     items = value if isinstance(value, list) else [value]
     for x in items:                                                            # step 6
         if _is_number(x):
-            if "min" in inherited and x < inherited["min"]:
+            # As binary64 values on both sides: a whole number beyond 2^53 is the double it is read as,
+            # not the integer Python would otherwise compare exactly.
+            if "min" in inherited and float(x) < float(inherited["min"]):
                 return "out_of_bounds"
-            if "max" in inherited and x > inherited["max"]:
+            if "max" in inherited and float(x) > float(inherited["max"]):
                 return "out_of_bounds"
     for x in items:                                                            # step 7
         if isinstance(x, str) and "allowed" in inherited and x not in inherited["allowed"]:
@@ -1113,7 +1137,9 @@ def break_even_orders(profile, terms, fixed_costs):
 
 def day_costs(profile, timeline, fuel_price_per_gal):
     """The day's own costs. Paid crew are paid from the start of prep to "done", except gaps marked
-    unpaid. The owner's own time is not a cost. One fuel price covers truck and generator."""
+    unpaid. The owner's own time is not a cost. One fuel price covers truck and generator; it must be a
+    number (a context without one is refused, not read as zero)."""
+    require_number(fuel_price_per_gal, "fuel_price_per_gal")
     paid_hours = timeline["paid_minutes"] / 60.0
     labour = paid_hours * profile["paid_crew"] * profile["wage_per_hour"] * (1.0 + profile["payroll_burden_pct"])
     drive_gallons = timeline["miles"] / profile["mpg"]
@@ -1997,7 +2023,8 @@ def strip_from_rows(A, profile, terms, vectors, rows):
 def scout_estimate(A, profile, place, legs, cal, fuel_price_per_gal):
     """One candidate host: its best three hours in a typical week, what they would leave, the cost of
     driving there and back, and a score that ranks (it is not shown as money). None for a place type that
-    does not host trucks."""
+    does not host trucks. The fuel price must be a number, whether or not this place ends up using it."""
+    require_number(fuel_price_per_gal, "fuel_price_per_gal")
     row = seed(A, "place_types.rows." + place["place_type"])
     if row["host_fit"] <= 0:
         return None
@@ -2154,6 +2181,11 @@ class _CaseList:
     def calc(self, case_id, label, function, want, decimals=None):
         """The document prints a number derived from this case's result (a ratio, a product)."""
         self.documented.append((case_id, (label, function), want, decimals))
+
+    def known(self, case_id, path, want, decimals=None):
+        """A value worked out by hand for an edge case: asserted like a documented number, whether or not
+        the document prints it. It says what the case is there to pin down."""
+        self.documented.append((case_id, path, want, decimals))
 
 
 def _a(overrides=None, region=None):
@@ -2388,6 +2420,16 @@ def _g01_rounding(c):
     c.doc(c.add("g01", "qkey", {"x": 0.0000004}), "", 0)
     for x in [0.0, -1.5, 1234.5678914, 0.0000006, 482.2030590342359, -42.64396267755217]:
         c.add("g01", "qkey", {"x": x})
+    # Halves and the reach of the nudge; negative zero; decimals 7 to 9.
+    for (x, decimals, want) in [(0.5, 0, 1.0), (-0.5, 0, -1.0), (1.5, 0, 2.0), (-0.0, 2, 0.0), (0.4999999989, 0, 0.0),
+                                (3.14159265358979, 7, 3.1415927), (3.14159265358979, 8, 3.14159265),
+                                (3.14159265358979, 9, 3.141592654), (0.0000000005, 9, 0.000000001),
+                                (-0.0000000005, 9, -0.000000001), (1000000000000000.5, 0, 1000000000000001.0)]:
+        c.doc(c.add("g01", "round_half_away", {"x": x, "decimals": decimals}), "", want)
+    c.add("g01", "round_half_away", {"x": 123456789.123456789, "decimals": 9})
+    for (x, want) in [(0.0000005, 1), (-0.0000005, 0), (-0.00000050000001, -1), (1000000000000.0, 1000000000000000000),
+                      (-1000000000000.0, -1000000000000000000)]:
+        c.doc(c.add("g01", "qkey", {"x": x}), "", want)
 
 
 def _g02_dates(c):
@@ -2419,6 +2461,45 @@ def _g02_dates(c):
         c.add("g02", "nth_weekday", {"year": year, "month": month, "dow": dow, "n": n})
     for (year, month, dow) in [(2026, 5, 0), (2027, 5, 0), (2026, 12, 6), (2028, 2, 1)]:
         c.add("g02", "last_weekday", {"year": year, "month": month, "dow": dow})
+    # Day numbers outside the valid range of dates: negative years and day numbers (floor_div and mod_floor
+    # on negative values), months and days that are not normalised.
+    for (y, m, d, want) in [(0, 3, 1, -719468), (0, 1, 1, -719528), (-1, 3, 1, -719834), (-400, 2, 29, -865566),
+                            (1600, 2, 29, -135081), (9999, 12, 31, 2932896), (2026, 13, 1, 20819), (2026, 0, 1, 20423),
+                            (2026, -10, 1, 20485), (2026, 1, 0, 20453), (2026, 14, 31, 20880)]:
+        c.doc(c.add("g02", "days_from_civil", {"y": y, "m": m, "d": d}), "", want)
+    for (z, want) in [(-719468, [0, 3, 1]), (-719469, [0, 2, 29]), (-719529, [-1, 12, 31]), (-1000000, [-768, 2, 4]),
+                      (-865566, [-400, 2, 29]), (2932896, [9999, 12, 31]), (3000000, [10183, 9, 21]), (146096, [2369, 12, 31]),
+                      (146097, [2370, 1, 1])]:
+        c.doc(c.add("g02", "civil_from_days", {"z": z}), "", want)
+    # parse_date: not a string at all; a character below "0" and one above "9" in a digit position; the
+    # two separators; length; digits outside the Basic Multilingual Plane (ten characters, twenty-two bytes).
+    for s in [None, 20261008, True, ["2026-10-08"], {"date": "2026-10-08"}, "2026-10-0 ", "2026-10-0/", "2026-10-0:",
+              "+026-10-08", "2026x10-08", "2026-10x08", " 2026-10-08", "2026-10-08 ", "2026-10-8", "2026-10-080",
+              "\U0001d7ee\U0001d7ec\U0001d7ee\U0001d7f2-10-08", "2100-02-29", "2026-04-31", "2026-12-32", "1970-01-00"]:
+        c.doc(c.add("g02", "parse_date", {"s": s}), "error", "invalid_date")
+    for (s, want) in [("2000-02-29", [2000, 2, 29]), ("2028-02-29", [2028, 2, 29]), ("2026-12-31", [2026, 12, 31])]:
+        c.doc(c.add("g02", "parse_date", {"s": s}), "", want)
+    for date in [None, 20261008, "1969-12-31", "2200-01-01"]:
+        c.doc(c.add("g02", "day_of_week", {"date": date}), "error", "invalid_date")
+    c.doc(c.add("g02", "add_days", {"date": None, "n": 1}), "error", "invalid_date")
+    c.doc(c.add("g02", "add_days", {"date": "2200-01-01", "n": -1}), "error", "invalid_date")
+    # add_days and format_date do not check their result: it may leave 1970..2199. Zero-padded to four
+    # digits with the sign inside the four; longer years are written out.
+    for (date, n, want) in [("1970-01-01", -1, "1969-12-31"), ("2199-12-31", 1, "2200-01-01"), ("1970-01-01", -719162, "0001-01-01"),
+                            ("1970-01-01", -719163, "0000-12-31"), ("1970-01-01", -719600, "-001-10-21"),
+                            ("1970-01-01", -1000000, "-768-02-04"), ("2199-12-31", 3000000, "10413-09-20")]:
+        c.doc(c.add("g02", "add_days", {"date": date, "n": n}), "", want)
+    for (y, m, d, want) in [(0, 1, 1, "0000-01-01"), (5, 5, 5, "0005-05-05"), (-1, 12, 31, "-001-12-31"), (-123, 5, 6, "-123-05-06"),
+                            (-1234, 5, 6, "-1234-05-06"), (99999, 1, 1, "99999-01-01"), (2026, 13, 45, "2026-13-45"),
+                            (2026, -3, 7, "2026--3-07"), (2026, 100, 100, "2026-100-100")]:
+        c.doc(c.add("g02", "format_date", {"y": y, "m": m, "d": d}), "", want)
+    # A fifth weekday that the month does not have runs into the next month; n = 0 is the week before.
+    for (year, month, dow, n, want) in [(2026, 2, 6, 5, "2026-03-01"), (2026, 2, 6, 4, "2026-02-22"), (2026, 3, 6, 0, "2026-02-22"),
+                                        (2026, 12, 0, 1, "2026-12-07"), (2024, 2, 3, 5, "2024-02-29"), (1970, 1, 3, 1, "1970-01-01")]:
+        c.doc(c.add("g02", "nth_weekday", {"year": year, "month": month, "dow": dow, "n": n}), "", want)
+    for (year, month, dow, want) in [(2026, 12, 3, "2026-12-31"), (2024, 2, 3, "2024-02-29"), (2024, 2, 4, "2024-02-23"),
+                                     (2199, 12, 1, "2199-12-31"), (1970, 1, 5, "1970-01-31")]:
+        c.doc(c.add("g02", "last_weekday", {"year": year, "month": month, "dow": dow}), "", want)
 
 
 def _g03_holidays(c):
@@ -2445,6 +2526,21 @@ def _g03_holidays(c):
     c.add("g03", "holiday_on", {"date": "2021-12-31", "flags": on})             # New Year's Day 2022 observed
     c.add("g03", "holiday_on", {"date": "2199-12-31", "flags": on})             # looks at the year 2200
     c.add("g03", "holiday_on", {"date": "2026-02-30", "flags": on})             # invalid_date
+    # Inauguration Day: before 1969 (1965 would fit the four-year cycle), its first year, a year off the cycle.
+    for (year, flags, want) in [(1965, on, False), (1961, on, False), (1969, on, True), (1970, on, False), (2033, on, True),
+                                (2033, {}, False), (2033, {"inauguration_day": 1}, False), (2033, {"other_flag": True}, False),
+                                (2200, on, False)]:
+        cid = c.add("g03", "federal_holidays", {"year": year, "flags": flags})
+        c.calc(cid, "has inauguration", lambda r: len([h for h in r if h["id"] == "inauguration"]) == 1, want)
+    c.known(c.add("g03", "federal_holidays", {"year": 1969, "flags": off}), "0.date", "1969-01-01")
+    c.known(c.add("g03", "holiday_on", {"date": "2033-01-20", "flags": {}}), "", None)                   # a flag that is absent is off
+    c.known(c.add("g03", "holiday_on", {"date": "2033-01-20", "flags": {"inauguration_day": 1}}), "", None)   # only true is on
+    c.known(c.add("g03", "holiday_on", {"date": "2028-01-01", "flags": on}), "", None)                   # observed the day before
+    c.known(c.add("g03", "holiday_on", {"date": "1970-01-01", "flags": on}), "id", "new_year")            # the first valid date
+    c.known(c.add("g03", "holiday_on", {"date": "2027-07-05", "flags": on}), "id", "independence")        # a Sunday holiday, observed on Monday
+    c.known(c.add("g03", "holiday_on", {"date": "2027-07-04", "flags": on}), "", None)
+    for date in [None, 20290120, "1969-12-31", "2200-01-01"]:
+        c.known(c.add("g03", "holiday_on", {"date": date, "flags": on}), "error", "invalid_date")
 
 
 def _g04_day_context(c, fx):
@@ -2481,6 +2577,46 @@ def _g04_day_context(c, fx):
     for dow in (0, 3, 4, 5, 6):
         c.add("g04", "typical_context", {"A": _a(), "dow": dow})
     c.add("g04", "typical_context", {"A": _a({"segments.v_nightlife.dow_factor": [1.0, 1.0, 1.0, 1.0, 2.0]}), "dow": 4})
+    for dow in (1, 2):
+        c.add("g04", "typical_context", {"A": _a(), "dow": dow})
+    # A treat_as value outside the vocabulary changes nothing ("sunday" is not the key "sun"); the date is
+    # parsed like everywhere else.
+    cid = c.add("g04", "day_context", ctx_args("2026-11-26", "sunday"))
+    for (path, want) in [("eff_dow", 3), ("holiday_class", "major"), ("treat_as", "sunday"), ("traffic_dow", 6)]:
+        c.known(cid, path, want)
+    c.add("g04", "day_context", ctx_args("2026-10-08", ""))
+    c.known(c.add("g04", "day_context", ctx_args(None)), "error", "invalid_date")
+    c.known(c.add("g04", "day_context", ctx_args(20261008)), "error", "invalid_date")
+    c.known(c.add("g04", "day_context", ctx_args("2199-12-31")), "dow", 1)      # the last valid date; its holiday search reads the year 2200
+    c.add("g04", "day_context", ctx_args("1970-01-01"))                         # the first valid date: New Year's Day
+    c.add("g04", "day_context", ctx_args("2027-12-31"))                         # New Year's Day 2028, observed in the year before
+    c.add("g04", "day_context", ctx_args("2026-10-11", "holiday"))              # a Sunday as a major holiday
+    c.add("g04", "day_context", ctx_args("2026-10-08", None, [], 0, "owner"))   # an empty forecast list and a price of 0 are handed through
+    c.add("g04", "day_context", ctx_args("2026-11-26", None, None, None, None,
+                                         _a({"segments.w_office.holiday_day_type.major": "weekday",
+                                             "segments.v_nightlife.holiday_day_type.major": "sunday"})))
+    c.add("g04", "day_context", ctx_args("2026-10-10", "holiday", None, None, None,
+                                         _a({"segments.w_office.holiday_day_type.major": "weekday"})))    # "weekday" on a Saturday is saturday
+
+    # make_context itself, with combinations day_context never produces.
+    def mk(date, dow, eff_dow, cls, hol, treat_as, typical, a=None, fuel=None, source=None):
+        return c.add("g04", "make_context", {"A": _a() if a is None else a, "date": date, "dow": dow, "eff_dow": eff_dow, "cls": cls,
+                                             "hol": hol, "treat_as": treat_as, "forecast": None, "fuel_price_per_gal": fuel,
+                                             "fuel_price_source": source, "typical": typical})
+
+    cid = mk("2026-10-08", 3, 3, None, None, None, False)
+    c.known(cid, "day_type.1", "weekday")
+    c.known(cid, "dow_factor.1", 1.08)
+    cid = mk(None, 3, 5, "major", None, None, True)                             # a typical Saturday read as a major holiday
+    c.known(cid, "day_type.1", "sunday")
+    c.known(cid, "traffic_dow", 6)
+    c.known(cid, "typical", True)
+    cid = mk("2026-10-11", 6, 6, "minor", None, "normal", False, None, 4.195, "seed")     # a Sunday with a minor class: "weekday" stays sunday
+    c.known(cid, "day_type.1", "sunday")
+    c.known(cid, "day_type.9", "saturday")
+    c.known(cid, "traffic_dow", 6)
+    mk("2026-10-09", 4, 0, "minor", {"id": "columbus", "name": "Columbus Day", "class": "minor", "date": "2026-10-12", "observed": "2026-10-12"},
+       "mon", False, _a({"segments.w_office.dow_factor": [0.5, 1.0, 1.0, 1.0, 1.0]}))
 
 
 def _g05_curves(c, fx):
@@ -2529,6 +2665,12 @@ def _g06_geometry(c):
         c.doc(c.add("g06", "walk_weight", {"A": _a(), "d": d}), "", want, 9)
     for d in [-1.0, 1199.99, 2500.0, 75.0]:
         c.add("g06", "walk_weight", {"A": _a(), "d": d})
+    # Whole-number arguments (a JSON 39 is a real 39.0) and a distance of exactly the cutoff written as an integer.
+    c.known(hav(39, -77, 39, -77), "", 0.0)
+    hav(39, -77, 38, -78)
+    c.known(c.add("g06", "walk_weight", {"A": _a(), "d": 1200}), "", 0.049787068367863944, 9)
+    c.known(c.add("g06", "walk_weight", {"A": _a(), "d": 1201}), "", 0.0)
+    c.known(c.add("g06", "walk_weight", {"A": _a(), "d": 0}), "", 1.0)
 
 
 def _g07_rivals(c, fx):
@@ -2547,6 +2689,20 @@ def _g07_rivals(c, fx):
                                {"id": "near", "lat": _north(1100.0), "lng": TRUCK_LNG, "kind": "convenience"}])
     for kind in RIVAL_KINDS:
         riv(TRUCK_LAT, TRUCK_LNG, [{"id": "k", "lat": _north(200.0), "lng": TRUCK_LNG, "kind": kind}])
+    # One outlet of every kind at the origin itself (f = 1 exactly): the plain sums of the two weight columns.
+    here = [{"id": "h%d" % k, "lat": TRUCK_LAT, "lng": TRUCK_LNG, "kind": RIVAL_KINDS[k]} for k in range(5)]
+    cid = riv(TRUCK_LAT, TRUCK_LNG, here)
+    c.known(cid, "day", 2.7, 9)
+    c.known(cid, "eve", 3.2, 9)
+    # Ids that sort byte-wise: "" first, digits before capitals before "_" before small letters, "10" before "9";
+    # two outlets under one id keep the order they came in.
+    odd = [("b", 50.0, "full"), ("a", 100.0, "quick"), ("a", 200.0, "bar"), ("A", 300.0, "cafe"), ("", 20.0, "convenience"),
+           ("10", 500.0, "quick"), ("9", 600.0, "full"), ("o_1", 800.0, "bar"), ("o-1", 700.0, "cafe"), ("O1", 900.0, "convenience"),
+           ("o1", 1000.0, "quick"), ("o10", 1100.0, "full"), ("o2", 1150.0, "cafe"), ("~", 1199.0, "bar"), (" ", 1.0, "cafe")]
+    odd_outlets = [{"id": i, "lat": _north(d), "lng": TRUCK_LNG, "kind": kind} for (i, d, kind) in odd]
+    riv(TRUCK_LAT, TRUCK_LNG, odd_outlets)
+    riv(TRUCK_LAT, TRUCK_LNG, odd_outlets[7:] + odd_outlets[:7])
+    riv(39, -77, [{"id": "c", "lat": 39, "lng": -77, "kind": "quick"}, {"id": "d", "lat": 39, "lng": -77, "kind": "bar"}])     # whole-number coordinates
 
 
 def _g08_capture(c, fx):
@@ -2648,6 +2804,74 @@ def _g08_capture(c, fx):
     match(_terms(host=linked), fx.vec_pw1_linked, True)
     match(_terms(host=linked), fx.vec_pw1_unlinked, False)
     match(_terms(host=fx.tap_host), _stored(fx.zero), True)                     # stored vectors compare the same way
+    # Each part of the comparison on its own: the segment, the amount (as doubles: 600 equals 600.0), the
+    # number of ids, their order.
+    match(_terms(host=fx.office_host), _zero_vectors(exclusion={"point_ids": [], "segment": "w_public", "amount": 600.0}), False)
+    match(_terms(host=_host("w_office", 600)), _zero_vectors(exclusion={"point_ids": [], "segment": "w_office", "amount": 600.0}), True)
+    match(_terms(host=_host("w_office", 0.1 + 0.2)), _zero_vectors(exclusion={"point_ids": [], "segment": "w_office", "amount": 0.3}), False)
+    match(_terms(host=linked), _zero_vectors(exclusion={"point_ids": ["pw1", "pw2"], "segment": None, "amount": 0.0}), False)
+    match(_terms(), _zero_vectors(exclusion={"point_ids": ["pw1"], "segment": None, "amount": 0.0}), False)
+    match(_terms(host=_host("v_campus", 600.0)), _zero_vectors(exclusion={"point_ids": [], "segment": None, "amount": 600.0}), False)
+    match(_terms(host=_host("w_office", 0.0)), _zero_vectors(), False)          # a worker host of size 0 still names its segment
+    match(_terms(host=_host("res", 40.0, point_id="b7")), _zero_vectors(exclusion={"point_ids": ["b7"], "segment": "res", "amount": 40.0}), True)
+    match(_terms(visibility="hidden"), _zero_vectors("hidden"), True)
+
+    # A segment to take from but nothing to take; excluded ids that no point has; an amount below zero.
+    for (exclusion, taken, within) in [({"point_ids": [], "segment": "w_office", "amount": 0.0}, 0.0, 2000.0),
+                                       ({"point_ids": [], "segment": "w_office", "amount": -50.0}, 0.0, 2000.0),
+                                       ({"point_ids": ["nowhere", "b3", "b3"], "segment": None, "amount": 75.0}, 0.0, 1750.0),
+                                       ({"point_ids": [], "segment": "w_office", "amount": 250.0}, 250.0, 1750.0),
+                                       ({"point_ids": [], "segment": "w_office", "amount": 250.5}, 250.5, 1749.5)]:
+        cid = cap(TRUCK_LAT, TRUCK_LNG, "normal", fx.sources, fx.outlets, exclusion)
+        c.known(cid, "excluded_amount", taken)
+        c.known(cid, "within.1", within)
+    # Points on either side of the exclusion radius (250 m) and of the cutoff, and one at the truck itself.
+    ring = [{"id": "e249", "lat": _north(249.9), "lng": TRUCK_LNG, "base": _base(w_office=100.0), "rivals": {"day": 0.0, "eve": 0.0}},
+            {"id": "e251", "lat": _north(-250.1), "lng": TRUCK_LNG, "base": _base(w_office=100.0), "rivals": {"day": 0.0, "eve": 0.0}},
+            {"id": "c1199", "lat": _north(1199.9), "lng": TRUCK_LNG, "base": _base(w_office=100.0), "rivals": {"day": 0.0, "eve": 0.0}},
+            {"id": "c1201", "lat": _north(-1200.1), "lng": TRUCK_LNG, "base": _base(w_office=100.0), "rivals": {"day": 0.0, "eve": 0.0}},
+            {"id": "z", "lat": TRUCK_LAT, "lng": TRUCK_LNG, "base": _base(w_office=7.0), "rivals": {"day": 0.0, "eve": 0.0}}]
+    cid = cap(TRUCK_LAT, TRUCK_LNG, "normal", ring, [], {"point_ids": [], "segment": "w_office", "amount": 500.0})
+    c.known(cid, "excluded_amount", 107.0)                                      # z and e249; e251 is beyond the radius
+    c.known(cid, "points_used", 4)
+    c.known(cid, "within.1", 200.0)
+    # Two points under one id are both removed by point_ids and both give to an exclusion, in the order they came.
+    dup = [{"id": "s", "lat": _north(100.0), "lng": TRUCK_LNG, "base": _base(w_office=100.0), "rivals": {"day": 0.1, "eve": 0.2}},
+           {"id": "s", "lat": _north(120.0), "lng": TRUCK_LNG, "base": _base(w_office=200.0), "rivals": {"day": 0.3, "eve": 0.4}},
+           {"id": "S", "lat": _north(50.0), "lng": TRUCK_LNG, "base": _base(res=50.0, w_office=10.0), "rivals": {"day": 0.5, "eve": 0.6}},
+           {"id": "r", "lat": _north(-100.0), "lng": TRUCK_LNG, "base": _base(w_office=300.0, v_campus=5.0), "rivals": {"day": 0.0, "eve": 0.9}}]
+    cap(TRUCK_LAT, TRUCK_LNG, "normal", dup, [], _no_exclusion())
+    cap(TRUCK_LAT, TRUCK_LNG, "normal", list(reversed(dup)), [], _no_exclusion())
+    c.known(cap(TRUCK_LAT, TRUCK_LNG, "normal", dup, [], {"point_ids": ["s"], "segment": None, "amount": 0.0}), "points_used", 2)
+    cid = cap(TRUCK_LAT, TRUCK_LNG, "prominent", dup, [], {"point_ids": [], "segment": "w_office", "amount": 360.0})
+    c.known(cid, "excluded_amount", 360.0)                                      # S (50 m) 10, r and the first s (both 100 m, "r" < "s") 300 and 50
+    c.known(cid, "within.1", 250.0)
+    # Whole-number coordinates, bases and rivals.
+    cap(39, -77, "normal", [{"id": "i", "lat": 39, "lng": -77, "base": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], "rivals": {"day": 1, "eve": 2}}],
+        [{"id": "o", "lat": 39, "lng": -77, "kind": "bar"}], {"point_ids": [], "segment": "w_health", "amount": 2})
+    # The order of the sums. Three points at the truck itself (f = 1 exactly) with rivals 1.4, so each share
+    # is exactly 0.25; two of the bases cancel (not a real neighbourhood: it makes the order of addition
+    # visible). In ascending id the two large ones cancel first and the small one survives; in the order
+    # given here, or in descending id, the small one would be absorbed and lost.
+    order = [{"id": "k3", "lat": TRUCK_LAT, "lng": TRUCK_LNG, "base": _base(res=1.0), "rivals": {"day": 1.4, "eve": 1.4}},
+             {"id": "k2", "lat": TRUCK_LAT, "lng": TRUCK_LNG, "base": _base(res=-1.0e16), "rivals": {"day": 1.4, "eve": 1.4}},
+             {"id": "k1", "lat": TRUCK_LAT, "lng": TRUCK_LNG, "base": _base(res=1.0e16), "rivals": {"day": 1.4, "eve": 1.4}}]
+    cid = cap(TRUCK_LAT, TRUCK_LNG, "normal", order, [], _no_exclusion())
+    c.known(cid, "capture.day.0", 0.25)
+    c.known(cid, "capture.eve.0", 0.25)
+    c.known(cid, "nearby.0", 1.0)
+    c.known(cid, "within.0", 1.0)
+
+    c.known(c.add("g08", "host_exclusion", {"A": _a(), "host": _host("w_public", 0.0)}), "segment", "w_public")
+    c.known(c.add("g08", "host_exclusion", {"A": _a(), "host": _host("v_events", 80.0, point_id="")}), "point_ids.0", "")   # an empty id is an id
+    link([{"id": "n3", "lat": _north(74.9), "lng": TRUCK_LNG, "base": _base(v_nightlife=1.0), "rivals": {"day": 0.0, "eve": 0.0}},
+          {"id": "n4", "lat": _north(75.1), "lng": TRUCK_LNG, "base": _base(v_nightlife=1.0), "rivals": {"day": 0.0, "eve": 0.0}},
+          {"id": "n0", "lat": _north(1.0), "lng": TRUCK_LNG, "base": _base(v_nightlife=0.0), "rivals": {"day": 0.0, "eve": 0.0}},
+          {"id": "n1", "lat": _north(2.0), "lng": TRUCK_LNG, "base": _base(v_nightlife=-1.0), "rivals": {"day": 0.0, "eve": 0.0}}],
+         fx.tap_host)                                                           # a base of 0 or less does not hold the segment; 75.1 m is too far
+    link([{"id": "w", "lat": TRUCK_LAT, "lng": TRUCK_LNG - 0.0005, "base": _base(res=1.0), "rivals": {"day": 0.0, "eve": 0.0}},
+          {"id": "e", "lat": TRUCK_LAT, "lng": TRUCK_LNG + 0.0005, "base": _base(res=1.0), "rivals": {"day": 0.0, "eve": 0.0}}],
+         _host("res", 10.0))                                                    # east and west at the same distance: the smaller id
 
 
 def _g09_host(c, fx):
@@ -2676,6 +2900,18 @@ def _g09_host(c, fx):
     hc(fx.tap_host, "normal", none, _a({"host.captive_share": 0.6}))
     hc(_host("v_nightlife", 120.0, only_food=False), "normal", none, _a({"host.shared_kitchen_share": 0.2}))
     hc(_host("w_office", 600.0, only_food=False), "normal", fx.vec["rivals"], _a({"host.onsite_kitchen_weight": 4.0}))
+    cid = hc(_host("v_nightlife", -5.0), "normal", none)                        # a size below zero is no host
+    c.known(cid, "mode", None)
+    c.known(cid, "eve", 0.0)
+    cid = hc(_host("res", 500), "hidden", {"day": 0, "eve": 3})                 # whole-number size and rivals
+    c.known(cid, "share.day", 0.6 / (1.6 + 0.6 + 0.0 + 0.0), 9)
+    c.known(cid, "share.eve", 0.6 / (1.6 + 0.6 + 3.0 + 0.0), 9)
+    # Every segment once as an open-table host with a kitchen and as the only food: the two captive ones
+    # (v_nightlife, v_events) take the flat shares, the fourteen others the kernel at distance zero.
+    for s in range(NSEG):
+        for only_food in (True, False):
+            cid = hc(_host(SEGMENTS[s], 77.0, only_food=only_food), "prominent", {"day": 0.4, "eve": 2.2})
+            c.known(cid, "mode", "captive" if SEGMENTS[s] in ("v_nightlife", "v_events") else "open")
 
 
 def _g10_weather(c, fx):
@@ -2732,6 +2968,43 @@ def _g10_weather(c, fx):
        _a({"weather.temperature_bands.rows.50_59.open": 0.8, "weather.precip_classes.rows.rain.open": 0.7}))
     wx(_fc(12, 50, None, "Light Rain Likely", 22), "open",
        _a({"weather.pop_when_missing": 0.9, "weather.wind_bands.rows.windy.open": 0.5}))
+    # Values that are present but empty or zero are not "missing": a text of "", 0 degrees, 0 mph, 0 %.
+    for setting in ("open", "captive"):
+        cid = wx(_fc(12, None, None, "", None), setting)
+        for (path, want) in [("missing", False), ("precip_class", "dry"), ("precip_p", 0.0), ("temp_band", None), ("multiplier", 1.0)]:
+            c.known(cid, path, want)
+    cid = wx(_fc(12, 0, None, None, None), "open")
+    c.known(cid, "temp_band", "below_20")
+    c.known(cid, "missing", False)
+    cid = wx(_fc(12, None, 0, None, None), "open")                              # only a probability, of zero
+    c.known(cid, "missing", False)
+    c.known(cid, "multiplier", 1.0)
+    c.known(wx(_fc(12, None, None, None, 0), "captive"), "wind_band", "calm")
+    wx(_fc(12, None, 100, None, None), "open")                                  # only a probability: no text, so dry
+    wx(_fc(12, 0, 0, "", 0), "open")
+    # The needles are plain substrings: "rain" is found inside "Brainerd Fog" and "ice storm" needs both words.
+    for (text, want) in [("Brainerd Fog", "rain"), ("Ice", "dry"), ("Icy Roads", "dry"), ("Ice Storm Warning", "ice"),
+                         ("Storm", "dry"), ("Dust Storm", "dry"), ("T-Storms Likely", "storm"), ("Tstorms", "storm"),
+                         ("Heavyrain", "rain"), ("Heavy  Rain", "rain"), ("Showery", "rain"), ("Light Snow", "snow"),
+                         ("Freezing Drizzle Then Light Rain", "ice"), ("Rain Then Heavy Snow", "heavy_snow"),
+                         ("Hurricane Conditions", "storm"), ("Tornado Watch", "storm"), ("Ice Pellets", "ice"),
+                         ("Sprinkles", "light_rain"), ("RA\U00000130N", "dry"), ("\U0000017fNOW", "dry"),
+                         ("Rain \U0001f327", "rain"), ("\U000096e8", "dry")]:
+        c.known(wx(_fc(12, None, 60, text, None), "open"), "precip_class", want)
+    # Probabilities and temperatures with a fraction; the probability clamps just outside 0..100.
+    for (prob, want) in [(99.5, 0.995), (100.0001, 1.0), (-0.0001, 0.0), (0.5, 0.005), (33.3333, 0.333333)]:
+        c.known(wx(_fc(12, None, prob, "Rain", None), "captive"), "precip_p", want, 9)
+    for (temp, band) in [(19.999999, "below_20"), (31.999, "20_31"), (59.999999999, "50_59"), (79.5, "60_79"), (94.99, "90_94")]:
+        c.known(wx(_fc(12, temp, None, None, None), "captive"), "temp_band", band)
+    for (wind, band) in [(19.999, "calm"), (29.5, "windy"), (30.0001, "very_windy")]:
+        c.known(wx(_fc(12, None, None, None, wind), "open"), "wind_band", band)
+    wx(_fc(12, 70, 80, "Sunny", 0), "open", _a({"weather.precip_classes.rows.dry.open": 0.5}))       # the dry row is read, the probability is not
+    cid = wx(_fc(12, 70, 0, "Sunny", 0), "open", _a({"weather.floor": 1}))                           # a floor equal to the product
+    c.known(cid, "multiplier", 1.0)
+    cid = wx(_fc(12, 15, 100, "Blizzard", 40), "open", _a({"weather.floor": 0}))                     # no floor at all
+    c.known(cid, "multiplier", 0.4 * 0.25 * 0.6, 9)
+    wx(_fc(12, 70, None, "Rain", 0), "open", _a({"weather.pop_when_missing": 0}))
+    wx(_fc(12, 70, None, "Rain", 0), "captive", _a({"weather.pop_when_missing": 1}))
 
 
 def _g11_hourly(c, fx):
@@ -2785,6 +3058,39 @@ def _g11_hourly(c, fx):
     hour(fx.terms_open, fx.vec_mix, fx.sun, 23)
     a_over = _a({"segments.w_office.intent.weekday": [0.0] * 11 + [0.1, 0.2, 0.1] + [0.0] * 10, "host.captive_share": 0.6})
     hour(_terms(host=fx.tap_host), fx.vec, day_context(_assume(a_over), "2026-10-08", None, None, None, None), 12, None, None, a_over)
+    # A host of size 0 or less is no host: no host row, and its default size does not count.
+    for size in (0.0, -10.0):
+        cid = hour(_terms(host=_host("v_nightlife", size, "default")), fx.vec, fx.thu, 12)
+        c.known(cid, "host", None)
+        c.known(cid, "default_size_part", 0.0)
+        c.known(cid, "orders", 29.436015, 6)
+    # Demand exactly equal to capacity is not capped; one part in 10^9 less capacity is.
+    exact = hourly_orders(fx.A, fx.profile, fx.terms_tap, fx.zero, None, fx.thu, 18)["demand_adj"]
+    cid = hour(fx.terms_tap, fx.zero, fx.thu, 18, _profile(capacity_orders_per_hour=exact))
+    c.known(cid, "capped", False)
+    c.known(cid, "host.orders", exact)
+    cid = hour(fx.terms_tap, fx.zero, fx.thu, 18, _profile(capacity_orders_per_hour=exact * (1.0 - 1e-9)))
+    c.known(cid, "capped", True)
+    # Spot ids are plain map keys: an id that names a member of every object ("toString", "constructor",
+    # "__proto__") has no factor unless the log holds it; digits are not numbers ("12", "012", "1e1").
+    odd_cal = dict(fx.cal, spots=dict(fx.cal["spots"]))
+    for (k, spot_id) in enumerate(["12", "0", "007", "", "__proto__", "1e1", "-1", "1.0"]):
+        odd_cal["spots"][spot_id] = {"factor": 1.5 + 0.25 * k, "log_factor": 0.1 * (k + 1), "n": k + 1, "weight": 0.5 * (k + 1)}
+    for (spot_id, want) in [("12", 1.5), ("", 2.25), ("__proto__", 2.5), ("012", 1.0), ("toString", 1.0)]:
+        cid = hour(_terms(spot_id=spot_id), fx.vec, fx.thu, 12, None, odd_cal)
+        c.known(cid, "factors.spot_factor", want)
+        c.known(cid, "factors.truck_factor", fx.cal["truck_factor"])
+    # Every clock hour of a wet day with a host of each mode (the two weather tables side by side), a
+    # forecast that leaves out fields, and hours whose record is absent.
+    wet_all = _forecast([_fc(h, 30 + 3 * h, 5 * h, ["Sunny", "Rain", "Snow", "Thunderstorms", None][h % 5], 2 * h) for h in range(0, 24, 2)])
+    wet_day = day_context(fx.A, "2026-10-08", None, wet_all, None, None)
+    for h in (0, 6, 12, 16, 23):
+        hour(_terms(host=_host("v_nightlife", 60.0)), fx.vec_mix, wet_day, h)
+        hour(_terms(host=_host("v_shopping", 60.0, only_food=False)), fx.vec_mix, wet_day, h)
+    hour(fx.terms_open, fx.vec_mix, day_context(fx.A, "2026-10-08", None, [None] * 24, None, None), 12)
+    hour(fx.terms_open, fx.vec_mix, day_context(fx.A, "2026-10-08", None, _forecast([_fc(12, None, None, None, None)]), None, None), 12)
+    hour(_terms(spot_id="A"), fx.vec, typical_context(fx.A, 5), 12, _profile(capacity_orders_per_hour=10), fx.cal)       # a whole-number capacity
+    hour(fx.terms_open, fx.vec, fx.thu, 12, _profile(daypart_fit={"breakfast": 0, "lunch": 1, "dinner": 1, "late": 0}))  # whole-number fits
 
 
 def _g12_window(c, fx):
@@ -2868,6 +3174,48 @@ def _g12_window(c, fx):
     win(fx.terms_open, fx.vec, fx.thu, None, -60, 120)                          # invalid_window
     win(fx.terms_open, fx.vec, fx.thu, fx.fri, 1380, 2940)                      # invalid_window
     win(fx.terms_tap, fx.zero, fx.fri, None, 1290, 1500)                        # missing_context
+    # The ends of the allowed range, one minute either side of midnight, and where the next day's context
+    # is needed: a window that ends at 1440 or is empty at 1440 does not need it, one minute more does.
+    mix_tap = _terms(host=_host("v_nightlife", 90.0, "default"))
+    cid = win(mix_tap, fx.vec_mix, fx.thu, fx.fri, 1380, 1500)                  # the last hour of Thursday and the first of Friday
+    c.known(cid, "minutes", 120)
+    c.calc(cid, "day indexes", lambda r: [h["day_index"] for h in r["hours"]], [0, 1])
+    c.calc(cid, "date of the hour after midnight", lambda r: r["hours"][1]["result"]["date"], "2026-10-09")
+    cid = win(mix_tap, fx.vec_mix, fx.thu, fx.fri, 1439, 1441)                  # one minute of Thursday, one of Friday
+    c.calc(cid, "hours and fractions", lambda r: [[h["day_index"], h["hour"]] for h in r["hours"]], [[0, 23], [1, 0]])
+    c.known(cid, "hours.0.fraction", 1.0 / 60.0, 9)
+    cid = win(mix_tap, fx.vec_mix, fx.thu, None, 1380, 1440)                    # ends at midnight: no next context needed
+    c.calc(cid, "number of hours", lambda r: len(r["hours"]), 1)
+    cid = win(mix_tap, fx.vec_mix, fx.thu, None, 1440, 1440)                    # empty, at midnight
+    c.known(cid, "hours", [])
+    c.known(cid, "orders.value", 0.0)
+    c.known(win(mix_tap, fx.vec_mix, fx.thu, None, 1439, 1441), "error", "missing_context")
+    c.known(win(mix_tap, fx.vec_mix, fx.thu, None, 1440, 1441), "error", "missing_context")
+    c.known(win(mix_tap, fx.vec_mix, fx.thu, fx.fri, 2880, 2880), "minutes", 0)
+    c.known(win(mix_tap, fx.vec_mix, fx.thu, fx.fri, 0, 0), "capped_hours", 0)
+    c.known(win(mix_tap, fx.vec_mix, fx.thu, fx.fri, 0, 1), "hours.0.fraction", 1.0 / 60.0, 9)
+    for (o, cl_) in [(-1, 0), (0, 2881), (2881, 2881), (-5, -5), (1441, 1440)]:
+        c.known(win(mix_tap, fx.vec_mix, fx.thu, fx.fri, o, cl_), "error", "invalid_window")
+    c.known(win(mix_tap, fx.vec_mix, fx.thu, None, 1500, 1440), "error", "invalid_window")      # the window is checked before the context
+    # A dated day running into a typical one and the reverse: each hour takes the weather rule of its own context.
+    wet = day_context(fx.A, "2026-10-08", None, _forecast([_fc(h, 45, 80, "Rain", 22) for h in range(24)]), None, None)
+    cid = win(fx.terms_tap, fx.zero, wet, typical_context(fx.A, 4), 1320, 1560)
+    c.calc(cid, "weather states", lambda r: [h["result"]["factors"]["weather_state"] for h in r["hours"]], ["forecast", "forecast", "typical", "typical"])
+    cid = win(fx.terms_tap, fx.zero, typical_context(fx.A, 2), wet, 1320, 1560)
+    c.calc(cid, "weather states", lambda r: [h["result"]["factors"]["weather_state"] for h in r["hours"]], ["typical", "typical", "forecast", "forecast"])
+    c.calc(cid, "date", lambda r: r["date"], None)
+    # No capacity at all; every hour capped; a spot the log does not hold; default host size on a weak seed.
+    cid = win(fx.terms_open, fx.vec, fx.thu, None, 660, 840, _profile(capacity_orders_per_hour=0.0))
+    c.known(cid, "orders.value", 0.0)
+    c.known(cid, "orders.high", 0.0)
+    c.known(cid, "capped_hours", 3)
+    win(_terms(spot_id="not-logged"), fx.vec, fx.thu, None, 660, 840, None, fx.cal)
+    cid = win(_terms(host=_host("v_campus", 500.0, "default", False)), fx.vec_campus, fx.thu, None, 600, 900)
+    c.known(cid, "evidence.weak_share", 1.0, 9)
+    c.known(cid, "orders.confidence", "very_rough")
+    cid = win(_terms(host=_host("v_nightlife", 40.0, "default")), fx.vec, fx.thu, None, 420, 600)       # the host is there but nobody is in it
+    c.known(cid, "host_orders", 0.0)
+    c.known(cid, "evidence.default_size_share", 0.0)
 
 
 def _g13_week(c, fx):
@@ -2908,6 +3256,28 @@ def _g13_week(c, fx):
     best([2.0, 3.0, 4.0], 1, 0, False)                                          # top_n 0
     best([0.0000002, 0.0000002, 4.0, 0.0], 2, 3, False)                         # a total that rounds to zero millionths
     best(tap_strip, 3, 2, True, [h // 24 != 5 for h in range(168)])             # never on a Saturday
+    c.known(best([], 1, 1, False), "", [])                                      # nothing to choose from
+    c.known(best([], 1, 1, True), "", [])
+    c.known(best([7.0], 1, 3, True), "", [{"start": 0, "length": 1, "total": 7.0}])
+    c.known(best([2.0, 3.0, 4.0], 2, 3, True, [False, False, False]), "", [])   # everything masked
+    cid = best([2.0] * 9, 2, 9, True)                                           # nine equal windows on a circle: every second start, then nothing fits
+    c.calc(cid, "starts", lambda r: [w["start"] for w in r], [0, 2, 4, 6])
+    cid = best([2.0] * 9, 2, 9, False)
+    c.calc(cid, "starts", lambda r: [w["start"] for w in r], [0, 2, 4, 6])
+    cid = best([5.00000001, 5.00000002, 5.0, 4.99999999], 1, 4, False)          # equal in whole millionths: the earlier start, not the larger value
+    c.calc(cid, "starts", lambda r: [w["start"] for w in r], [0, 1, 2, 3])
+    cid = best([1.0000001, 1.0000004, 1.0000006, 1.0000016], 1, 4, False)       # keys 1000000, 1000000, 1000001, 1000002
+    c.calc(cid, "starts", lambda r: [w["start"] for w in r], [3, 2, 0, 1])
+    cid = best([0.0000004, 0.0000006, 0.0000014], 1, 3, False)                  # keys 0, 1, 1: the first is never returned
+    c.calc(cid, "starts", lambda r: [w["start"] for w in r], [1, 2])
+    cid = best([1, 2, 3, 2, 1], 2, 2, False)                                    # whole numbers
+    c.calc(cid, "starts and totals", lambda r: [[w["start"], w["total"]] for w in r], [[1, 5.0], [3, 3.0]])
+    cid = best([3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0, 5.0, 3.0, 5.0, 8.0], 5, 3, True)       # the second window wraps; a third does not fit
+    c.calc(cid, "starts", lambda r: [w["start"] for w in r], [4, 10])
+    cid = best([3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0, 5.0, 3.0, 5.0, 8.0], 11, 2, True)      # one index short of the whole circle
+    c.calc(cid, "number of windows", lambda r: len(r), 1)
+    strip(_terms(spot_id="toString"), fx.vec_mix, None, fx.cal)                 # an id the log does not hold: truck factor only
+    strip(fx.terms_open, fx.vec_mix, _profile(capacity_orders_per_hour=0), None)
 
 
 def _g14_ranges(c, fx):
@@ -2989,6 +3359,64 @@ def _g14_ranges(c, fx):
     c.add("g14", "evidence_from", {"cal": fx.cal, "spot_id": "B"})
     c.add("g14", "evidence_from", {"cal": fx.cal, "spot_id": "not-logged"})
     c.add("g14", "evidence_from", {"cal": fx.cal, "spot_id": None})
+    # A count so small that the 90th percentile of the log-normal falls below its mean: high is the mean.
+    for mean in (0.0001, 0.000000001):
+        cid = inter(mean, _evidence())
+        c.known(cid, "0.high", mean)
+        c.known(cid, "0.value", mean)
+    cid = inter(0.0001, _evidence(event=True))
+    c.known(cid, "0.high", 0.0001)
+    c.known(cid, "0.confidence", "very_rough")
+    # A logged residual spread of exactly 0.0 is a spread, not "no spread": it is blended with the prior.
+    cid = inter(60.0, _evidence(truck_weight=10.0, spot_weight=5.0, resid_sd=0.0, resid_weight=9.0))
+    c.known(cid, "1.v_day", 6.0 * 0.04 / 15.0, 9)
+    cid = inter(60.0, _evidence(resid_sd=0.5, resid_weight=0.0))                # a spread with no weight behind it: the prior
+    c.known(cid, "1.v_day", 0.04, 9)
+    inter(60.0, _evidence(weak_share=0.5, default_size_share=0.5, event=True))  # every part at once
+    inter(60, _evidence(truck_weight=4, spot_weight=3))                         # whole numbers
+    cid = inter(0.0, _evidence(fixed=True))
+    c.known(cid, "0.confidence", "fixed")
+    c.known(cid, "0.high", 0.0)
+    cid = inter(-7.5, _evidence(fixed=True))                                    # a fixed amount is handed through, below zero too
+    c.known(cid, "0.value", -7.5)
+    c.known(cid, "0.low", -7.5)
+    cid = capped([0.0, 0.0], [45.0, 45.0], _evidence(fixed=True))
+    c.known(cid, "0.confidence", "fixed")
+    c.known(cid, "0.value", 0.0)
+    cid = capped([30.0], [30.0], _evidence())                                   # one hour, demand equal to capacity
+    c.known(cid, "0.value", 30.0)
+    c.known(cid, "0.high", 30.0)
+    cid = capped([5.0, 0.0, 5.0], [0.0, 45.0, 45.0], _evidence())               # an hour with no capacity, an hour with no demand
+    c.known(cid, "0.value", 5.0)
+    capped([0.0001, 0.0001], [45.0, 45.0], _evidence())                         # high held at the mean inside interval
+    capped([10, 20], [45, 45], _evidence())                                     # whole numbers
+    # Lists are added from the first item on: the small items survive only in this order.
+    cancel = [{"value": x, "low": x, "high": x, "confidence": label}
+              for (x, label) in [(1.0e16, "fair"), (1.0, "good"), (-1.0e16, "rough"), (1.0, "fixed")]]
+    cid = c.add("g14", "est_sum", {"estimates": cancel})
+    c.known(cid, "value", 1.0)
+    c.known(cid, "low", 1.0)
+    c.known(cid, "high", 1.0)
+    c.known(cid, "confidence", "rough")
+    c.known(c.add("g14", "est_sum", {"estimates": list(reversed(cancel))}), "value", 0.0)
+    c.add("g14", "est_sum", {"estimates": [{"value": 1, "low": 0, "high": 2, "confidence": "good"}, {"value": 2, "low": 1, "high": 3, "confidence": "good"}]})
+    for (v, l, h, low, high) in [(2.0, 3.0, 1.0, 1.0, 3.0), (2.0, 1.0, 3.0, 1.0, 3.0), (3.0, 2.0, 1.0, 1.0, 3.0), (1.0, 2.0, 3.0, 1.0, 3.0),
+                                 (1.0, 3.0, 2.0, 1.0, 3.0), (3.0, 1.0, 2.0, 1.0, 3.0), (-1.0, -2.0, -3.0, -3.0, -1.0), (5, 5, 5, 5, 5)]:
+        cid = c.add("g14", "est_levels", {"v": v, "l": l, "h": h, "c": "fair"})
+        c.known(cid, "low", low)
+        c.known(cid, "high", high)
+        c.known(cid, "value", v)
+    c.known(c.add("g14", "est_fixed", {"x": 0}), "confidence", "fixed")
+    c.known(c.add("g14", "est_fixed", {"x": -3.25}), "low", -3.25)
+    c.known(c.add("g14", "weakest", {"labels": ["fixed"]}), "", "fixed")
+    c.known(c.add("g14", "weakest", {"labels": ["rough", "rough"]}), "", "rough")
+    c.known(c.add("g14", "weakest", {"labels": ["good", "very_rough", "fixed", "very_rough"]}), "", "very_rough")
+    odd_cal = dict(fx.cal, spots=dict(fx.cal["spots"]))
+    for (k, spot_id) in enumerate(["12", "0", "", "__proto__"]):
+        odd_cal["spots"][spot_id] = {"factor": 1.5, "log_factor": 0.4, "n": 2, "weight": 0.5 * (k + 1)}
+    for (spot_id, want) in [("12", 0.5), ("0", 1.0), ("", 1.5), ("__proto__", 2.0), ("toString", 0.0), ("constructor", 0.0), ("012", 0.0), ("1", 0.0)]:
+        c.known(c.add("g14", "evidence_from", {"cal": odd_cal, "spot_id": spot_id}), "spot_weight", want)
+    c.known(c.add("g14", "evidence_from", {"cal": calibrate(fx.A, [], "2026-10-04"), "spot_id": "A"}), "resid_sd", None)
 
 
 def _g15_money(c, fx):
@@ -3054,6 +3482,40 @@ def _g15_money(c, fx):
     tolled["office>taproom"] = _fixed_leg(10, 4.85, 1.25)
     unpaid = [stops[0], dict(stops[1], gap_before_unpaid=True)]
     c.add("g15", "day_costs", {"profile": P, "timeline": build_timeline(fx.A, P, fx.thu, unpaid, tolled), "fuel_price_per_gal": FUEL})
+    # A unit margin of exactly zero never breaks even: at the minimum fee, and once the percentage is paid.
+    even = _profile(avg_ticket=10.0, food_cost_pct=0.5, card_share=0.0, packaging_per_order=5.0)
+    c.known(c.add("g15", "unit_margins", {"profile": even, "terms": fx.terms_open}), "at_minimum", 0.0)
+    c.known(c.add("g15", "break_even_orders", {"profile": even, "terms": fx.terms_open, "fixed_costs": 100.0}), "", None)
+    half = _profile(avg_ticket=10.0, food_cost_pct=0.0, card_share=0.0, packaging_per_order=5.0)
+    half_terms = _terms(fee_flat=10.0, fee_pct=0.5)
+    cid = c.add("g15", "unit_margins", {"profile": half, "terms": half_terms})
+    c.known(cid, "at_minimum", 5.0)
+    c.known(cid, "at_percentage", 0.0)
+    c.known(c.add("g15", "break_even_orders", {"profile": half, "terms": half_terms, "fixed_costs": 100.0}), "", None)
+    # The minimum fee is still what is paid exactly where flat + percentage reaches it (25 orders of $10 at 20 %).
+    edge_terms = _terms(fee_pct=0.2, fee_min=50.0)
+    c.known(c.add("g15", "break_even_orders", {"profile": half, "terms": edge_terms, "fixed_costs": 75.0}), "", 25.0)
+    c.known(c.add("g15", "break_even_orders", {"profile": half, "terms": edge_terms, "fixed_costs": 78.0}), "", 26.0)   # one order on: 78 / (5 - 2)
+    c.known(c.add("g15", "break_even_orders", {"profile": half, "terms": _terms(fee_flat=30.0), "fixed_costs": -100.0}), "", 0.0)   # never below zero, with a flat fee too
+    for (orders, fee_paid) in [(0.0, 50.0), (25.0, 50.0), (25.5, 51.0), (0, 50.0)]:
+        cid = c.add("g15", "stop_money_at", {"profile": half, "terms": edge_terms, "orders": orders})
+        c.known(cid, "spot_fee", fee_paid)
+        c.known(cid, "contribution", orders * 10.0 - orders * 5.0 - fee_paid)
+    cid = c.add("g15", "stop_money_at", {"profile": _profile(card_share=0.0, tips_include=True), "terms": fx.terms_open, "orders": 10.0})
+    c.known(cid, "card_fees", 0.0)                                              # nobody pays by card: no card fees and no tips
+    c.known(cid, "tips", 0.0)
+    c.add("g15", "stop_money_at", {"profile": _profile(avg_ticket=15, packaging_per_order=1, card_share=1, card_fee_fixed=0, food_cost_pct=0),
+                                   "terms": _terms(fee_flat=50, fee_pct=0, fee_min=75), "orders": 12})       # whole numbers throughout
+    # Orders that fall as the range rises: low above high before est_levels, in every line, with a fee.
+    c.add("g15", "stop_money", {"profile": lossy, "terms": _terms(fee_pct=0.1, fee_min=20.0), "orders": {"value": 30.0, "low": 12.0, "high": 55.0, "confidence": "fair"}})
+    c.add("g15", "stop_money", {"profile": P, "terms": fee, "orders": {"value": 10, "low": 10, "high": 10, "confidence": "fixed"}})
+    # Day costs: a fuel price of zero and a whole-number price; nothing paid for an empty day but the fuel line still multiplies.
+    cid = c.add("g15", "day_costs", {"profile": P, "timeline": two, "fuel_price_per_gal": 0})
+    c.known(cid, "fuel", 0.0)
+    c.add("g15", "day_costs", {"profile": P, "timeline": two, "fuel_price_per_gal": 5})
+    cid = c.add("g15", "day_costs", {"profile": _profile(fixed_cost_per_service_day=85.0, paid_crew=3), "timeline": build_timeline(fx.A, P, fx.thu, [], fx.legs),
+                                     "fuel_price_per_gal": 0.0})
+    c.known(cid, "total", 0.0)
 
 
 def _g16_driving(c, fx):
@@ -3124,6 +3586,40 @@ def _g16_driving(c, fx):
     minutes(leg, thu_none, 1030, None, none)
     minutes(google, fx.thu, 1030, _profile(truck_time_factor=1.0))
     minutes(dict(google, toll=6.25), fx.sat, 780)
+    # Whole days before and after the service date: the real day of the week, also through a week's end
+    # and under a holiday's traffic row. Minute 10080 is the same weekday a week later.
+    mon = fx.ctx["2026-10-05"]
+    for (ctx, minute, want) in [(mon, -1440, [None, 6, 0]), (mon, -1441, [None, 5, 23]), (mon, -2881, [None, 4, 23]),
+                                (fx.sun, 2879, [None, 0, 23]), (fx.sun, 2880, [None, 1, 0]), (fx.thu, 10080, [None, 3, 0]),
+                                (fx.thu, -10080, [None, 3, 0]), (thanksgiving, 0, [None, 6, 0]), (thanksgiving, 1439, [None, 6, 23]),
+                                (thanksgiving, 1440, [None, 4, 0]), (thanksgiving, -1, [None, 2, 23]), (thanksgiving, 10080, [None, 3, 0]),
+                                (fx.thu, 59, [None, 3, 0]), (fx.thu, 60, [None, 3, 1])]:
+        cid = factor(ctx, minute)
+        c.known(cid, "1", want[1])
+        c.known(cid, "2", want[2])
+    factor(typical_context(A, 6), 1440)                                         # a typical Sunday runs into Monday
+    # Halves round away from zero. Monday 10:00 in the dc matrix is exactly 1.25, so with a truck factor
+    # of 1 a free-flow leg of 120 s is 2.5 minutes and one of 360 s is 7.5.
+    plain = _profile(truck_time_factor=1.0)
+    for (seconds, raw, want) in [(120.0, 2.5, 3), (360.0, 7.5, 8), (24.0, 0.5, 1), (72.0, 1.5, 2), (119.0, 2.4791666666666665, 2)]:
+        cid = minutes({"source": "fallback", "distance_m": 900.0, "duration_s": seconds, "override_minutes": None, "toll": 0.0}, mon, 600, plain)
+        c.known(cid, "traffic_factor", 1.25)
+        c.known(cid, "raw_minutes", raw, 9)
+        c.known(cid, "minutes", want)
+    cid = minutes({"source": "fallback", "distance_m": 0.0, "duration_s": 10.0, "override_minutes": None, "toll": 0.0}, mon, 600, plain)
+    c.known(cid, "minutes", 0)                                                  # under half a minute and no distance: 0, not raised to 1
+    cid = minutes({"source": "fallback", "distance_m": 0.5, "duration_s": 0.0, "override_minutes": None, "toll": 0.0}, mon, 600, plain)
+    c.known(cid, "minutes", 1)                                                  # any real distance takes a minute
+    cid = minutes({"source": "fallback", "distance_m": 4000.0, "duration_s": 300.0, "override_minutes": 7, "toll": 1.5}, fx.thu, 1030)
+    c.known(cid, "source", "override")                                          # an override on a fallback leg
+    c.known(cid, "minutes", 7)
+    minutes({"source": "google", "distance_m": 7805, "duration_s": 600, "override_minutes": None, "toll": 2}, fx.thu, 619)     # whole numbers
+    minutes(google, typical_context(A, 0), 600)                                 # a typical context
+    fallback(39, -77, 39, -77)                                                  # whole-number coordinates
+    cid = fallback(0.0, 0.0, 0.0, 0.02)                                         # 2.2 km of equator: under the two local miles after the detour
+    c.calc(cid, "all local", lambda r: r["distance_m"] / 1609.344 < 2.0, True)
+    cid = fallback(0.0, 0.0, 0.0, 0.03)                                         # 3.3 km: 2 local miles and a trunk part
+    c.calc(cid, "local and trunk", lambda r: r["distance_m"] / 1609.344 > 2.0, True)
 
 
 def _g17_timeline(c, fx):
@@ -3180,11 +3676,61 @@ def _g17_timeline(c, fx):
     timeline([a, b], routed)
     timeline([dict(office, open_minute=1320, close_minute=1560)], fx.legs)      # a late-night stop ending after midnight
     timeline([office], fx.legs, None, _profile(prep_minutes=0, setup_minutes=0, teardown_minutes=0, closeout_minutes=0))
-
     for (ids, want) in [([], []), (["a"], ["base>a", "a>base"]),
                         (["office", "taproom"], ["base>office", "office>taproom", "taproom>base", "base>taproom", "office>base"]),
                         (["a", "b", "c"], ["base>a", "a>b", "b>c", "c>base", "base>b", "a>c", "b>base"])]:
         c.doc(c.add("g17", "required_leg_keys", {"stops": [_stop(i, 660, 840) for i in ids]}), "", want)
+
+    # The ends of the day: a stop opening at minute 0 (the drive and the prep fall on the evening before)
+    # and one closing at 2880.
+    cid = timeline([dict(office, open_minute=0, close_minute=60)], fx.legs)
+    for (path, want) in [("start_prep", -86), ("leave_base", -41), ("stops.0.arrive", -30), ("legs.0.traffic_lookup_minute", -30),
+                         ("legs.0.depart_minute", -41), ("done", 121), ("day_minutes", 207)]:
+        c.known(cid, path, want)
+    cid = timeline([dict(office, open_minute=2700, close_minute=2880)], fx.legs)
+    c.known(cid, "done", 2941)
+    c.known(cid, "legs.1.traffic_lookup_minute", 2900)
+    # Back to back: the second stop opens when the first closes, so the truck is late by its teardown, drive and setup.
+    cid = timeline([office, dict(taproom, open_minute=840, close_minute=960)], fx.legs)
+    for (path, want) in [("stops.1.arrive", 870), ("stops.1.late_minutes", 60), ("stops.1.effective_open", 900), ("stops.1.gap_before_minutes", 0),
+                         ("service_minutes", 240)]:
+        c.known(cid, path, want)
+    # Three stops, the two later gaps unpaid; the flag on the first stop is ignored.
+    third = _stop("third", 1380, 1440, point={"lat": 38.99, "lng": -77.39})
+    legs3 = dict(fx.legs)
+    legs3["taproom>third"] = _fixed_leg(5, 1.0, 0.75)
+    legs3["third>base"] = _fixed_leg(6, 2.0, 1.25)
+    cid = timeline([dict(office, gap_before_unpaid=True), dict(taproom, gap_before_unpaid=True), dict(third, gap_before_unpaid=True)], legs3)
+    for (path, want) in [("unpaid_gap_minutes", 245), ("stops.0.gap_unpaid", False), ("stops.1.gap_unpaid", True), ("stops.2.gap_before_minutes", 125),
+                         ("tolls", 2.0), ("drive_minutes", 32), ("paid_minutes", 677)]:
+        c.known(cid, path, want)
+    # A stop of no length and one that closes before it opens (day_plan refuses both; the timeline itself only
+    # keeps time from running backwards).
+    cid = timeline([dict(office, open_minute=700, close_minute=700)], fx.legs)
+    c.known(cid, "service_minutes", 0)
+    c.known(cid, "stops.0.effective_open", 700)
+    cid = timeline([dict(office, open_minute=700, close_minute=650)], fx.legs)
+    for (path, want) in [("stops.0.effective_open", 650), ("stops.0.leave", 670), ("service_minutes", 0), ("generator_minutes", 0),
+                         ("events.4.minute", 670), ("events.5.minute", 670), ("events.6.minute", 670)]:
+        c.known(cid, path, want)
+    # The base and the stop at the same point with no routed leg: a fallback leg of no distance takes no time.
+    cid = timeline([_stop("home", 660, 840, point={"lat": 39.003, "lng": -77.405})], {})
+    for (path, want) in [("drive_minutes", 0), ("miles", 0.0), ("legs.0.source", "fallback"), ("leave_base", 630), ("start_prep", 585)]:
+        c.known(cid, path, want)
+    # Only one of the legs is routed; the others fall back.
+    cid = timeline([office, taproom], {"base>office": _fixed_leg(11, 4.85)})
+    c.calc(cid, "leg sources", lambda r: [leg["source"] for leg in r["legs"]], ["override", "fallback", "fallback"])
+    # Google legs driven before midnight of the service date and after its end: the lookup minute decides.
+    slow = {"source": "google", "distance_m": 30000.0, "duration_s": 3000.0, "override_minutes": None, "toll": 0.0}
+    cid = timeline([dict(office, open_minute=20, close_minute=200)], {"base>office": slow, "office>base": slow})
+    c.known(cid, "legs.0.traffic_lookup_minute", -65)                           # arrive -10, less floor(50 x 1.1)
+    c.known(cid, "legs.0.traffic_dow", 2)
+    cid = timeline([dict(office, open_minute=1380, close_minute=1500)], {"base>office": slow, "office>base": slow})
+    c.known(cid, "legs.1.traffic_dow", 4)
+    c.known(cid, "legs.1.traffic_lookup_minute", 1520)
+    timeline([office, taproom], fx.legs, typical_context(fx.A, 1))              # a typical context
+    c.known(c.add("g17", "required_leg_keys", {"stops": [_stop(i, 660, 840) for i in ["a", "b", "c", "d", "e"]]}), "",
+            ["base>a", "a>b", "b>c", "c>d", "d>e", "e>base", "base>b", "a>c", "b>d", "c>e", "d>base"])
 
 
 def _g18_day_plan(c, fx):
@@ -3300,6 +3846,115 @@ def _g18_day_plan(c, fx):
     typical["fuel_price_source"] = "seed"
     plan("2026-10-08", [office, taproom], typical, typical_context(A, 4), fx.legs)
 
+    def codes(cid, present, absent):
+        """Which warnings the case is there for: codes it must raise and codes it must not."""
+        for code in present:
+            c.calc(cid, "raises " + code, lambda r, code=code: code in [w["code"] for w in r["warnings"]], True)
+        for code in absent:
+            c.calc(cid, "does not raise " + code, lambda r, code=code: code in [w["code"] for w in r["warnings"]], False)
+
+    # 16. outside_allowed_hours, one condition at a time: the day, the opening minute, the closing minute; and a window that just fits.
+    for (allowed, raised) in [({"days": [True, True, True, False, True, True, True], "open_minute": 0, "close_minute": 2880}, True),
+                              ({"days": [True] * 7, "open_minute": 661, "close_minute": 2880}, True),
+                              ({"days": [True] * 7, "open_minute": 0, "close_minute": 839}, True),
+                              ({"days": [False, False, False, True, False, False, False], "open_minute": 660, "close_minute": 840}, False)]:
+        cid = plan("2026-10-08", [_stop("office", 660, 840, _terms(allowed=allowed), fx.vec)], thu, fri, fx.legs)
+        codes(cid, ["outside_allowed_hours"] if raised else [], [] if raised else ["outside_allowed_hours"])
+    # 17. invalid_window, one condition at a time; stops that touch do not overlap.
+    cid = plan("2026-10-08", [dict(office, open_minute=-1, close_minute=60)], thu, fri, fx.legs)
+    c.known(cid, "warnings.0.code", "invalid_window")
+    c.known(cid, "warnings.0.data.open_minute", -1)
+    c.known(cid, "stops", [])
+    cid = plan("2026-10-08", [dict(office, open_minute=2700, close_minute=2881)], thu, fri, fx.legs)
+    c.known(cid, "warnings.0.data.close_minute", 2881)
+    cid = plan("2026-10-08", [dict(office, open_minute=0, close_minute=60), dict(taproom, open_minute=2700, close_minute=2880)], thu, fri, fx.legs)
+    codes(cid, ["early_start", "ends_after_midnight", "long_day", "long_gap"], ["invalid_window", "stops_overlap"])     # 0 and 2880 are valid
+    cid = plan("2026-10-08", [office, dict(taproom, open_minute=840, close_minute=1000)], thu, fri, fx.legs)
+    codes(cid, ["late_arrival"], ["stops_overlap", "stop_unreachable"])
+    cid = plan("2026-10-08", [office, dict(taproom, open_minute=839, close_minute=1000)], thu, fri, fx.legs)
+    c.known(cid, "warnings.0.code", "stops_overlap")
+    c.known(cid, "warnings.0.data.previous_close_minute", 840)
+    # 18. Each threshold from both sides: prep starting at 05:00 and at 04:59, a day of 720 and of 721 minutes,
+    #     done at 24:00 and at 24:01, a paid gap of 90 and of 89 minutes.
+    for (stops, code, raised) in [([dict(office, open_minute=386, close_minute=566)], "early_start", False),
+                                  ([dict(office, open_minute=385, close_minute=565)], "early_start", True),
+                                  ([dict(office, open_minute=660, close_minute=1233)], "long_day", False),
+                                  ([dict(office, open_minute=660, close_minute=1234)], "long_day", True),
+                                  ([dict(office, open_minute=1200, close_minute=1379)], "ends_after_midnight", False),
+                                  ([dict(office, open_minute=1200, close_minute=1380)], "ends_after_midnight", True),
+                                  ([office, dict(taproom, open_minute=990, close_minute=1170)], "long_gap", True),
+                                  ([office, dict(taproom, open_minute=989, close_minute=1169)], "long_gap", False)]:
+        cid = plan("2026-10-08", stops, thu, fri, fx.legs)
+        codes(cid, [code] if raised else [], [] if raised else [code])
+    # 19. A fee of exactly a tenth of sales is not "high"; a little more is. 200 attendees per vendor is not thin; fewer is.
+    codes(plan("2026-10-08", [_stop("office", 660, 840, _terms(fee_pct=0.1), fx.vec)], thu, fri, fx.legs), [], ["fee_high"])
+    codes(plan("2026-10-08", [_stop("office", 660, 840, _terms(fee_pct=0.11), fx.vec)], thu, fri, fx.legs), ["fee_high"], [])
+    fair = _stop("fair", 660, 900, _terms(), None, "event", event={"attendance": 2000.0, "vendors": 6, "event_type": "general"})
+    fair_legs = {"base>fair": _fixed_leg(25, 14.0), "fair>base": _fixed_leg(25, 14.0)}
+    codes(plan("2026-10-10", [fair], sat, sun, fair_legs), [], ["event_thin_crowd"])
+    cid = plan("2026-10-10", [dict(fair, event={"attendance": 1999.0, "vendors": 6, "event_type": "general"})], sat, sun, fair_legs)
+    codes(cid, ["event_thin_crowd"], [])
+    cid = plan("2026-10-10", [dict(fair, event={"attendance": 150.0, "vendors": 0, "event_type": "incidental"})], sat, sun, fair_legs)
+    c.calc(cid, "attendees per vendor with no vendor count", lambda r: [w["data"]["attendees_per_vendor"] for w in r["warnings"] if w["code"] == "event_thin_crowd"], [90.0])
+    # 20. Hours without a forecast are counted in the context of their own date: a typical next day has none
+    #     to miss, and a typical service day raises no forecast warning at all.
+    night = _stop("taproom", 1320, 1560, fx.terms_tap, fx.zero, point=tap_point)
+    cid = plan("2026-10-09", [night], fri, typical_context(A, 5), fx.legs)
+    c.calc(cid, "missing forecast hours", lambda r: [w["data"]["hours"] for w in r["warnings"] if w["code"] == "no_forecast"], [2])
+    cid = plan("2026-10-09", [night], fri, sat, fx.legs)
+    c.calc(cid, "missing forecast hours", lambda r: [w["data"]["hours"] for w in r["warnings"] if w["code"] == "no_forecast"], [4])
+    typical_fri = typical_context(A, 4)
+    typical_fri["fuel_price_per_gal"] = FUEL
+    typical_fri["fuel_price_source"] = "seed"
+    codes(plan("2026-10-09", [night], typical_fri, sat, fx.legs), ["ends_after_midnight"], ["no_forecast", "holiday"])
+    full = day_context(A, "2026-10-09", None, _forecast([_fc(h, 60, 10, "Clear", 3) for h in range(24)]), FUEL, "seed")
+    some = day_context(A, "2026-10-10", None, _forecast([_fc(0, 55, 20, "Cloudy", 4)]), FUEL, "seed")
+    cid = plan("2026-10-09", [night], full, some, fx.legs)                      # only 01:00 on Saturday has no record
+    c.calc(cid, "missing forecast hours", lambda r: [w["data"]["hours"] for w in r["warnings"] if w["code"] == "no_forecast"], [1])
+    # 21. A default host size that supplies no orders (nobody is in a taproom at 07:00) raises no default_host_size.
+    cid = plan("2026-10-08", [_stop("office", 420, 480, _terms(host=_host("v_nightlife", 40.0, "default", place_type="taproom")), fx.vec)], thu, fri, fx.legs)
+    codes(cid, [], ["default_host_size", "stale_vectors"])
+    c.known(cid, "stops.0.window.host_orders", 0.0)
+    # 22. Spot ids made of digits are still keys of the log, not numbers.
+    digits_cal = dict(fx.cal, spots={"12": dict(fx.cal["spots"]["A"]), "0": dict(fx.cal["spots"]["B"])})
+    cid = plan("2026-10-08", [_stop("s12", 660, 840, _terms(spot_id="12"), fx.vec, spot_id="12"),
+                              _stop("s0", 1020, 1200, _terms(spot_id="0", host=fx.tap_host), fx.zero, spot_id="0", point=tap_point),
+                              _stop("s012", 1260, 1320, _terms(spot_id="012", host=fx.tap_host), fx.zero, spot_id="012", point=tap_point)],
+               thu, fri, {"base>s12": _fixed_leg(11, 4.85), "s12>s0": _fixed_leg(10, 4.85), "s0>s012": _fixed_leg(0, 0.0), "s012>base": _fixed_leg(1, 0.2),
+                          "base>s0": _fixed_leg(1, 0.2), "s12>s012": _fixed_leg(10, 4.85), "s0>base": _fixed_leg(1, 0.2), "base>s012": _fixed_leg(1, 0.2)}, None, digits_cal)
+    c.known(cid, "stops.0.window.hours.0.result.factors.spot_factor", fx.cal["spots"]["A"]["factor"])
+    c.known(cid, "stops.1.window.hours.0.result.factors.spot_factor", fx.cal["spots"]["B"]["factor"])
+    c.known(cid, "stops.2.window.hours.0.result.factors.spot_factor", 1.0)
+    # 23. All three kinds of stop in one day, the later two after unpaid breaks, tolls on two legs.
+    plan("2026-10-10", [_stop("market", 480, 600, _terms(fee_flat=40.0), None, "event", event={"attendance": 900.0, "vendors": 3, "event_type": "food_focused"}),
+                        _stop("lunch", 690, 780, None, None, "catering", gap_before_unpaid=True,
+                              catering={"headcount": 60.0, "price_per_head": 18.0, "guarantee": 900.0, "food_cost": 250.0}),
+                        dict(taproom, gap_before_unpaid=True)], sat, sun,
+         {"base>market": _fixed_leg(12, 5.0, 1.5), "market>lunch": _fixed_leg(15, 6.0), "lunch>taproom": _fixed_leg(20, 9.0, 2.25), "taproom>base": _fixed_leg(1, 0.2),
+          "base>lunch": _fixed_leg(14, 6.5), "market>taproom": _fixed_leg(13, 5.5), "lunch>base": _fixed_leg(14, 6.5), "base>taproom": _fixed_leg(1, 0.2)})
+
+    # evaluate itself: the internal result behind day_plan (timeline, stops, costs, totals), and the two
+    # model errors a plan can run into once it is evaluated.
+    def evaluated(date, stops, ctx, ctx_next, legs, profile=None, cal=None):
+        return c.add("g18", "evaluate", {"A": _a(), "profile": P if profile is None else profile, "plan": {"date": date, "stops": stops},
+                                         "ctx": ctx, "ctx_next": ctx_next, "legs": legs, "cal": cal})
+
+    cid = evaluated("2026-10-08", [office, taproom], thu, fri, fx.legs)
+    for (path, want, decimals) in [("take_home.value", 482.2, 2), ("costs.total", 470.73, 2), ("costs.labour", 446.82, 2), ("costs.fuel", 23.91, 2),
+                                   ("work_hours", 11.2833, 4), ("totals.take_home_per_hour.value", 42.74, 2), ("stops.1.orders.value", 39.38, 2)]:
+        c.known(cid, path, want, decimals)
+    cid = evaluated("2026-10-08", [], thu, fri, fx.legs)
+    for (path, want) in [("take_home.value", 0.0), ("take_home.confidence", "fixed"), ("costs.total", 0.0), ("work_hours", 0.0), ("stops", []),
+                         ("timeline.done", None), ("take_home_per_hour.value", 0.0)]:
+        c.known(cid, path, want)
+    evaluated("2026-10-08", [_stop("wedding", 690, 810, None, None, "catering",
+                                   catering={"headcount": 80.0, "price_per_head": 14.0, "guarantee": 1000.0, "food_cost": None})], thu, fri,
+              {"base>wedding": _fixed_leg(18, 9.5), "wedding>base": _fixed_leg(18, 9.5)})
+    evaluated("2026-10-10", [fair], sat, sun, fair_legs, None, fx.cal)
+    c.known(evaluated("2026-10-09", [night], fri, None, fx.legs), "error", "missing_context")
+    c.known(evaluated("2026-10-09", [dict(fair, open_minute=1380, close_minute=1500)], fri, None, fair_legs), "error", "missing_context")
+    c.known(evaluated("2026-10-08", [dict(office, open_minute=-100, close_minute=60)], thu, fri, fx.legs), "error", "invalid_window")
+
 
 def _g19_calibration(c, fx):
     def cal(services, as_of="2026-10-04"):
@@ -3382,6 +4037,75 @@ def _g19_calibration(c, fx):
     wide = dict(one("w1", "A", 130.0, 60.0), predicted=75.0)                    # outside its range; calibrated differs from raw
     c.add("g19", "accuracy_report", {"entries": [wide, one("w2", "B", 0.4, 6.0), one("e1", None, 300.0, 250.0, False, "2026-10-01", "event")]})
 
+    # Dates. as_of is parsed first; the date of a service is parsed only once the service is known to
+    # count, so a bad date on an event, on a service without a spot or on one predicted at zero is never read.
+    c.known(cal(fx.services, "2026-02-30"), "error", "invalid_date")
+    c.known(cal([], "2026-13-01"), "error", "invalid_date")
+    c.known(cal([], None), "error", "invalid_date")
+    c.known(cal([one("a", "A", 50.0, 40.0, False, "2026-02-30")]), "error", "invalid_date")
+    cid = cal([one("a", None, 50.0, 40.0, False, "2026-02-30", "event"), dict(one("b", "A", 50.0, 40.0, False, "2026-99-99"), spot_id=None),
+               one("c", "A", 50.0, 0.0, False, "not-a-date"), one("d", "A", 50.0, 40.0)])
+    c.known(cid, "truck_n", 1)
+    c.known(cid, "spots.A.n", 1)
+    c.known(cal(fx.services, "2026-01-01"), "truck_n", 0)                       # every service is dated after as_of
+    c.known(cal(fx.services, "1970-01-01"), "truck_factor", 1.0)
+    cal(fx.services, "2199-12-31")                                              # 63,000 days on: weights of 1e-158 and less
+    c.known(cal([one("a", "A", 70.0, 50.0, False, "2028-02-29")], "2028-03-01"), "truck_weight", 0.994240424, 9)     # one day old, across a leap day
+    # Thresholds from both sides: predicted_raw 3 counts for the truck and just under does not; actual at
+    # and under min_actual; a ratio of exactly 4 and exactly 50; three residuals give a spread and two do not.
+    cid = cal([one("a", "A", 6.0, 3.0), one("b", "B", 6.0, 2.9999999)])
+    c.known(cid, "truck_n", 1)
+    c.known(cid, "spots.B.n", 1)
+    cid = cal([one("a", "A", 0.5, 40.0), one("b", "B", 0.4999, 40.0), one("c", "C", 0.0, 40.0), one("d", "D", -3.0, 40.0)])
+    c.calc(cid, "the floor on actual", lambda r: [r["spots"][k]["log_factor"] == r["spots"]["A"]["log_factor"] for k in ("B", "C", "D")], [True, True, True])
+    cid = cal([one("a", "A", 200.0, 50.0), one("b", "B", 2500.0, 50.0), one("c", "C", 12.5, 50.0), one("d", "D", 1.0, 50.0)])
+    c.known(cid, "truck_log_factor", 0.0, 9)                                    # +ln 4, +ln 4 (clamped), -ln 4, -ln 4 (clamped)
+    cid = cal([one("a", "A", 60.0, 50.0), one("b", "A", 40.0, 50.0), one("c", "B", 55.0, 50.0)])
+    c.known(cid, "resid_n", 3)
+    c.calc(cid, "has a residual spread", lambda r: r["resid_sd"] is not None and r["bias_log"] > 0.0, True)
+    cid = cal([one("a", "A", 60.0, 50.0), one("b", "A", 40.0, 50.0)])
+    c.known(cid, "resid_n", 2)
+    c.known(cid, "resid_sd", None)
+    c.known(cid, "bias_log", 0.0)
+    cid = cal([one("a%d" % i, "A", 50.0, 50.0) for i in range(5)])              # five services exactly as predicted
+    for (path, want) in [("truck_factor", 1.0), ("truck_log_factor", 0.0), ("resid_sd", 0.0), ("bias_log", 0.0), ("spots.A.factor", 1.0), ("truck_weight", 5.0)]:
+        c.known(cid, path, want)
+    # A spot kind with no spot id is skipped like an event; another kind is skipped whatever it is called.
+    cid = cal([dict(one("a", "A", 70.0, 50.0), spot_id=None), dict(one("b", "B", 70.0, 50.0), kind="popup"), one("c", "C", 55.0, 50.0)])
+    c.known(cid, "truck_n", 1)
+    c.calc(cid, "spots", lambda r: sorted(r["spots"].keys()), ["C"])
+    # Spot ids are keys, whatever they look like; services with the same date and id keep the order given.
+    odd = ["__proto__", "constructor", "toString", "hasOwnProperty", "", "12", "0", "1", "007", "-1", "1.5", "1e2", "A", "a", "B"]
+    odd_log = [one("p%02d" % k, odd[k % len(odd)], 40.0 + 3.0 * ((k * 7) % 11), 50.0, k % 9 == 4, add_days("2026-07-01", (k * 5) % 90)) for k in range(45)]
+    cid = cal(odd_log)
+    c.calc(cid, "spots", lambda r: sorted(r["spots"].keys()), sorted(odd))
+    c.known(cid, "spots.__proto__.n", 3)
+    c.known(cid, "spots.12.n", 3)
+    cid2 = cal(list(reversed(odd_log)))
+    c.calc(cid2, "spots", lambda r: sorted(r["spots"].keys()), sorted(odd))
+    cal([one("d", "A", 60.0, 50.0), one("d", "A", 40.0, 50.0), one("d", "B", 55.0, 50.0), one("c", "B", 45.0, 50.0)])
+    cal([dict(one("a", "A", 70, 50), actual=70, predicted_raw=50), dict(one("b", "B", 30, 50), actual=30, predicted_raw=50)])     # whole numbers
+    full = calibrate(fx.A, odd_log, "2026-10-04")
+    for (spot_id, want) in [("__proto__", True), ("toString", True), ("valueOf", False), ("012", False), ("12", True), ("7", False)]:
+        cid = c.add("g19", "calibration_factor", {"cal": full, "spot_id": spot_id})
+        c.calc(cid, "has a spot factor", lambda r: r[1] != 1.0, want)
+    c.known(c.add("g19", "calibration_factor", {"cal": calibrate(fx.A, [], "2026-10-04"), "spot_id": "A"}), "", [1.0, 1.0])
+    # Accuracy: the range includes both of its ends; an actual below one order is measured against one.
+    edge = [dict(one("a", "A", 10.0, 10.0), low=10.0, high=12.0), dict(one("b", "A", 12.0, 10.0), low=8.0, high=12.0),
+            dict(one("c", "A", 12.5, 10.0), low=8.0, high=12.0), dict(one("d", "A", 7.5, 10.0), low=8.0, high=12.0)]
+    cid = c.add("g19", "accuracy_report", {"entries": edge})
+    c.known(cid, "coverage", 0.5)
+    c.known(cid, "n_scored", 4)
+    cid = c.add("g19", "accuracy_report", {"entries": [one("a", "A", 0.5, 2.0), one("b", "A", 1.0, 1.0), one("c", "A", 0.999, 3.0)]})
+    c.known(cid, "mape", (1.5 + 0.0 + 2.001) / 3.0, 9)
+    c.add("g19", "accuracy_report", {"entries": odd_log})
+    c.add("g19", "accuracy_report", {"entries": list(reversed(odd_log))})
+    c.add("g19", "accuracy_report", {"entries": [dict(one("a", "A", 5, 2), actual=5, predicted=4, predicted_raw=3, low=1, high=9)]})        # whole numbers
+    cid = c.add("g19", "accuracy_report", {"entries": [one("e1", None, 300.0, 250.0, False, "2026-10-01", "event"),
+                                                       one("e2", None, 100.0, 100.0, True, "2026-10-01", "catering")]})
+    c.known(cid, "by_spot", [])                                                 # no spot ids: the overall block only
+    c.known(cid, "n_sold_out", 1)
+
 
 def _g20_events(c, fx):
     P = fx.profile
@@ -3431,6 +4155,53 @@ def _g20_events(c, fx):
     catering({"headcount": 45.0, "price_per_head": 22.5, "guarantee": None, "food_cost": None})
     catering({"headcount": 0.0, "price_per_head": 14.0, "guarantee": None, "food_cost": None})
     catering({"headcount": 120.0, "price_per_head": 18.0, "guarantee": 2000.0, "food_cost": 0.0}, _profile(packaging_per_order=0.0))
+    # The window is checked one bound at a time, and before the contexts.
+    for (o, cl_) in [(-1, 120), (0, 2881), (2881, 2881), (720, 719)]:
+        c.known(event(general, fx.sat, fx.sun, o, cl_), "error", "invalid_window")
+    c.known(event(general, fx.sat, None, 1500, 1440), "error", "invalid_window")
+    c.known(event(general, fx.sat, None, 1439, 1441), "error", "missing_context")
+    cid = event(general, fx.sat, None, 1380, 1440)                              # ends at midnight: no next context needed
+    c.calc(cid, "number of hours", lambda r: len(r["hours"]), 1)
+    cid = event(general, fx.sat, None, 1440, 1440)                              # empty, at midnight
+    c.known(cid, "hours", [])
+    c.known(cid, "orders.value", 0.0)
+    c.known(cid, "demand", 70.0, 9)
+    cid = event(general, fx.sat, fx.sun, 0, 2880)                               # two whole days: 70 orders spread over 48 hours
+    c.calc(cid, "number of hours", lambda r: len(r["hours"]), 48)
+    c.known(cid, "hours.47.day_index", 1)
+    c.known(cid, "orders.value", 70.0, 9)
+    cid = event(general, fx.sat, fx.sun, 1439, 1441)
+    c.known(cid, "hours.0.demand", 35.0, 9)
+    c.known(cid, "hours.0.capacity", 0.75, 9)
+    c.known(cid, "orders.value", 1.5, 9)
+    # Vendor counts of 0 and 1 are the same; no attendance; no capacity; a buy rate overridden to zero.
+    cid = event({"attendance": 600.0, "vendors": 1, "event_type": "incidental"}, fx.fri, fx.sat, 1080, 1320)
+    c.known(cid, "demand", 54.0, 9)
+    cid = event({"attendance": 0.0, "vendors": 4, "event_type": "general"}, fx.sat, None, 660, 900)
+    c.known(cid, "orders.high", 0.0)
+    c.known(cid, "orders.confidence", "very_rough")
+    cid = event(general, fx.sat, None, 660, 900, _profile(capacity_orders_per_hour=0.0))
+    c.known(cid, "orders.value", 0.0)
+    c.known(cid, "orders.high", 0.0)
+    c.known(event(general, fx.sat, None, 660, 900, None, None, _a({"events.p_buy.general": 0})), "buyers", 0.0)
+    event({"attendance": 2000, "vendors": 6, "event_type": "general"}, fx.sat, None, 660, 900, _profile(capacity_orders_per_hour=20))      # whole numbers
+    # A dated day into a typical one: the weather rule of each hour's own context.
+    wet = day_context(fx.A, "2026-10-10", None, _forecast([_fc(h, 45, 80, "Rain", 22) for h in range(24)]), None, None)
+    cid = event(general, wet, typical_context(fx.A, 6), 1320, 1560)
+    c.calc(cid, "weather by hour", lambda r: [h["weather"] < 1.0 for h in r["hours"]], [True, True, False, False])
+    event(general, typical_context(fx.A, 5), wet, 1320, 1560)
+    event(general, fx.sat, None, 660, 900, None, calibrate(fx.A, [], "2026-10-04"))       # an empty log: factor 1
+    # Catering: the guarantee exactly equal to the per-head total; a price and a cost of zero are a price and a cost.
+    cid = catering({"headcount": 80.0, "price_per_head": 14.0, "guarantee": 1120.0, "food_cost": None})
+    c.known(cid, "sales.value", 1120.0)
+    cid = catering({"headcount": 50.0, "price_per_head": 0.0, "guarantee": 0.0, "food_cost": 0.0})
+    for (path, want) in [("sales.value", 0.0), ("food_cost.value", 0.0), ("contribution.value", -25.0), ("orders.value", 50.0)]:
+        c.known(cid, path, want)
+    cid = catering({"headcount": 50, "price_per_head": 12, "guarantee": 0, "food_cost": 0})         # whole numbers
+    c.known(cid, "contribution.value", 575.0)
+    cid = catering({"headcount": 40.0, "price_per_head": None, "guarantee": None, "food_cost": None})  # nothing agreed: no sales, packaging still costs
+    c.known(cid, "contribution.value", -20.0)
+    catering({"headcount": 80.0, "price_per_head": 14.0, "guarantee": 1000.0, "food_cost": None}, _profile(food_cost_pct=0.95, packaging_per_order=2.0))
 
 
 def _g21_suggestions(c, fx):
@@ -3526,6 +4297,77 @@ def _g21_suggestions(c, fx):
                                "max_visits_per_spot_per_week": 7, "limit": None})
     week_case([], fx.legs)                                                      # nothing saved: seven days off
 
+    # An option of 0 is an option, not "use the default": no results, no stops, no window.
+    c.known(day("2026-10-08", spots, fx.legs, {"limit": 0}), "", [])
+    c.known(day("2026-10-08", spots, fx.legs, {"max_stops_per_day": 0}), "", [])
+    c.known(day("2026-10-08", spots, fx.legs, {"service_minutes": 0}), "", [])
+    # Options may be left out one by one; an empty map is all defaults.
+    cid = day("2026-10-08", spots, fx.legs, {})
+    c.calc(cid, "number of plans", lambda r: len(r), 3)
+    c.known(cid, "0.take_home.value", 482.2, 2)
+    cid = day("2026-10-08", spots, fx.legs, {"limit": 1})
+    c.calc(cid, "number of plans", lambda r: len(r), 1)
+    cid = day("2026-10-08", spots, fx.legs, {"limit": 99, "max_stops_per_day": 1})          # every feasible one-stop plan of the day
+    c.calc(cid, "plans", lambda r: [[p["position"], p["stops"][0]["spot_id"], p["stops"][0]["open_minute"]] for p in r],
+           [[1, "office", 660], [2, "taproom", 1020], [3, "taproom", 1200], [4, "office", 840]])
+    cid = day("2026-10-08", spots, fx.legs, {"service_minutes": 60, "limit": 2})            # one-hour windows
+    c.calc(cid, "window lengths", lambda r: sorted(set([s["close_minute"] - s["open_minute"] for p in r for s in p["stops"]])), [60])
+    cid = day("2026-10-08", spots, fx.legs, {"service_minutes": 480, "limit": 2})           # eight-hour windows: one stop a day at most
+    c.calc(cid, "stops per plan", lambda r: sorted(set([len(p["stops"]) for p in r])), [1])
+    c.known(day("2026-10-08", spots, fx.legs, {"service_minutes": 720}), "", [])            # twelve hours of service: longer than the 14-hour day allows
+    # The spot is closed to trucks on the day (the first test of the allowed rule), and open only off the hour.
+    closed = dict(office, terms=_terms(spot_id="office", allowed={"days": [True, True, True, False, True, True, True], "open_minute": 0, "close_minute": 1440}))
+    cid = day("2026-10-08", [closed, taproom], fx.legs, {"limit": 1})
+    c.calc(cid, "spots used", lambda r: sorted(set([s["spot_id"] for p in r for s in p["stops"]])), ["taproom"])
+    off_hour = dict(office, terms=_terms(spot_id="office", allowed={"days": [True] * 7, "open_minute": 630, "close_minute": 870}))
+    cid = day("2026-10-08", [off_hour, taproom], fx.legs, {"limit": 1})         # 10:30 to 14:30 holds one whole three-hour window: 11:00
+    c.calc(cid, "office opens", lambda r: sorted(set([s["open_minute"] for p in r for s in p["stops"] if s["spot_id"] == "office"])), [660])
+    short = dict(office, terms=_terms(spot_id="office", allowed={"days": [True] * 7, "open_minute": 720, "close_minute": 840}))
+    cid = day("2026-10-08", [short, taproom], fx.legs, {"limit": 1})            # two hours allowed: no three-hour window fits
+    c.calc(cid, "spots used", lambda r: sorted(set([s["spot_id"] for p in r for s in p["stops"]])), ["taproom"])
+    # Four copies of one spot: every candidate ties, so spot_id and opening time decide every rank.
+    same = [dict(office, spot_id="e%d" % i, terms=_terms(spot_id="e%d" % i)) for i in (3, 1, 0, 2)]
+    cid = day("2026-10-08", same, {}, {"limit": 4, "max_stops_per_day": 1})
+    c.calc(cid, "spots in rank order", lambda r: [p["stops"][0]["spot_id"] for p in r], ["e0", "e1", "e2", "e3"])
+    pairs = [dict(office, spot_id="e1", terms=_terms(spot_id="e1")), dict(taproom, spot_id="t1", terms=_terms(spot_id="t1", host=fx.tap_host)),
+             dict(taproom, spot_id="t0", terms=_terms(spot_id="t0", host=fx.tap_host)), dict(office, spot_id="e0", terms=_terms(spot_id="e0"))]
+    cid = day("2026-10-08", pairs, {}, {"limit": 3})                            # two-stop plans tie too: the lists of (spot_id, open) decide
+    c.calc(cid, "plans", lambda r: [[s["spot_id"] for s in p["stops"]] for p in r], [["e0", "t0"], ["e0", "t1"], ["e1", "t0"]])
+    # Spots whose ids differ only in case or are members of every object; a calibrated day; a treated day.
+    odd_legs = {}
+    for a in ("base", "Office", "office", "constructor", "__proto__"):
+        for b in ("base", "Office", "office", "constructor", "__proto__"):
+            if a != b:
+                odd_legs[a + ">" + b] = _fixed_leg(9 if "base" in (a, b) else 4, 3.0 if "base" in (a, b) else 1.0)
+    odd_spots = [dict(office, spot_id="office"), dict(office, spot_id="Office", terms=_terms(spot_id="Office")),
+                 dict(taproom, spot_id="constructor", terms=_terms(spot_id="constructor", host=fx.tap_host)),
+                 dict(taproom, spot_id="__proto__", terms=_terms(spot_id="__proto__", host=_host("v_nightlife", 150.0)))]
+    cid = day("2026-10-09", odd_spots, odd_legs, {"limit": 2})
+    c.calc(cid, "first plan", lambda r: [s["spot_id"] for s in r[0]["stops"]], ["Office", "__proto__"])
+    logged = [dict(office, spot_id="A", terms=_terms(spot_id="A")), dict(taproom, spot_id="B", terms=_terms(spot_id="B", host=fx.tap_host))]
+    day("2026-10-08", logged, {}, {"limit": 2}, None, fx.cal)
+    c.add("g21", "suggest_day", {"A": _a(), "profile": P, "ctx": day_context(A, "2026-10-08", "sat", fx.rain, FUEL, "owner"),
+                                 "ctx_next": fx.ctx_fuel["2026-10-09"], "spots": spots, "legs": fx.legs, "cal": None, "options": {"limit": 2}})
+
+    # The week: a bad start date fails only when the dates are written out; limits of zero; ids as map keys.
+    c.known(c.add("g21", "suggest_week", {"A": _a(), "profile": P, "week_start": "2026-02-30", "contexts": week, "spots": [], "legs": {}, "cal": None,
+                                          "options": None}), "error", "invalid_date")
+    c.known(c.add("g21", "suggest_week", {"A": _a(), "profile": P, "week_start": None, "contexts": week, "spots": [], "legs": {}, "cal": None,
+                                          "options": None}), "error", "invalid_date")
+    cid = week_case(spots, fx.legs, {"max_days_per_week": 0})
+    c.known(cid, "leaves_visited", 1)
+    c.known(cid, "visits", {})
+    c.known(cid, "total_take_home.confidence", "fixed")
+    cid = week_case(spots, fx.legs, {"max_visits_per_spot_per_week": 0})
+    c.known(cid, "leaves_visited", 1)
+    cid = week_case(spots, fx.legs, {"max_days_per_week": 1})
+    c.calc(cid, "working days", lambda r: len([d for d in r["days"] if d["suggestion"] is not None]), 1)
+    cid = week_case(odd_spots[2:], odd_legs, {"max_days_per_week": 2, "max_visits_per_spot_per_week": 1})
+    c.known(cid, "visits", {"constructor": 1, "__proto__": 1})
+    cid = c.add("g21", "suggest_week", {"A": _a(), "profile": P, "week_start": "2026-10-07", "contexts": week, "spots": [], "legs": {}, "cal": None,
+                                        "options": None})                       # week_start is only added to: any valid date is taken
+    c.known(cid, "days.6.date", "2026-10-13")
+
 
 def _g22_scouting(c, fx):
     A = fx.A
@@ -3595,6 +4437,68 @@ def _g22_scouting(c, fx):
                              (_terms(host=_host("v_nightlife", 45.0, "default", False, "pn300", "bar")), n300["vectors"])]:
         c.add("g22", "strip_from_rows", {"A": _a(), "profile": P, "terms": terms, "vectors": vectors, "rows": rows})
 
+    # Every place type once on its own default size, to pin which types host and with what kitchen.
+    order = seed(A, "place_types.order")
+    hosts = []
+    for place_type in order:
+        row = seed(A, "place_types.rows." + place_type)
+        cid = scout(place("t-" + place_type, place_type, row["default_size"], own("p-" + place_type), "p-" + place_type, None, {"lat": 39.0035, "lng": -77.4035}),
+                    {"base>t-" + place_type: _fixed_leg(4, 1.5), "t-" + place_type + ">base": _fixed_leg(5, 1.6, 0.75)})
+        if row["host_fit"] > 0:
+            hosts.append(place_type)
+            c.known(cid, "kitchen", row["kitchen_default"])
+            c.known(cid, "host_size", row["default_size"] if row["host_segment"] is not None else 0.0)
+        else:
+            c.known(cid, "", None)
+    assert [t for t in order if t not in hosts] == ["restaurant", "fast_food", "cafe", "convenience"]
+    # A size on a type that has no host segment is not a host: the place is ranked on its catchment alone.
+    cid = scout(place("m1", "farmers_market", 30.0, _stored(fx.vec)), {"base>m1": _fixed_leg(11, 4.85), "m1>base": _fixed_leg(11, 4.85)})
+    c.known(cid, "host_size", 0.0)
+    c.known(cid, "host_segment", None)
+    c.known(cid, "orders.value", 66.66, 2)
+    # The place's own kitchen state against the default of its type, both ways; a size below zero is no host.
+    c.known(scout(place("b1", "bar", 45.0, own("pb1"), "pb1", "no"), {}), "kitchen", "no")
+    c.known(scout(place("g1", "gym", 50.0, own("pg1"), "pg1", "yes"), {}), "kitchen", "yes")
+    cid = scout(place("x1", "taproom", -40.0, own("px1"), "px1"), {})
+    c.known(cid, "best_window", None)
+    c.known(cid, "host_size", 0.0)
+    # No capacity: no window at all, whatever the place. A fuel price of zero is a price.
+    cid = scout(w100, legs["w100"], None, FUEL, _profile(capacity_orders_per_hour=0.0))
+    c.known(cid, "best_window", None)
+    c.known(cid, "score", 0.0)
+    cid = scout(w200, legs["w200"], None, 0)
+    c.known(cid, "round_trip.cost", 22.0 / 60.0 * 2 * 18.0 * 1.1, 9)
+    # The best window runs from Sunday night into Monday: the hours after midnight take Monday's typical day.
+    late = _a({"segments.v_nightlife.presence.sunday": [0.0] * 23 + [1.0], "segments.v_nightlife.presence.weekday": [1.0] + [0.0] * 23,
+               "segments.v_nightlife.presence.saturday": [0.0] * 24, "segments.v_nightlife.dow_factor": [1.0, 0.0, 0.0, 0.0, 0.0],
+               "segments.v_nightlife.intent.sunday": [0.3] * 24, "segments.v_nightlife.intent.weekday": [0.3] * 24})
+    cid = scout(w100, legs["w100"], None, FUEL, None, late)
+    for (path, want) in [("best_window.dow", 6), ("best_window.open_minute", 1320), ("best_window.close_minute", 1500)]:
+        c.known(cid, path, want)
+    c.known(cid, "orders.value", 40.0 * 0.75 * 0.3 * 0.8 * 2, 9)                # 23:00 on Sunday and 00:00 on Monday, both "late" (fit 0.8)
+
+    def rank(ranked):
+        return c.add("g22", "scout_rank", {"results": ranked})
+
+    one = results[0]
+    cid = rank([dict(one, place_id="b", score=1.00000004), dict(one, place_id="a", score=1.0), dict(one, place_id="c", score=0.99999996),
+                dict(one, place_id="d", score=1.0000006)])                      # a, b and c share a key of 1000000: by id; d is one millionth ahead
+    c.calc(cid, "order", lambda r: [x["place_id"] for x in r], ["d", "a", "b", "c"])
+    cid = rank([dict(one, place_id="n", score=-5.0), dict(one, place_id="z", score=0.0), dict(one, place_id="m", score=-0.0),
+                dict(one, place_id="p", score=0.0000004), dict(one, place_id="q", score=-0.0000004), dict(one, place_id="r", score=-0.0000006)])
+    c.calc(cid, "order", lambda r: [x["place_id"] for x in r], ["m", "p", "q", "z", "r", "n"])
+    cid = rank([dict(one, place_id="a", score=1.0, host_size=1.0), dict(one, place_id="a", score=1.0, host_size=2.0), dict(one, place_id="A", score=1.0)])
+    c.calc(cid, "order", lambda r: [[x["place_id"], x["host_size"]] for x in r], [["A", one["host_size"]], ["a", 1.0], ["a", 2.0]])      # one id twice: the order given
+    cid = rank([dict(one, place_id="i%d" % i, score=i, position=9 - i) for i in range(3)])  # whole-number scores; positions are overwritten
+    c.calc(cid, "positions", lambda r: [[x["place_id"], x["position"]] for x in r], [["i2", 1], ["i1", 2], ["i0", 3]])
+
+    for (terms, vectors, profile) in [(_terms(host=_host("v_nightlife", 0.0)), _stored(fx.vec_mix), P),             # a host of size 0 is no host
+                                      (_terms(host=_host("v_shopping", 150.0, "default", False)), _stored(fx.vec_mix),
+                                       _profile(capacity_orders_per_hour=5))]:                                      # an open host; capped hours
+        c.add("g22", "strip_from_rows", {"A": _a(), "profile": profile, "terms": terms, "vectors": vectors, "rows": rows})
+    c.add("g22", "strip_from_rows", {"A": _a(), "profile": P, "terms": _terms(spot_id="B", host=fx.tap_host), "vectors": fx.vec_mix,
+                                     "rows": map_weight_rows(A, P, fx.cal)})    # the rows carry the truck factor; a spot factor never enters
+
 
 def _g23_fast_path(c, fx):
     A = fx.A
@@ -3643,6 +4547,25 @@ def _g23_fast_path(c, fx):
     c.doc(c.add("g23", "score_byte", {"x": fx.vec["rivals"]["day"], "hi": 100.0}), "", 23)
     for (x, hi) in [(-3.0, 45.0), (0.0001, 45.0), (44.9, 45.0), (19999.0, 20000.0), (110.0, 100.0)]:
         c.add("g23", "score_byte", {"x": x, "hi": hi})
+    # Either side of the steps of the square-root scale: byte k begins where 255 * sqrt(x / hi) passes k - 0.5.
+    for k in (1, 2, 128, 255):
+        t = ((k - 0.5) / 255.0) * ((k - 0.5) / 255.0)
+        c.known(c.add("g23", "score_byte", {"x": 45.0 * t * (1.0 - 1e-6), "hi": 45.0}), "", k - 1)
+        c.known(c.add("g23", "score_byte", {"x": 45.0 * t * (1.0 + 1e-6), "hi": 45.0}), "", k)
+    for (x, hi, want) in [(0, 45, 0), (45, 45, 255), (1, 1, 255), (0.25, 1.0, 128), (1, 4, 128), (-0.0, 45.0, 0), (1e300, 45.0, 255),
+                          (-1e300, 45.0, 0), (5.0, 1e300, 0)]:
+        c.known(c.add("g23", "score_byte", {"x": x, "hi": hi}), "", want)
+    # No capacity; a capacity below zero is still a cap; whole-number features and weights; the first cells of a longer list.
+    cid = cells(three, 3, 84, 0.0)
+    c.known(cid, "opportunity", [0.0, 0.0, 0.0])
+    cid = cells(three, 2, 84)
+    c.calc(cid, "cells scored", lambda r: [len(r["opportunity"]), len(r["people"]), len(r["competition"])], [2, 2, 2])
+    cid = c.add("g23", "cell_scores", {"features": list(range(100)), "n": 2, "w_opp_row": [1] * 16, "w_people_row": [2] * 16, "regime": "eve", "capacity": 1000})
+    c.known(cid, "opportunity", [376.0, 1000.0])                                # 16 + ... + 31 = 376; 66 + ... + 81 = 1176, capped
+    c.known(cid, "people", [1264.0, 2864.0])
+    c.known(cid, "competition", [49, 99])
+    for how in (0, 4, 5, 15, 16, 23, 167):                                      # the hours either side of the two regime changes
+        cells(three, 3, how)
 
 
 def _g24_seeds(c, fx):
@@ -3730,6 +4653,117 @@ def _g24_seeds(c, fx):
     over = _a({"host.captive_share": 0.6})
     window(fx.terms_tap, fx.zero, day_context(_assume(over), "2026-10-08", None, None, None, None), 1020, 1200, over)
 
+    # seed(): any node of the file can be read; an override wins under exactly its own path, whatever
+    # its value (0, null) and whether or not the file has that path.
+    c.known(read("host.captive_share.value"), "", 0.75)
+    c.known(read("host.captive_share.scope"), "", "owner")
+    c.known(read("segments.v_campus.weak"), "", True)
+    c.known(read("segments.w_office.weak"), "", False)
+    c.known(read("model_version"), "", "tps-0.1.0")
+    c.known(read("seeds_revision"), "", 1)
+    c.known(read("scout"), "max_results.value", 50)                             # a whole group, as it is in the file
+    c.known(read("holidays.rules"), "11.id", "inauguration")
+    c.known(read("profile_defaults.daypart_fit"), "late", 0.8)
+    c.known(read("kernel.rival_weight.bar"), "eve", 0.6)
+    c.known(read("weather.floor", _a({"weather.floor": 0})), "", 0)
+    c.known(read("weather.floor", _a({"weather.floor": None})), "", None)
+    c.known(read("host.captive_share.value", _a({"host.captive_share": 0.6})), "", 0.75)
+    c.known(read("host.captive_share", _a({"host.captive_share.value": 0.6})), "", 0.75)
+    c.known(read("host.captive_share.value", _a({"host.captive_share.value": 0.6})), "", 0.6)
+    c.known(read("scout.max_results", _a({"scout.max_results": 5})), "", 5)    # seed() does not judge what may be overridden
+    c.known(read("no.such.path", _a({"no.such.path": 7})), "", 7)
+    c.known(read("toString", _a({"toString": 3})), "", 3)
+    c.known(read("__proto__", _a({"__proto__": [1, 2]})), "", [1, 2])
+    c.known(read("segments.w_office.presence.weekday", _a({"segments.w_office.presence.weekday": []})), "", [])
+
+    # validate_overrides against the seed file. Shape: a scalar where the seed is an array and the reverse,
+    # null, a string and a boolean for a number, the array rules element by element.
+    for (overrides, error) in [({"segments.w_office.presence.weekday": 0.5}, "wrong_shape"), ({"host.captive_share": [0.5]}, "wrong_shape"),
+                               ({"host.captive_share": None}, "wrong_shape"), ({"host.captive_share": "0.5"}, "wrong_shape"),
+                               ({"host.captive_share": True}, "wrong_shape"), ({"host.captive_share": {"value": 0.5}}, "wrong_shape"),
+                               ({"segments.res.intent.weekday": []}, "wrong_shape"), ({"segments.res.intent.weekday": [0.1] * 25}, "wrong_shape"),
+                               ({"segments.res.intent.weekday": [0.1] * 23 + [None]}, "wrong_shape"),
+                               ({"segments.res.intent.weekday": [0.1] * 23 + [True]}, "wrong_shape"),
+                               ({"segments.res.intent.weekday": [0.1] * 23 + [[0.1]]}, "wrong_shape"),
+                               ({"segments.res.intent.weekday": [0.1] * 23 + ["0.1"]}, "wrong_shape"),
+                               ({"segments.res.intent.weekday": [0.1] * 23 + [1.0000001]}, "out_of_bounds"),
+                               ({"segments.res.intent.weekday": [-0.0000001] + [0.1] * 23}, "out_of_bounds"),
+                               ({"segments.res.holiday_day_type.major": ""}, "not_allowed"), ({"segments.res.holiday_day_type.major": "Weekday"}, "not_allowed"),
+                               ({"segments.res.holiday_day_type.major": ["weekday"]}, "wrong_shape"), ({"segments.res.holiday_day_type.major": None}, "wrong_shape"),
+                               ({"host.captive_share": 0.0499999}, "out_of_bounds"), ({"host.captive_share": 1.0000001}, "out_of_bounds"),
+                               ({"host.onsite_kitchen_weight": 10 ** 22}, "out_of_bounds")]:
+        validate(overrides, bad(list(overrides.keys())[0], error))
+    # Bounds are inclusive; a whole number is a number; minus zero is not below zero.
+    validate({"host.captive_share": 1, "host.shared_kitchen_share": 0.01, "host.onsite_kitchen_weight": -0.0, "weather.floor": 1.0,
+              "weather.pop_when_missing": 0, "events.attendance_haircut": 0.05, "segments.res.intent.weekday": [1.0] * 12 + [0] * 12,
+              "segments.w_office.presence.weekday": [2] * 24, "segments.v_events.dow_factor": [3, 0, 3.0, 0.0, 1]}, [])
+    # A whole number too large for a double (10^400: the other runtimes read the literal as infinity) is not a finite number.
+    validate({"host.onsite_kitchen_weight": 10 ** 400}, bad("host.onsite_kitchen_weight", "wrong_shape"))
+    validate({"segments.res.dow_factor": [1, 1, -(10 ** 400), 1, 1]}, bad("segments.res.dow_factor", "wrong_shape"))
+    # Paths. The result is in byte order of the paths: "" first, digits, capitals, "_", small letters; "-" and "." before "_".
+    validate({"b": 1, "a": 1, "B": 1, "a.b": 1, "a-b": 1, "a_b": 1, "10": 1, "9": 1, "": 1, "_": 1},
+             [{"path": p, "error": "unknown_path"} for p in ["", "10", "9", "B", "_", "a", "a-b", "a.b", "a_b", "b"]])
+    for path in [".", "host.", ".host", "host..captive_share", "toString", "constructor", "__proto__", "host.constructor", "host.__proto__",
+                 "host.captive_share.value.x", "segments.w_office.presence.weekday.length", "holidays.rules.0", "vocabulary.segments.0", "Host.captive_share"]:
+        validate({path: 0.5}, bad(path, "unknown_path"))
+    for path in ["host.captive_share.min", "host.captive_share.max", "host.captive_share.scope", "host.captive_share.unit", "weather.precip_classes.order",
+                 "weather.precip_classes.rows", "weather.precip_classes.rows.rain.match", "weather.precip_classes.match_rule", "segments.w_office.weak",
+                 "segments.w_office.group", "segments.w_office.host_mode", "segments.w_office.index", "segments.w_office.lodes_cns",
+                 "segments.w_office.holiday_day_type.allowed", "holidays.rules", "entry_format.scope", "weather.wind_bands.rows.calm.upper_mph"]:
+        validate({path: 0.5}, bad(path, "not_a_seed"))
+    for path in ["kernel", "host", "segments", "weather", "events", "host.exclusion_radius_m", "kernel.visibility.normal", "kernel.rival_weight.quick.day",
+                 "model_version", "seeds_revision", "vocabulary.segments", "hours.daypart_of_hour", "traffic.dc", "scout.max_results",
+                 "money.fuel_price_fallback.gasoline.R1Z", "place_types.rows.taproom.host_fit", "profile_defaults.daypart_fit.lunch"]:
+        validate({path: 0.5}, bad(path, "not_overridable"))
+    for path in ["events.p_buy", "segments.w_office.holiday_day_type", "segments.w_office.intent", "weather.temperature_bands", "weather.wind_bands",
+                 "weather.precip_classes.rows.rain"]:
+        validate({path: 0.5}, bad(path, "not_a_leaf"))
+
+    # A seed tree of the case's own, for the rules revision 1 has no entry for: a boolean seed, a text
+    # without a list of allowed values, a null, a table of tables, bounds on one side only, a scope and
+    # bounds inherited from different levels, a nearer scope replacing a farther one, bounds of 2^53.
+    syn = {"vocabulary": {"structural_keys": ["value", "unit", "scope", "min", "max", "allowed"]},
+           "plain": {"scope": "owner", "unit": "anything", "flag": True, "name": "abc", "free": 7.5, "nothing": None,
+                     "matrix": [[1.0, 2.0], [3.0, 4.0]],
+                     "tags": {"allowed": ["a", "b"], "both": ["a", "a"], "one": "a"},
+                     "wrapped": {"value": {"a": 1.0}},
+                     "low_only": {"value": 5.0, "min": 0.0},
+                     "high_only": {"value": 5.0, "max": 10.0}},
+           "outer": {"scope": "owner", "min": 0.0, "inner": {"max": 5.0, "leaf": {"value": 3.0}, "shut": {"scope": "fixed", "leaf": 1.0}}},
+           "closed": {"scope": "fixed", "leaf": 2.0, "open": {"scope": "owner", "leaf": 2.0}},
+           "wide": {"scope": "owner", "whole": {"value": 0, "min": -9007199254740992, "max": 9007199254740992},
+                    "real": {"value": 0.0, "min": -9007199254740992.0, "max": 9007199254740992.0}},
+           "bare": {"leaf": 1.0}}
+
+    def synthetic(overrides, want):
+        c.known(c.add("g24", "validate_overrides", {"seeds": syn, "overrides": overrides}), "", want)
+
+    synthetic({"plain.flag": False, "plain.name": "anything at all", "plain.free": -1.0e300, "plain.tags.both": ["b", "a"], "plain.tags.one": "b",
+               "plain.low_only": 1.0e9, "plain.high_only": -1.0e9, "outer.inner.leaf": 5, "closed.open.leaf": 99}, [])
+    for (path, value, error) in [("plain.flag", 1, "wrong_shape"), ("plain.flag", "yes", "wrong_shape"), ("plain.flag", None, "wrong_shape"),
+                                 ("plain.name", 5, "wrong_shape"), ("plain.name", True, "wrong_shape"),
+                                 ("plain.free", True, "wrong_shape"), ("plain.free", "7.5", "wrong_shape"),
+                                 ("plain.nothing", 1, "wrong_shape"), ("plain.nothing", None, "wrong_shape"),
+                                 ("plain.matrix", [[1.0, 2.0], [3.0, 4.0]], "wrong_shape"), ("plain.matrix", [1.0, 2.0], "wrong_shape"),
+                                 ("plain.tags.both", ["a", "c"], "not_allowed"), ("plain.tags.both", ["a"], "wrong_shape"),
+                                 ("plain.tags.both", ["a", 1], "wrong_shape"), ("plain.tags.both", "a", "wrong_shape"),
+                                 ("plain.tags.one", "c", "not_allowed"), ("plain.tags", "a", "not_a_leaf"), ("plain.wrapped", 1, "not_a_leaf"),
+                                 ("plain.wrapped.value", 1, "not_a_seed"), ("plain.unit", "other", "not_a_seed"),
+                                 ("plain.low_only", -0.5, "out_of_bounds"), ("plain.high_only", 10.5, "out_of_bounds"),
+                                 ("outer.inner.leaf", 5.5, "out_of_bounds"), ("outer.inner.leaf", -0.5, "out_of_bounds"),
+                                 ("outer.inner.shut.leaf", 1.0, "not_overridable"), ("closed.leaf", 2.0, "not_overridable"),
+                                 ("bare.leaf", 1.0, "not_overridable"), ("bare", 1.0, "not_overridable"), ("vocabulary.structural_keys", [], "not_overridable"),
+                                 ("plain.missing", 1, "unknown_path"), ("plain.free.deeper", 1, "unknown_path"), ("plain.matrix.0", 1, "unknown_path")]:
+        synthetic({path: value}, bad(path, error))
+    # Bounds are compared as binary64 values. 2^53 + 1 is not a double: it is read as 2^53, which is the
+    # bound itself, whether the seed file spells the bound as a whole number or as a real. 2^53 + 2 is a
+    # double and lies outside.
+    for leaf in ("wide.whole", "wide.real"):
+        for value in (9007199254740992, 9007199254740993, -9007199254740992, -9007199254740993, 9007199254740992.0):
+            synthetic({leaf: value}, [])
+        for value in (9007199254740994, -9007199254740994, 9007199254740994.0, 2 ** 63, -(2 ** 64)):
+            synthetic({leaf: value}, bad(leaf, "out_of_bounds"))
+
 
 def build_cases():
     """Every golden case, in its fixed order. Pure: the same list every time."""
@@ -3790,9 +4824,10 @@ CATALOGUE = {
     "map_weight_rows": map_weight_rows, "cell_scores": cell_scores, "score_byte": score_byte,
 }
 
-# Functions of the catalogue that have no golden case of their own: the two internal ones are covered
-# through day_context / typical_context and through day_plan / suggest_day.
-NO_DIRECT_CASES = ["make_context", "evaluate"]
+# Functions of the catalogue that have no golden case of their own: none. (The two internal ones,
+# make_context and evaluate, have a few direct cases besides what day_context / typical_context and
+# day_plan / suggest_day exercise.)
+NO_DIRECT_CASES = []
 
 MODEL_ERRORS = ["invalid_date", "invalid_window", "missing_context"]
 
@@ -3804,12 +4839,12 @@ def _plain(x):
 
 def call(function, args):
     """Run one case the way a port does: the function by its name, args as keyword arguments. `A` arrives
-    as { overrides, region } and gets the seed file; validate_overrides gets the seed file as `seeds`; a
-    model error becomes { "error": code }."""
+    as { overrides, region } and gets the seed file; validate_overrides gets the seed file as `seeds`
+    unless the case carries a seed tree of its own; a model error becomes { "error": code }."""
     kwargs = dict(args)
     if "A" in kwargs:
         kwargs["A"] = make_assumptions(kwargs["A"]["overrides"], kwargs["A"]["region"])
-    if function == "validate_overrides":
+    if function == "validate_overrides" and "seeds" not in kwargs:
         kwargs["seeds"] = SEEDS
     try:
         return _plain(CATALOGUE[function](**kwargs))
@@ -4437,6 +5472,55 @@ def _check_model(t, fx):
         previous = day["totals"]["take_home"]["value"]
     t.check(vectors_match(A, stops[0]["terms"], stops[0]["vectors"]) and vectors_match(A, stops[1]["terms"], stops[1]["vectors"]), "day plan: the worked day's vectors must match its terms")
 
+    # Where the model stops without a model error (section 7): these have no golden case, so they are held here.
+    def stops_with(expected, label, function, *arguments):
+        try:
+            function(*arguments)
+            t.check(False, "programming errors: %s returned a result" % label)
+        except ModelError as error:
+            t.check(False, "programming errors: %s raised the model error %s" % (label, error.code))
+        except expected:
+            t.check(True, "")
+        except Exception as error:
+            t.check(False, "programming errors: %s raised %s" % (label, type(error).__name__))
+
+    one_stop = build_timeline(A, P, fx.thu, stops[:1], fx.legs)
+    empty_day = build_timeline(A, P, fx.thu, [], fx.legs)
+    taproom_place = {"place_id": "w100", "place_type": "taproom", "point": {"lat": 39.0035, "lng": -77.4035}, "point_id": "pw100",
+                     "size_default": 40.0, "kitchen": None, "vectors": _stored(_zero_vectors(exclusion={"point_ids": ["pw100"], "segment": None, "amount": 0.0}))}
+    for bad_price in (None, True, False, "4.195", [4.195]):
+        stops_with(TypeError, "day_costs with fuel price %r" % (bad_price,), day_costs, P, one_stop, bad_price)
+        stops_with(TypeError, "day_costs of an empty day with fuel price %r" % (bad_price,), day_costs, P, empty_day, bad_price)
+        stops_with(TypeError, "scout_estimate with fuel price %r" % (bad_price,), scout_estimate, A, P, taproom_place, {}, None, bad_price)
+        stops_with(TypeError, "scout_estimate of a place that does not host, with fuel price %r" % (bad_price,), scout_estimate, A, P,
+                   dict(taproom_place, place_type="restaurant"), {}, None, bad_price)
+        stops_with(TypeError, "scout_estimate of a place with no window, with fuel price %r" % (bad_price,), scout_estimate, A, P,
+                   dict(taproom_place, size_default=0.0), {}, None, bad_price)
+    no_fuel = day_context(A, "2026-10-08", None, None, None, None)
+    stops_with(TypeError, "day_plan without a fuel price", day_plan, A, P, {"date": "2026-10-08", "stops": stops}, no_fuel, fx.fri, fx.legs, None)
+    stops_with(TypeError, "day_plan of an empty plan without a fuel price", day_plan, A, P, {"date": "2026-10-08", "stops": []}, no_fuel, fx.fri, fx.legs, None)
+    stops_with(ZeroDivisionError, "day_costs with mpg 0", day_costs, _profile(mpg=0.0), one_stop, FUEL)
+    stops_with(ZeroDivisionError, "day_costs of an empty day with mpg 0", day_costs, _profile(mpg=0.0), empty_day, FUEL)
+    stops_with(ZeroDivisionError, "scout_estimate with mpg 0", scout_estimate, A, _profile(mpg=0), taproom_place, {}, None, FUEL)
+    stops_with(ZeroDivisionError, "score_byte with hi 0", score_byte, 1.0, 0.0)
+    for path in ("no.such.path", "host.no_such_seed", "", "segments.w_office.presence.weekday.3", "holidays.rules.0", "host.captive_share.value.x"):
+        stops_with((KeyError, TypeError), "seed(%r)" % path, seed, A, path)
+    t.check(scout_estimate(A, _profile(mpg=0), dict(taproom_place, size_default=0.0), {}, None, FUEL)["best_window"] is None,
+            "programming errors: without a window scout_estimate has no drive to cost, whatever the mpg")
+    # A model error raised inside a day is the day's error: day_plan and suggest_day hand it on.
+    late_night = _stop("taproom", 1380, 1500, fx.terms_tap, fx.zero)
+    for (label, function, arguments) in (
+            ("day_plan", day_plan, (A, P, {"date": "2026-10-09", "stops": [late_night]}, fx.ctx_fuel["2026-10-09"], None, fx.legs, None)),
+            ("evaluate", evaluate, (A, P, {"date": "2026-10-09", "stops": [late_night]}, fx.ctx_fuel["2026-10-09"], None, fx.legs, None))):
+        try:
+            function(*arguments)
+            t.check(False, "errors: %s past midnight without the next day's context returned a result" % label)
+        except ModelError as error:
+            t.check(error.code == "missing_context", "errors: %s raised %s, expected missing_context" % (label, error.code))
+    t.check(_is_finite_number(1) and _is_finite_number(-2.5) and _is_finite_number(10 ** 300) and not _is_finite_number(10 ** 400)
+            and not _is_finite_number(float("inf")) and not _is_finite_number(float("nan")) and not _is_finite_number(True)
+            and not _is_finite_number("1") and not _is_finite_number(None), "seeds: what counts as a finite number in an override")
+
 
 def _check_results(t, cl, results):
     """Invariants that must hold in every golden result, whatever the case."""
@@ -4461,6 +5545,8 @@ def _check_results(t, cl, results):
                 t.check(e["low"] == e["value"] == e["high"], "%s%s: a fixed estimate with a range" % (where, path))
         if isinstance(result, dict) and "error" in result and len(result) == 1:
             errors_seen[result["error"]] = True
+            # 8.1 rule 10: whoever reads the file may run every day_plan case to a DayResult.
+            t.check(case["function"] != "day_plan", "%s: a day_plan case must not end in an error; the errors of a day are evaluate cases" % where)
         if case["function"] == "validate_overrides":
             for problem in result:
                 override_errors_seen[problem["error"]] = True
@@ -4532,7 +5618,7 @@ def _check_results(t, cl, results):
         if case["function"] == "suggest_day":
             keys = [qkey(s["take_home"]["value"]) for s in result]
             t.check(keys == sorted(keys, reverse=True) and [s["position"] for s in result] == list(range(1, len(result) + 1)), "%s: suggestions must be ranked best first" % where)
-        if case["function"] == "suggest_week":
+        if case["function"] == "suggest_week" and "days" in result:
             total = 0.0
             working = 0
             for d in result["days"]:
@@ -4651,6 +5737,37 @@ def golden_text(document):
     return "\n".join(lines) + "\n"
 
 
+def _moved_ids(path, cl):
+    """8.2: case ids are stable, because other tests name them. Compares the case list with the file
+    about to be replaced and reports every id that disappears or now names another call (a case put
+    into the middle of a family renumbers the ones after it). The file is written all the same: a
+    changed shape legitimately changes the arguments of old cases."""
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            before = json.load(handle)
+        old = {}
+        for case in before["cases"]:
+            old[case["id"]] = (case["function"], case["args"])
+    except (ValueError, KeyError, TypeError):
+        return ["the file being replaced could not be read as a golden file; ids were not compared"]
+    new = {}
+    for case in cl.cases:
+        new[case["id"]] = (case["function"], _plain(case["args"]))
+    gone = sorted([case_id for case_id in old if case_id not in new])
+    other_function = sorted([case_id for case_id in old if case_id in new and old[case_id][0] != new[case_id][0]])
+    other_args = sorted([case_id for case_id in old if case_id in new and old[case_id][0] == new[case_id][0]
+                         and old[case_id][1] != new[case_id][1]])
+    notes = []
+    for (label, ids) in (("no longer exist", gone), ("now call another function", other_function),
+                         ("now carry other arguments", other_args)):
+        if len(ids) > 0:
+            notes.append("%d case ids of the replaced file %s: %s%s"
+                         % (len(ids), label, ", ".join(ids[:12]), " ..." if len(ids) > 12 else ""))
+    return notes
+
+
 def write_golden(path):
     (cl, results, report) = self_test(True)
     if len(report.problems) > 0:
@@ -4659,6 +5776,8 @@ def write_golden(path):
         print("%d cases, %d property checks: %d problems; nothing written" % (len(cl.cases), report.checks, len(report.problems)))
         return 1
     text = golden_text(golden_document(cl, results))
+    for message in _moved_ids(path, cl):
+        print("NOTE " + message)
     directory = os.path.dirname(os.path.abspath(path))
     if not os.path.isdir(directory):
         os.makedirs(directory)
@@ -4694,7 +5813,183 @@ def check_golden(path):
     return 1 if len(drift) > 0 else 0
 
 
+# -------------------------------------------------------------------------------------------------
+# Branch reach of the golden cases (8.2)
+# -------------------------------------------------------------------------------------------------
+
+# What no golden case reaches in the model part of this file, and why: (function, source line, reason).
+# --reach fails when a line or a branch outcome that is not listed here goes unreached, and when an
+# entry listed here is reached after all.
+UNREACHED = [
+    ("load_seeds", 'with open(path, "r", encoding="utf-8") as handle:', "runs when the module is loaded, before any case"),
+    ("load_seeds", "return json.load(handle)", "runs when the module is loaded, before any case"),
+    ("make_assumptions", '"overrides": {} if overrides is None else overrides,', "a case always states its overrides; the default serves the fixtures"),
+    ("make_assumptions", '"region": REGION_DC if region is None else region}', "a case always states its region; the default serves the fixtures"),
+    ("_is_finite_number", "except OverflowError:", "float() of a number raises nothing else"),
+    ("require_number", "if not _is_number(x):", "a fuel price that is not a number is a programming error: no code and no golden case (7)"),
+    ("require_number", 'raise TypeError(name + " must be a number")', "the same; the self-test holds it as a property check"),
+    ("_rule_order", 'for rule in SEEDS["holidays"]["rules"]:', "every id it is asked for comes from the rule list, so the loop never runs out"),
+    ("_rule_order", "return order + 1", "the same"),
+    ("hour_weights", 'if A["seeds"] is SEEDS:', "the memo of this reference: a case always runs on the seed file"),
+    ("hour_weights", "if key is not None:", "the same"),
+    ("_band", 'for band_id in seed(A, "weather." + table + ".order"):', "the last band of every table has no upper bound, so the loop never runs out"),
+    ("_band", "return (None, 1.0)", "the same"),
+    ("build_timeline.<locals>.point_of", "for s in stops:", "every id it is asked for is a stop of the plan"),
+    ("_missing_forecast_hours", 'if cx is None or cx["typical"]:', "a missing next-day context has already stopped evaluate with missing_context"),
+]
+
+
+def reach():
+    """Measure what the golden cases reach in the model part of this file (everything above section 8).
+
+    Lines: the standard library's trace module counts the lines executed while every case runs through
+    call(). Branches (Python 3.12 or later): sys.monitoring reports every conditional jump taken; each
+    conditional jump of the byte code has two outcomes and both must be seen. The fixtures are built
+    before the measurement starts, so only the cases themselves count.
+
+    The counts are those of the interpreter that runs this: another version compiles the same source
+    to other byte code and may count a few branch outcomes more or fewer. What is not reached is named
+    by function and source line, which does not depend on the version."""
+    import dis
+    import trace
+    import types
+
+    if sys.version_info < (3, 11):
+        print("--reach needs Python 3.11 or later (3.12 or later for branches)")
+        return 2
+
+    here = os.path.abspath(__file__)
+    with open(here, "r", encoding="utf-8") as handle:
+        source = handle.read().split("\n")
+    model_end = 0
+    for i in range(len(source)):
+        if source[i].startswith("# 8. Golden cases"):
+            model_end = i + 1
+    module = sys.modules[__name__]
+
+    def text_of(line):
+        return source[line - 1].split("  #")[0].strip()
+
+    codes = []
+
+    def collect(code):
+        codes.append(code)
+        for const in code.co_consts:
+            if isinstance(const, types.CodeType):
+                collect(const)
+
+    for value in list(vars(module).values()):
+        if isinstance(value, types.FunctionType) and os.path.abspath(value.__code__.co_filename) == here and value.__code__.co_firstlineno < model_end:
+            collect(value.__code__)
+
+    cl = build_cases()
+    texts = [(case["function"], json.dumps(case["args"], sort_keys=True, allow_nan=False)) for case in cl.cases]
+
+    def run_all():
+        _HOUR_WEIGHTS_MEMO.clear()
+        for (function, text) in texts:
+            call(function, json.loads(text))
+
+    # Lines.
+    tracer = trace.Trace(count=1, trace=0)
+    tracer.runfunc(run_all)
+    executed = set()
+    for (filename, line) in tracer.results().counts:
+        if os.path.abspath(filename) == here:
+            executed.add(line)
+    unreached = {}                                  # (function, line text) -> what was not reached
+    executable = 0
+    functions = {}
+    for code in codes:
+        own_lines = set()
+        for (start, end, line) in code.co_lines():
+            if line is not None and line != code.co_firstlineno and line < model_end:
+                own_lines.add(line)
+        for const in code.co_consts:                # a nested function's lines belong to that function
+            if isinstance(const, types.CodeType):
+                for (start, end, line) in const.co_lines():
+                    if line is not None and line != const.co_firstlineno:
+                        own_lines.discard(line)
+        named = not code.co_qualname.split(".")[-1].startswith("<")
+        if named:
+            functions[code.co_qualname] = functions.get(code.co_qualname, False) or len(own_lines & executed) > 0
+        executable += len(own_lines)
+        for line in sorted(own_lines - executed):
+            unreached[(code.co_qualname, text_of(line))] = "line never executed"
+    lines_missed = len(unreached)
+
+    # Branch outcomes.
+    outcomes = 0
+    outcomes_missed = 0
+    monitoring = getattr(sys, "monitoring", None)
+    if monitoring is not None:
+        tool = 3
+        seen = {}
+
+        def on_branch(code, offset, destination):
+            seen.setdefault((code, offset), set()).add(destination)
+
+        events = monitoring.events
+        kinds = [events.BRANCH_LEFT, events.BRANCH_RIGHT] if hasattr(events, "BRANCH_LEFT") else [events.BRANCH]
+        mask = 0
+        monitoring.use_tool_id(tool, "truck-planner-reach")
+        for kind in kinds:
+            monitoring.register_callback(tool, kind, on_branch)
+            mask |= kind
+        for code in codes:
+            monitoring.set_local_events(tool, code, mask)
+        try:
+            run_all()
+        finally:
+            for code in codes:
+                monitoring.set_local_events(tool, code, 0)
+            monitoring.free_tool_id(tool)
+        conditional = ("POP_JUMP_IF_TRUE", "POP_JUMP_IF_FALSE", "POP_JUMP_IF_NONE", "POP_JUMP_IF_NOT_NONE", "FOR_ITER")
+        for code in codes:
+            for instruction in dis.get_instructions(code):
+                line = instruction.positions.lineno if instruction.positions is not None else None
+                if instruction.opname not in conditional or line is None or line >= model_end:
+                    continue
+                outcomes += 2
+                taken = len(seen.get((code, instruction.offset), ()))
+                if taken < 2:
+                    outcomes_missed += 2 - taken
+                    key = (code.co_qualname, text_of(line))
+                    if key not in unreached:
+                        unreached[key] = "a branch never taken" if taken == 1 else "never evaluated"
+
+    justified = {}
+    for (function, text, reason) in UNREACHED:
+        justified[(function, text)] = reason
+    problems = []
+    for key in sorted(unreached.keys()):
+        if key not in justified:
+            problems.append("not reached and not explained: %s: %s (%s)" % (key[0], key[1], unreached[key]))
+    if monitoring is not None:
+        for key in sorted(justified.keys()):
+            if key not in unreached:
+                problems.append("listed as unreached but reached: %s: %s" % key)
+
+    entered = len([name for name in functions if functions[name]])
+    print("golden cases: %d (Python %d.%d)" % (len(cl.cases), sys.version_info[0], sys.version_info[1]))
+    print("model functions: %d, entered by a case: %d, not entered: %s"
+          % (len(functions), entered, ", ".join(sorted(name for name in functions if not functions[name])) or "none"))
+    print("model lines: %d executable, %d executed, %d not executed" % (executable, executable - lines_missed, lines_missed))
+    if monitoring is None:
+        print("branch outcomes: not measured (sys.monitoring needs Python 3.12 or later)")
+    else:
+        print("branch outcomes: %d, %d reached, %d not reached" % (outcomes, outcomes - outcomes_missed, outcomes_missed))
+    for key in sorted(unreached.keys()):
+        print("  %-34s %-22s %s%s" % (key[0], unreached[key], key[1][:80], "" if key not in justified else "   <- " + justified[key]))
+    for message in problems:
+        print("PROBLEM " + message)
+    print("%d unexplained" % len(problems))
+    return 1 if len(problems) > 0 else 0
+
+
 def main(argv):
+    if len(argv) == 2 and argv[1] == "--reach":
+        return reach()
     if len(argv) == 2 and argv[1] == "--self-test":
         (cl, results, report) = self_test(True)
         for message in report.problems:

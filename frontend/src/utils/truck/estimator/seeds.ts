@@ -15,6 +15,8 @@ import type {
   OverrideProblem,
   Region,
   SeedFile,
+  SegmentKey,
+  SegmentSeed,
 } from './types';
 
 // The seed copy is shared by every estimate of a session. It is frozen all the way down, so a caller
@@ -84,6 +86,31 @@ export function seed<T = unknown>(A: Assumptions, path: string): T {
   }
   if (isDict(node) && hasOwn(node, 'value')) return node.value as T;
   return node as T;
+}
+
+/**
+ * seed(A, path) where a word of the input chose the last key of the path (an event type, a visibility
+ * level, a weather setting): the seed found there must be a number. A word outside the vocabulary that
+ * happens to name another key of the same table ("unit", "source") would otherwise be multiplied into
+ * the estimate as NaN; the reference stops on it, and so does this.
+ */
+export function seedNumber(A: Assumptions, path: string): number {
+  const value = seed<unknown>(A, path);
+  if (typeof value !== 'number') throw new TypeError('seed is not a number: ' + path);
+  return value;
+}
+
+/**
+ * The seed record of the segment an input names (the segment of a host). A word outside the vocabulary
+ * stops here: a bare lookup answers "toString" or "__proto__" with a member of Object.prototype, and the
+ * host would then be read as one that excludes nothing and is open.
+ */
+export function segmentSeed(A: Assumptions, segment: SegmentKey): SegmentSeed {
+  const segments: Record<string, SegmentSeed> = A.seeds.segments;
+  if (typeof segment !== 'string' || !hasOwn(segments, segment)) {
+    throw new TypeError('unknown segment: ' + String(segment));
+  }
+  return segments[segment];
 }
 
 // The curve arrays, the Monday-Friday factors and the holiday day types are read for every segment on

@@ -107,7 +107,9 @@ final class Seeds
         }
         $node = $A['seeds'];
         foreach (explode('.', $path) as $key) {
-            if (!is_array($node) || !array_key_exists($key, $node)) {
+            // A path walks objects only: "3" is not a key of an array of 24 numbers, although PHP would
+            // find index 3 there.
+            if (!self::isObject($node) || !array_key_exists($key, $node)) {
                 throw new \OutOfBoundsException('unknown seed path: ' . $path);      // a defect of the caller
             }
             $node = $node[$key];
@@ -185,10 +187,13 @@ final class Seeds
         $items = is_array($value) ? $value : [$value];
         foreach ($items as $x) {                                                     // step 6
             if (is_int($x) || is_float($x)) {
-                if (array_key_exists('min', $inherited) && $x < $inherited['min']) {
+                // As reals on both sides. PHP compares two integers exactly and an integer with a real as
+                // reals, so beyond 2^53 the answer would otherwise hang on how the seed file spells a bound.
+                $real = (float) $x;
+                if (array_key_exists('min', $inherited) && $real < Num::f($inherited['min'])) {
                     return 'out_of_bounds';
                 }
-                if (array_key_exists('max', $inherited) && $x > $inherited['max']) {
+                if (array_key_exists('max', $inherited) && $real > Num::f($inherited['max'])) {
                     return 'out_of_bounds';
                 }
             }

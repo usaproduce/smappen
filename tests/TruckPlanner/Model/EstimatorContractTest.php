@@ -188,6 +188,133 @@ final class EstimatorContractTest extends TestCase
         Estimator::hourlyOrders($A, self::profile(), self::terms(), self::zeroVectors(), null, Estimator::typicalContext($A, 0), 24);
     }
 
+    /**
+     * 02_MODEL.md 4.1: a date that is not a string at all (null, a number, a list) is `invalid_date` like any
+     * other value that is not "YYYY-MM-DD", in every function that takes a date. It is not a TypeError: the
+     * reference answers a model error, and callers validate dates through these very functions.
+     */
+    public function testADateThatIsNotAStringIsAnInvalidDate(): void
+    {
+        $A = Seeds::assumptions([], self::regionDc());
+        $flags = ['inauguration_day' => true];
+        $contexts = [];
+        for ($d = 0; $d < 8; $d++) {
+            $contexts[] = Estimator::dayContext($A, Estimator::addDays('2026-10-05', $d), null, null, 4.195, 'seed');
+        }
+        foreach ([null, 20261008, 2026.1008, true, ['2026-10-08'], ['date' => '2026-10-08']] as $notADate) {
+            $label = get_debug_type($notADate);
+            self::assertSame('invalid_date', self::codeOf(static fn () => Estimator::parseDate($notADate)), 'parse_date ' . $label);
+            self::assertSame('invalid_date', self::codeOf(static fn () => Estimator::dayOfWeek($notADate)), 'day_of_week ' . $label);
+            self::assertSame('invalid_date', self::codeOf(static fn () => Estimator::addDays($notADate, 1)), 'add_days ' . $label);
+            self::assertSame('invalid_date', self::codeOf(static fn () => Estimator::holidayOn($notADate, $flags)), 'holiday_on ' . $label);
+            self::assertSame('invalid_date', self::codeOf(static fn () => Estimator::dayContext($A, $notADate, null, null, null, null)), 'day_context ' . $label);
+            self::assertSame('invalid_date', self::codeOf(static fn () => Estimator::calibrate($A, [], $notADate)), 'calibrate ' . $label);
+            self::assertSame(
+                'invalid_date',
+                self::codeOf(static fn () => Estimator::suggestWeek($A, self::profile(), $notADate, $contexts, [], [], null, null)),
+                'suggest_week ' . $label
+            );
+        }
+        self::assertSame([2026, 10, 8], Estimator::parseDate('2026-10-08'));
+    }
+
+    /** A model error raised inside a day is the day's error: the plan functions hand it on unchanged. */
+    public function testDayPlanHandsOnTheModelErrorOfAStop(): void
+    {
+        $A = Seeds::assumptions([], self::regionDc());
+        $ctx = Estimator::dayContext($A, '2026-10-09', null, null, 4.195, 'seed');
+        $plan = ['date' => '2026-10-09', 'stops' => [self::stop('a', 1380, 1500)]];       // 23:00 to 01:00
+        $legs = ['base>a' => self::leg(11, 4.85), 'a>base' => self::leg(11, 4.85)];
+
+        self::assertSame('missing_context', self::codeOf(static fn () => Estimator::dayPlan($A, self::profile(), $plan, $ctx, null, $legs, null)));
+        self::assertSame('missing_context', self::codeOf(static fn () => Estimator::evaluate($A, self::profile(), $plan, $ctx, null, $legs, null)));
+        $next = Estimator::dayContext($A, '2026-10-10', null, null, 4.195, 'seed');
+        self::assertSame('2026-10-09', Estimator::dayPlan($A, self::profile(), $plan, $ctx, $next, $legs, null)['date']);
+    }
+
+    /**
+     * A seed path walks objects only. PHP would find index 3 in an array of 24 numbers under the key "3";
+     * the reference and the TypeScript port stop there, and so does this port.
+     */
+    public function testASeedPathDoesNotWalkIntoAnArray(): void
+    {
+        $A = Seeds::defaults();
+        self::assertCount(24, Estimator::seed($A, 'segments.w_office.presence.weekday'));
+        foreach (['segments.w_office.presence.weekday.3', 'holidays.rules.0', 'holidays.rules.0.id', 'vocabulary.segments.0', 'traffic.dc.0', 'host.captive_share.value.x', ''] as $path) {
+            try {
+                Estimator::seed($A, $path);
+                self::fail('seed("' . $path . '") returned a value');
+            } catch (\OutOfBoundsException $error) {
+                self::assertStringContainsString('unknown seed path', $error->getMessage());
+            }
+        }
+        // An override under exactly such a path is still an override: seed() does not judge paths.
+        self::assertSame(0.2, Estimator::seed(Seeds::assumptions(['segments.w_office.presence.weekday.3' => 0.2]), 'segments.w_office.presence.weekday.3'));
+    }
+
+    /**
+     * An overridden curve is checked like any other input: a null or a numeric string among its 24 numbers
+     * is a TypeError, never a silent zero (overrides are validated when saved; this is the last line).
+     */
+    public function testAnOverriddenCurveIsNotReadLeniently(): void
+    {
+        $nulls = array_fill(0, 24, 0.5);
+        $nulls[12] = null;
+        $strings = array_fill(0, 24, '0.5');
+        foreach (['presence', 'intent'] as $curve) {
+            foreach ([$nulls, $strings] as $values) {
+                $A = Seeds::assumptions(['segments.w_office.' . $curve . '.weekday' => $values], self::regionDc());
+                $ctx = Estimator::typicalContext($A, 3);
+                $calls = [
+                    static fn () => Estimator::hourWeights($A, $ctx),
+                    static fn () => Estimator::hourlyOrders($A, self::profile(), self::terms(), self::zeroVectors(), null, $ctx, 12),
+                    static fn () => Estimator::expandCurves($A),
+                    static fn () => Estimator::mapWeightRows($A, self::profile(), null),
+                ];
+                foreach ($calls as $call) {
+                    try {
+                        $call();
+                        self::fail('a malformed ' . $curve . ' curve was read');
+                    } catch (\TypeError $error) {
+                        self::assertStringContainsString('must be of type float', $error->getMessage());
+                    }
+                }
+            }
+        }
+        // Whole numbers are numbers: a curve written 0 and 1 is read as 0.0 and 1.0.
+        $A = Seeds::assumptions(['segments.w_office.presence.weekday' => array_fill(0, 24, 1), 'segments.w_office.intent.weekday' => array_fill(0, 24, 0)], self::regionDc());
+        $w = Estimator::hourWeights($A, Estimator::typicalContext($A, 3));
+        self::assertSame(1.08, $w['presence'][1][12]);
+        self::assertSame(0.0, $w['intent'][1][12]);
+    }
+
+    /**
+     * 02_MODEL.md section 7: scout_estimate refuses a fuel price that is not a number at once, whether or not
+     * the place ends up with a drive to cost (a place type that does not host, a place with no window).
+     */
+    public function testScoutingRefusesAFuelPriceThatIsNotANumber(): void
+    {
+        $A = Seeds::assumptions([], self::regionDc());
+        $place = [
+            'place_id' => 'w1', 'place_type' => 'taproom', 'point' => ['lat' => 39.0035, 'lng' => -77.4035], 'point_id' => 'pw1',
+            'size_default' => 40.0, 'kitchen' => null, 'vectors' => self::zeroVectors(),
+        ];
+        $places = ['a host with a window' => $place, 'no window' => ['size_default' => 0.0] + $place, 'not a host' => ['place_type' => 'restaurant'] + $place];
+        foreach ($places as $label => $candidate) {
+            foreach ([null, true, '4.195'] as $price) {
+                try {
+                    Estimator::dispatch('scout_estimate', ['A' => $A, 'profile' => self::profile(), 'place' => $candidate, 'legs' => [], 'cal' => null, 'fuel_price_per_gal' => $price]);
+                    self::fail($label . ': a fuel price of ' . get_debug_type($price) . ' was accepted');
+                } catch (\TypeError $error) {
+                    self::assertStringContainsString('fuelPricePerGal', $error->getMessage(), $label);
+                }
+            }
+        }
+        self::assertNull(Estimator::scoutEstimate($A, self::profile(), $places['not a host'], [], null, 4.195));
+        self::assertNull(Estimator::scoutEstimate($A, self::profile(), $places['no window'], [], null, 4.195)['best_window']);
+        self::assertNotNull(Estimator::scoutEstimate($A, self::profile(), $places['a host with a window'], [], null, 4)['best_window']);
+    }
+
     // --- dispatch ---------------------------------------------------------------------------------------
 
     public function testDispatchByCanonicalNameWithNamedArguments(): void

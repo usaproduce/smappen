@@ -56,7 +56,7 @@ export function stripFromRows(
  * One candidate host: its best window in a typical week, what it would leave, the cost of driving
  * there and back, and a score that ranks (it is never shown as money). null for a place type that does
  * not host trucks. `legs` is keyed "base><place_id>" and "<place_id>>base". position is 0 until
- * scoutRank numbers the results.
+ * scoutRank numbers the results. The fuel price must be a number, whether or not this place uses it.
  */
 export function scoutEstimate(
   A: Assumptions,
@@ -66,6 +66,9 @@ export function scoutEstimate(
   cal: CalibrationState | null,
   fuelPricePerGal: number,
 ): ScoutResult | null {
+  if (typeof fuelPricePerGal !== 'number') {
+    throw new TypeError('scoutEstimate: fuel_price_per_gal must be a number');
+  }
   const row = seed<PlaceTypeSeed>(A, 'place_types.rows.' + place.place_type);
   if (row.host_fit <= 0) return null;
   const kitchen: 'yes' | 'no' =
@@ -139,9 +142,6 @@ export function scoutEstimate(
     teardown_minutes: null,
   };
   const T = buildTimeline(A, profile, ctx, [stop], legs);
-  if (typeof fuelPricePerGal !== 'number') {
-    throw new TypeError('scoutEstimate: fuel_price_per_gal must be a number');
-  }
   const cost =
     (T.drive_minutes / 60.0) * profile.paid_crew * profile.wage_per_hour * (1.0 + profile.payroll_burden_pct) +
     (T.miles / nonZero(profile.mpg, 'profile.mpg')) * fuelPricePerGal +

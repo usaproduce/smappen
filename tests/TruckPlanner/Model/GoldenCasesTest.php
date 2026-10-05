@@ -37,7 +37,7 @@ final class GoldenCasesTest extends TestCase
     private const EXACT_FUNCTIONS = [
         'round_half_away', 'qkey', 'seed', 'est_fixed', 'est_levels', 'est_sum',
         'days_from_civil', 'civil_from_days', 'parse_date', 'day_of_week', 'federal_holidays', 'holiday_on',
-        'day_context', 'typical_context', 'hour_weights', 'expand_curves',
+        'day_context', 'typical_context', 'make_context', 'hour_weights', 'expand_curves',
         'host_exclusion', 'host_capture', 'weather_multiplier', 'calibration_factor', 'hourly_orders',
         'week_strip', 'best_windows', 'evidence_from',
         'stop_money_at', 'stop_money', 'unit_margins', 'break_even_orders', 'day_costs',
@@ -135,7 +135,7 @@ final class GoldenCasesTest extends TestCase
         self::assertGreaterThan(0, count(self::golden()['cases']));
     }
 
-    /** Every function of the document has a golden case, except the two that are covered through others. */
+    /** Every function of the document has a golden case of its own, the two internal ones included. */
     public function testEveryFunctionHasACase(): void
     {
         $used = [];
@@ -148,7 +148,21 @@ final class GoldenCasesTest extends TestCase
         }
         $missing = array_values(array_diff($catalogue, array_keys($used)));
         sort($missing);
-        self::assertSame(['evaluate', 'make_context'], $missing);
+        self::assertSame([], $missing);
+    }
+
+    /** The three model errors each have a case, and nothing else is ever expected as an error. */
+    public function testEveryModelErrorHasACase(): void
+    {
+        $seen = [];
+        foreach (self::golden()['cases'] as $case) {
+            $code = self::expectedError($case['expected']);
+            if ($code !== null) {
+                $seen[$code] = ($seen[$code] ?? 0) + 1;
+            }
+        }
+        ksort($seen);
+        self::assertSame(['invalid_date', 'invalid_window', 'missing_context'], array_keys($seen));
     }
 
     /** The sanity anchors of 02_MODEL.md 8.3: ranges, asserted in addition to the exact golden values. */

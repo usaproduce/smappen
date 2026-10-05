@@ -42,9 +42,8 @@ const GOLDEN_PATH = fileURLToPath(
 const golden: GoldenFile = JSON.parse(readFileSync(GOLDEN_PATH, 'utf8'));
 const TOLERANCE = golden.tolerance;
 
-// The catalogue of 02_MODEL section 4 plus the helpers of 8.1: 64 names. make_context and evaluate
-// have no case of their own (they are exercised through day_context / typical_context and through
-// day_plan / suggest_day).
+// The catalogue of 02_MODEL section 4 plus the helpers of 8.1: 64 names, every one with golden cases
+// of its own (the two internal ones, make_context and evaluate, included).
 const CATALOGUE = [
   'round_half_away', 'qkey', 'seed', 'validate_overrides', 'est_fixed', 'est_levels', 'weakest', 'est_sum',
   'days_from_civil', 'civil_from_days', 'parse_date', 'format_date', 'day_of_week', 'add_days', 'nth_weekday',
@@ -57,7 +56,7 @@ const CATALOGUE = [
   'calibrate', 'accuracy_report', 'event_orders', 'catering_money', 'suggest_day', 'suggest_week',
   'scout_estimate', 'strip_from_rows', 'scout_rank', 'map_weight_rows', 'cell_scores', 'score_byte',
 ];
-const NO_DIRECT_CASES = ['make_context', 'evaluate'];
+const NO_DIRECT_CASES: string[] = [];
 
 // Functions that use only +, -, *, /, sqrt and floor on their arguments and on the seeds. IEEE-754
 // rounds those exactly, so for these a port that adds and multiplies in the order of the reference
@@ -65,7 +64,7 @@ const NO_DIRECT_CASES = ['make_context', 'evaluate'];
 // calls exp, ln, sin, cos or asin somewhere and is held to the tolerance only.
 const EXACT_FUNCTIONS = new Set([
   'round_half_away', 'qkey', 'seed', 'est_fixed', 'est_levels', 'est_sum', 'days_from_civil', 'civil_from_days',
-  'parse_date', 'day_of_week', 'day_context', 'typical_context', 'hour_weights', 'expand_curves', 'host_exclusion',
+  'parse_date', 'day_of_week', 'day_context', 'typical_context', 'make_context', 'hour_weights', 'expand_curves', 'host_exclusion',
   'host_capture', 'weather_multiplier', 'calibration_factor', 'hourly_orders', 'week_strip', 'best_windows',
   'evidence_from', 'stop_money_at', 'stop_money', 'unit_margins', 'break_even_orders', 'day_costs',
   'traffic_factor', 'leg_minutes', 'accuracy_report', 'catering_money', 'strip_from_rows', 'scout_rank',
@@ -183,7 +182,7 @@ describe('golden file', () => {
     expect(unknown).toEqual([]);
   });
 
-  it('GOLDEN_DISPATCH holds exactly the catalogue, and every function but two has a case', () => {
+  it('GOLDEN_DISPATCH holds exactly the catalogue, and every function has a case', () => {
     expect(Object.keys(GOLDEN_DISPATCH).sort()).toEqual(CATALOGUE.slice().sort());
     const used = new Set(golden.cases.map((c) => c.function));
     const unused = CATALOGUE.filter((name) => !used.has(name));
@@ -310,7 +309,7 @@ describe('sanity anchors (02_MODEL 8.3)', () => {
   }
 });
 
-describe('catalogue functions without a case of their own', () => {
+describe('the two internal functions against the cases of their callers', () => {
   it('make_context reproduces what day_context and typical_context return', () => {
     let checked = 0;
     for (const c of golden.cases) {
@@ -343,6 +342,7 @@ describe('catalogue functions without a case of their own', () => {
     for (const c of golden.cases) {
       if (c.function !== 'day_plan') continue;
       const want = c.expected as Record<string, any>;
+      if (expectedError(c) !== null) continue; // a day that fails as a whole has nothing to compare
       const blocked = want.warnings.some(
         (w: { code: string }) => w.code === 'invalid_window' || w.code === 'stops_overlap',
       );

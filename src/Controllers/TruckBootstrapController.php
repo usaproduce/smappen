@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Core\Request;
+use App\TruckPlanner\Services\BootstrapService;
 
 /**
  * Truck Planner: everything a /truck page needs before its first render (4.3).
@@ -11,13 +12,19 @@ use App\Core\Request;
  * Routes (docs/truck-planner/04_BACKEND.md section 3):
  *   GET /api/truck/bootstrap  ->  show
  *
- * Stub of the foundation package: every action runs the base guards and answers 501
- * "Not implemented yet". The file belongs to package P3, which replaces the bodies.
+ * Works without a truck: the answer then says `has_truck: false` and the browser shows the first-run step.
  */
 class TruckBootstrapController extends TruckBaseController
 {
     public function show(Request $request): void
     {
-        $this->stub($request, false);
+        $this->run(function () use ($request): void {
+            $orgId = $this->orgId($request);
+            $truck = $this->truck($request, false);
+            $this->ok(
+                (new BootstrapService())->build($orgId, $truck),
+                ['assumptions.overrides', 'calibration.spots']
+            );
+        });
     }
 }

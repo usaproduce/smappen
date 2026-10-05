@@ -5,7 +5,7 @@
 
 import { MODEL_VERSION, NSEG, cmpStr, min2, segmentIndex } from './core';
 import { haversineM, walkWeight } from './geometry';
-import { seed } from './seeds';
+import { seed, seedNumber, segmentSeed } from './seeds';
 import type {
   Assumptions,
   Exclusion,
@@ -33,6 +33,7 @@ export function rivalsAtOrigin(A: Assumptions, lat: number, lng: number, outlets
     const f = walkWeight(A, haversineM(lat, lng, o.lat, o.lng));
     if (f === 0.0) continue;
     const w = seed<RivalWeightSeed>(A, 'kernel.rival_weight.' + o.kind);
+    if (typeof w.day !== 'number' || typeof w.eve !== 'number') throw new TypeError('not a rival kind: ' + String(o.kind));
     out.day += w.day * f;
     out.eve += w.eve * f;
   }
@@ -47,7 +48,7 @@ export function rivalsAtOrigin(A: Assumptions, lat: number, lng: number, outlets
 export function hostExclusion(A: Assumptions, host: Host | null): Exclusion {
   if (host == null) return { point_ids: [], segment: null, amount: 0.0 };
   const ids: string[] = host.point_id != null ? [host.point_id] : [];
-  const group = A.seeds.segments[host.segment].group;
+  const group = segmentSeed(A, host.segment).group;
   if (group === 'workers' || group === 'residents') {
     return { point_ids: ids, segment: host.segment, amount: host.size };
   }
@@ -110,7 +111,7 @@ export function captureAtPoint(
   outlets: readonly Outlet[],
   exclusion: Exclusion,
 ): LocationVectors {
-  const V = seed<number>(A, 'kernel.visibility.' + visibility);
+  const V = seedNumber(A, 'kernel.visibility.' + visibility);
   const A0 = seed<number>(A, 'kernel.outside_option_a0');
   const rows: CaptureRow[] = [];
   const sorted = byId(sources);
@@ -189,7 +190,7 @@ export function hostCapture(
   if (host == null || host.size <= 0) {
     return { day: 0.0, eve: 0.0, share: { day: 0.0, eve: 0.0 }, mode: null };
   }
-  const mode = A.seeds.segments[host.segment].host_mode;
+  const mode = segmentSeed(A, host.segment).host_mode;
   let shareDay: number;
   let shareEve: number;
   if (mode === 'captive') {
@@ -197,7 +198,7 @@ export function hostCapture(
     shareDay = sh;
     shareEve = sh;
   } else {
-    const V = seed<number>(A, 'kernel.visibility.' + visibility);
+    const V = seedNumber(A, 'kernel.visibility.' + visibility);
     const A0 = seed<number>(A, 'kernel.outside_option_a0');
     const K = host.only_food ? 0.0 : seed<number>(A, 'host.onsite_kitchen_weight');
     shareDay = V / (A0 + V + rivalsHere.day + K);

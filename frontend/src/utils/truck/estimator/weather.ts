@@ -1,7 +1,7 @@
 // Truck Planner estimator - weather (02_MODEL 4.6).
 
 import { clamp, max2 } from './core';
-import { seed } from './seeds';
+import { seed, seedNumber } from './seeds';
 import type { Assumptions, HourForecast, WeatherDetail, WeatherSetting } from './types';
 
 /** Only A-Z become a-z; every other character is unchanged (no locale, no Unicode case mapping). */
@@ -27,7 +27,7 @@ function band(
     const id = order[k];
     const upper = seed<number | null>(A, 'weather.' + table + '.rows.' + id + '.' + key);
     if (upper == null || x < upper) {
-      return { id, value: seed<number>(A, 'weather.' + table + '.rows.' + id + '.' + setting) };
+      return { id, value: seedNumber(A, 'weather.' + table + '.rows.' + id + '.' + setting) };
     }
   }
   return { id: null, value: 1.0 }; // not reached: the last band has no bound
@@ -83,7 +83,7 @@ export function weatherMultiplier(A: Assumptions, fc: HourForecast | null, setti
       }
     }
   }
-  const m = seed<number>(A, 'weather.precip_classes.rows.' + cls + '.' + setting);
+  const m = seedNumber(A, 'weather.precip_classes.rows.' + cls + '.' + setting);
   let p: number;
   if (cls === 'dry') {
     p = 0.0;
