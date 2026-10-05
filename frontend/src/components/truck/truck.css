@@ -1,0 +1,270 @@
+/*
+ * Truck Planner stylesheet (docs/truck-planner/05_FRONTEND.md 7.1). Plain CSS: no Tailwind directive
+ * and no @apply, so it can ship with the lazy Truck Planner chunk (TruckPages.ts imports it).
+ *
+ * Every colour is a variable of styles.css. The tokens below say WHICH THING a mark is, never whether
+ * it is good or bad: state colours stay with the money and freshness tokens.
+ */
+
+:root {
+  --tp-group-res:   var(--accent-revenue);     /* residents */
+  --tp-group-work:  var(--accent-cost-food);   /* workers */
+  --tp-group-visit: var(--accent-brand);       /* visitors and hosts */
+  --tp-tl-prep:     var(--slate);              /* prep and close-out */
+  --tp-tl-drive:    var(--accent-revenue);
+  --tp-tl-setup:    var(--accent-cost-food);   /* setup and pack-up */
+  --tp-tl-service:  var(--accent-brand);
+  --tp-tl-wait:     var(--line);               /* hatched; the label says paid or unpaid */
+}
+
+:root[data-theme="dark"] {
+  --tp-group-res:   var(--accent-revenue);
+  --tp-group-work:  var(--accent-cost-food);
+  --tp-group-visit: var(--accent-brand);
+  --tp-tl-prep:     var(--slate);
+  --tp-tl-drive:    var(--accent-revenue);
+  --tp-tl-setup:    var(--accent-cost-food);
+  --tp-tl-service:  var(--accent-brand);
+  --tp-tl-wait:     var(--line);
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Overlays (3.7). The scrim is its own class, not Tailwind's "fixed inset-0": that keeps the global
+ * rule ".fixed.inset-0 > div[class*=rounded]" (it leaves a transform on the panel) and the
+ * orphan-overlay sweeper of App.tsx away from it. A plain scrim, no blur.
+ * ------------------------------------------------------------------------------------------- */
+
+.tp-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 50;
+}
+
+/* A dialog panel never grows past the window: it scrolls inside. */
+.tp-modal {
+  max-height: 90vh;
+  max-height: 90dvh;
+}
+
+/*
+ * A sheet without a scrim (the spot card on the map): only the panel takes pointer events. On a
+ * phone it covers the screen like any sheet; from 768 px it sits beside the page on the level of
+ * the floating map cards, under the menus of the top bar.
+ */
+.tp-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+@media (min-width: 768px) {
+  .tp-layer { z-index: 20; }
+}
+.tp-layer > * { pointer-events: auto; }
+
+/* Right-hand sheet: full screen on phones, a panel under the sub-navigation from 768 px. */
+.tp-sheet-right {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+@media (min-width: 768px) {
+  .tp-sheet-right {
+    inset: var(--tp-sheet-top, 98px) 0 0 auto;
+    width: var(--tp-sheet-width, 420px);
+    max-width: 100vw;
+    border-left: 1px solid var(--line-soft);
+  }
+}
+
+/* Bottom sheet: rests at 45 % of the height, expands to 92 % with its labelled button. */
+.tp-sheet-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 45vh;
+  height: 45dvh;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--line-soft);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  padding-bottom: env(safe-area-inset-bottom);
+  transition: height 0.2s ease;
+}
+.tp-sheet-bottom[data-expanded="true"] {
+  height: 92vh;
+  height: 92dvh;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Fixed and floating pieces used by the pages
+ * ------------------------------------------------------------------------------------------- */
+
+/* The phone planner bar. It needs a surface class (bg-white) from the markup. */
+.tp-bottom-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 1px solid var(--line-soft);
+}
+
+/* A map pin: positioned by the map host through "transform", never by React state. */
+.tp-pin {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* The hover hint that follows the pointer on the map: moved imperatively, never clickable. */
+.tp-hint {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  max-width: 240px;
+  pointer-events: none;
+  will-change: transform;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+/* A popover of the kit (confidence and seed hints): placed by the component, above every overlay. */
+.tp-popover {
+  position: fixed;
+  width: 240px;
+  max-width: calc(100vw - 16px);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--body);
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Controls
+ * ------------------------------------------------------------------------------------------- */
+
+/* Neutral chip: confidence labels, seed tags, weather and holiday chips. Neutral on purpose. */
+.tp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 9999px;
+  background: var(--bg-panel);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  border: 0;
+}
+.tp-chip-sm { height: 20px; padding: 0 6px; }
+button.tp-chip { cursor: help; }
+
+/* Switch: a 44 x 24 px track; the knob slides and carries a tick when on. */
+.tp-switch {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 24px;
+  border-radius: 9999px;
+  background: var(--line);
+  transition: background-color 0.15s ease;
+}
+.tp-switch[data-on="true"] { background: var(--brand); }
+.tp-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand);
+  border: 1px solid var(--line);
+  transition: transform 0.15s ease;
+}
+.tp-switch[data-on="true"] .tp-switch-knob { transform: translateX(20px); }
+
+/* Inputs keep the .input focus border; these fields add their own invalid state. */
+.tp-invalid,
+.tp-invalid:focus {
+  border-color: var(--money-negative);
+}
+
+/*
+ * A block that scrolls sideways (a table, the timeline bar). It takes the width it is given and
+ * adds nothing to the width its ancestors ask for, so a wide table can never push a grid column or
+ * the page itself wider than the window.
+ */
+.tp-scroll-x {
+  overflow-x: auto;
+  width: 0;
+  min-width: 100%;
+}
+
+/* Rows of figures (StatRow, the breakdown): a hairline between them. */
+.tp-stat-list > * + * { border-top: 1px solid var(--line-soft); }
+
+/* A table row or card that opens something. */
+.tp-row-click { cursor: pointer; }
+.tp-row-click:hover { background: var(--bg-panel); }
+
+/* The dim state of an estimate whose inputs are refreshing. */
+.tp-dim { opacity: 0.55; }
+
+/* A focus ring for SVG cells and bars, which the global button ring does not reach. */
+.tp-svg-focus:focus { outline: none; }
+.tp-svg-focus:focus-visible {
+  outline: 2px solid var(--nav-ring);
+  outline-offset: 1px;
+}
+
+/* A date input laid over its calendar button: invisible, still clickable and focusable. */
+.tp-date-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.tp-date-wrap:focus-within {
+  outline: 2px solid var(--nav-ring);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Print: anything a printed page must not show (toolbars, buttons). The day sheet's own print rules
+ * live in print.css.
+ * ------------------------------------------------------------------------------------------- */
+
+@media print {
+  .tp-no-print { display: none !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tp-sheet-bottom,
+  .tp-switch,
+  .tp-switch-knob { transition: none !important; }
+}

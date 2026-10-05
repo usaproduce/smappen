@@ -18,3 +18,5 @@ public/uploads/*
 .phpunit.cache/
 storage/truck/
 tools/truck-etl/node_modules/
+composer.lock
+__pycache__/

@@ -7,6 +7,10 @@
   <testsuites>
     <testsuite name="unit">
       <directory>tests</directory>
+      <exclude>tests/TruckPlanner</exclude>
+    </testsuite>
+    <testsuite name="truck-planner">
+      <directory>tests/TruckPlanner</directory>
     </testsuite>
   </testsuites>
   <source>
@@ -16,6 +20,7 @@
       <directory suffix=".php">src/PrivateData</directory>
       <directory suffix=".php">src/MarketData</directory>
       <directory suffix=".php">src/SharedRef</directory>
+      <directory suffix=".php">src/TruckPlanner</directory>
     </include>
   </source>
 </phpunit>

@@ -64,6 +64,20 @@ use App\Controllers\CarafeAdminController;
 use App\Controllers\ComparisonController;
 use App\Controllers\ConsolidationController;
 use App\Controllers\LeadController;
+use App\Controllers\TruckBootstrapController;
+use App\Controllers\TruckProfileController;
+use App\Controllers\TruckAssumptionsController;
+use App\Controllers\TruckRegionController;
+use App\Controllers\TruckSimulateController;
+use App\Controllers\TruckSpotController;
+use App\Controllers\TruckDayContextController;
+use App\Controllers\TruckDriveController;
+use App\Controllers\TruckPlanController;
+use App\Controllers\TruckSuggestController;
+use App\Controllers\TruckServiceLogController;
+use App\Controllers\TruckCalibrationController;
+use App\Controllers\TruckScoutController;
+use App\Controllers\TruckDataController;
 
 return function (Router $r) {
     $auth = [Middleware::auth()];
@@ -514,4 +528,59 @@ return function (Router $r) {
     $r->post('/api/admin/review-queue/dedupe/{id}/defer',               [ReviewQueueController::class, 'dedupeDefer'],      $adminAuth);
     $r->post('/api/admin/review-queue/classify/{id}/approve',           [ReviewQueueController::class, 'classifyApprove'],  $adminAuth);
     $r->post('/api/admin/review-queue/classify/{id}/update',            [ReviewQueueController::class, 'classifyUpdate'],   $adminAuth);
+
+    // Truck Planner. Not plan-gated. A rate-limit profile only where the request can reach a Google quota.
+    $tpAuth    = [Middleware::auth()];
+    $tpDrive   = [Middleware::auth(), Middleware::rateLimit('tp_drive',   240, 3600)];
+    $tpSuggest = [Middleware::auth(), Middleware::rateLimit('tp_suggest',  30, 3600)];
+    $tpScout   = [Middleware::auth(), Middleware::rateLimit('tp_scout',    60, 3600)];
+    $tpContact = [Middleware::auth(), Middleware::rateLimit('tp_contact',  20, 3600)];
+    $tpOwner   = [Middleware::auth(), Middleware::requireRole(['owner', 'admin'])];
+    // The router takes the first pattern that matches the path and the verb: a literal path stands
+    // above the pattern that would also match it. Order and contents are docs/truck-planner/04_BACKEND.md
+    // section 3, and tests/TruckPlanner/Guard/RouteTableTest.php holds this block to it.
+    $r->get('/api/truck/bootstrap',                                  [TruckBootstrapController::class, 'show'],        $tpAuth);
+    $r->get('/api/truck/profile',                                    [TruckProfileController::class, 'show'],          $tpAuth);
+    $r->put('/api/truck/profile',                                    [TruckProfileController::class, 'upsert'],        $tpAuth);
+    $r->get('/api/truck/assumptions',                                [TruckAssumptionsController::class, 'show'],      $tpAuth);
+    $r->put('/api/truck/assumptions',                                [TruckAssumptionsController::class, 'update'],    $tpAuth);
+    $r->post('/api/truck/assumptions/reset',                         [TruckAssumptionsController::class, 'reset'],     $tpAuth);
+    $r->get('/api/truck/regions',                                    [TruckRegionController::class, 'index'],          $tpAuth);
+    $r->get('/api/truck/regions/{region_id}/pack/{dataset_version}', [TruckRegionController::class, 'pack'],           $tpAuth);
+    $r->post('/api/truck/simulate',                                  [TruckSimulateController::class, 'simulate'],     $tpAuth);
+    $r->get('/api/truck/spots',                                      [TruckSpotController::class, 'index'],            $tpAuth);
+    $r->post('/api/truck/spots',                                     [TruckSpotController::class, 'create'],           $tpAuth);
+    $r->post('/api/truck/spots/refresh',                             [TruckSpotController::class, 'refreshStale'],     $tpAuth);
+    $r->get('/api/truck/spots/{id}',                                 [TruckSpotController::class, 'show'],             $tpAuth);
+    $r->put('/api/truck/spots/{id}',                                 [TruckSpotController::class, 'update'],           $tpAuth);
+    $r->delete('/api/truck/spots/{id}',                              [TruckSpotController::class, 'destroy'],          $tpAuth);
+    $r->post('/api/truck/spots/{id}/refresh',                        [TruckSpotController::class, 'refresh'],          $tpAuth);
+    $r->get('/api/truck/day-context',                                [TruckDayContextController::class, 'show'],       $tpAuth);
+    $r->post('/api/truck/drive-times',                               [TruckDriveController::class, 'compute'],         $tpDrive);
+    $r->get('/api/truck/drive-times/overrides',                      [TruckDriveController::class, 'overrides'],       $tpAuth);
+    $r->put('/api/truck/drive-times/overrides',                      [TruckDriveController::class, 'saveOverride'],    $tpAuth);
+    $r->delete('/api/truck/drive-times/overrides/{id}',              [TruckDriveController::class, 'destroyOverride'], $tpAuth);
+    $r->get('/api/truck/plans',                                      [TruckPlanController::class, 'index'],            $tpAuth);
+    $r->post('/api/truck/plans',                                     [TruckPlanController::class, 'create'],           $tpDrive);
+    $r->post('/api/truck/plans/evaluate',                            [TruckPlanController::class, 'preview'],          $tpDrive);
+    $r->get('/api/truck/plans/{id}',                                 [TruckPlanController::class, 'show'],             $tpAuth);
+    $r->put('/api/truck/plans/{id}',                                 [TruckPlanController::class, 'update'],           $tpDrive);
+    $r->delete('/api/truck/plans/{id}',                              [TruckPlanController::class, 'destroy'],          $tpAuth);
+    $r->post('/api/truck/plans/{id}/evaluate',                       [TruckPlanController::class, 'evaluate'],         $tpDrive);
+    $r->post('/api/truck/suggest/day',                               [TruckSuggestController::class, 'day'],           $tpSuggest);
+    $r->post('/api/truck/suggest/week',                              [TruckSuggestController::class, 'week'],          $tpSuggest);
+    $r->get('/api/truck/services',                                   [TruckServiceLogController::class, 'index'],      $tpAuth);
+    $r->post('/api/truck/services',                                  [TruckServiceLogController::class, 'create'],     $tpAuth);
+    $r->get('/api/truck/services/{id}',                              [TruckServiceLogController::class, 'show'],       $tpAuth);
+    $r->put('/api/truck/services/{id}',                              [TruckServiceLogController::class, 'update'],     $tpAuth);
+    $r->delete('/api/truck/services/{id}',                           [TruckServiceLogController::class, 'destroy'],    $tpAuth);
+    $r->get('/api/truck/calibration',                                [TruckCalibrationController::class, 'show'],      $tpAuth);
+    $r->get('/api/truck/accuracy',                                   [TruckCalibrationController::class, 'accuracy'],  $tpAuth);
+    $r->get('/api/truck/scout',                                      [TruckScoutController::class, 'index'],           $tpScout);
+    $r->put('/api/truck/scout/leads/{place_key}',                    [TruckScoutController::class, 'saveLead'],        $tpAuth);
+    $r->post('/api/truck/scout/leads/{place_key}/contact',           [TruckScoutController::class, 'contact'],         $tpContact);
+    $r->post('/api/truck/scout/leads/{place_key}/spot',              [TruckScoutController::class, 'saveAsSpot'],      $tpAuth);
+    $r->get('/api/truck/export',                                     [TruckDataController::class, 'export'],           $tpAuth);
+    $r->post('/api/truck/data/delete',                               [TruckDataController::class, 'destroy'],          $tpOwner);
+    $r->get('/api/truck/sources',                                    [TruckDataController::class, 'sources'],          $tpAuth);
 };

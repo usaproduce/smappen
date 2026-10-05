@@ -34,13 +34,28 @@ export interface GooglePlace {
   website: string | null;
 }
 
+/** The fields requested when the caller does not pass `fields` (what the restaurant form needs). */
+const DEFAULT_FIELDS = ['place_id', 'name', 'formatted_address', 'geometry', 'international_phone_number', 'website'];
+
 interface Props {
   value?: string;
   placeholder?: string;
   /** Bias to a single country (e.g. ['us']). Omit for worldwide. */
   countries?: string[];
-  /** Types filter — default ['establishment'] so businesses surface ahead of street addresses. */
+  /**
+   * Types filter — default ['establishment'] so businesses surface ahead of street addresses.
+   * An empty array sends no type filter at all, so street addresses are suggested too.
+   */
   types?: string[];
+  /**
+   * Place fields requested from Google. Each extra field is billed (phone and
+   * website are the "Contact" SKU), so callers that only need a point and an
+   * address pass a shorter list. A field that is not requested comes back as
+   * null (phone, website) in the GooglePlace handed to onPlace.
+   */
+  fields?: string[];
+  /** Sentence shown in place of the input when Google Maps could not be loaded. */
+  unavailableText?: string;
   onPlace: (place: GooglePlace) => void;
   /** Fired when the user types — lets the parent clear a previously-picked place if they edit. */
   onChange?: (raw: string) => void;
@@ -52,6 +67,8 @@ export default function GooglePlaceAutocomplete({
   placeholder = 'Search restaurants, addresses, places…',
   countries,
   types = ['establishment'],
+  fields = DEFAULT_FIELDS,
+  unavailableText = "Couldn't load Google Maps autocomplete. You can still add a restaurant manually.",
   onPlace,
   onChange,
   autoFocus,
@@ -94,10 +111,12 @@ export default function GooglePlaceAutocomplete({
 
     const ac = new google.maps.places.Autocomplete(inputRef.current, {
       // Restrict the FIELDS we ask Google for. Each extra field is billed
-      // (Place Details "Contact" SKU = phone + website). Keep this list
-      // minimal and align with restaurant-form needs.
-      fields: ['place_id', 'name', 'formatted_address', 'geometry', 'international_phone_number', 'website'],
-      types,
+      // (Place Details "Contact" SKU = phone + website). The default list
+      // is what the restaurant form needs; the `fields` prop narrows it.
+      fields,
+      // An empty list means "no type filter": leave the option out, because
+      // Google treats a present `types` key as a filter.
+      ...(types.length > 0 ? { types } : {}),
       componentRestrictions: countries ? { country: countries } : undefined,
     });
     acRef.current = ac;
@@ -134,7 +153,7 @@ export default function GooglePlaceAutocomplete({
   if (loadError) {
     return (
       <div className="text-xs text-rose-600 px-2 py-1.5 rounded bg-rose-50">
-        Couldn't load Google Maps autocomplete. You can still add a restaurant manually.
+        {unavailableText}
       </div>
     );
   }

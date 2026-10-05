@@ -1,0 +1,85 @@
+name: Truck Planner
+on:
+  push:
+    branches: [main, truck-planner]
+  pull_request:
+    branches: [main]
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php-version: ['8.1', '8.3']
+    env:
+      DB_HOST: 127.0.0.1
+      DB_NAME: smappen_ci
+      DB_USER: root
+      DB_PASS: root
+      DB_PERSISTENT: 'false'
+      APP_ENV: development
+      JWT_SECRET: ci-only-0123456789abcdef0123456789abcdef
+      APP_URL: http://127.0.0.1:8080
+      TP_CONTACT_EMAIL: ci@example.test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mbstring, pdo_mysql, gd, zip, curl
+          coverage: none
+      - run: composer install --prefer-dist --no-progress
+      - name: Syntax
+        run: |
+          set -e
+          find src/TruckPlanner scripts/truck tests/TruckPlanner config -name '*.php' -print0 | xargs -0 -n1 -P4 php -l > /tmp/lint.out 2>&1 || (cat /tmp/lint.out; exit 1)
+          for f in src/Controllers/Truck*Controller.php; do php -l "$f" > /dev/null; done
+      - name: PHPUnit truck-planner under three time zones
+        run: |
+          set -e
+          for tz in UTC America/New_York Pacific/Auckland; do
+            php -d date.timezone=$tz vendor/bin/phpunit --testsuite truck-planner
+          done
+      - name: MySQL 8, migrations, mini region, HTTP smoke
+        if: matrix.php-version == '8.3'
+        run: |
+          set -e
+          sudo systemctl start mysql.service
+          mysql -uroot -proot -e "CREATE DATABASE smappen_ci CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+          php scripts/migrate.php
+          mysql -uroot -proot smappen_ci -e "DELETE FROM migrations WHERE name LIKE '042\_tp%' OR name LIKE '043\_truck%'"
+          php scripts/migrate.php
+          REGION_FLAG=--no-region
+          if [ -d tests/fixtures/truck-planner/region-mini/build ]; then
+            php scripts/truck/load-region.php --build=tests/fixtures/truck-planner/region-mini/build --activate
+            REGION_FLAG=
+          fi
+          php -d date.timezone=UTC -S 127.0.0.1:8080 -t public public/index.php > /tmp/php-server.log 2>&1 &
+          sleep 2
+          php scripts/truck/smoke.php --base-url=http://127.0.0.1:8080 $REGION_FLAG || (cat /tmp/php-server.log; exit 1)
+  reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python docs/truck-planner/reference/truck_planner_reference.py --self-test
+      - name: Seed copies in sync
+        run: python docs/truck-planner/reference/generate_seed_copies.py --check
+  frontend-and-etl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci && npm test
+        working-directory: frontend
+      - run: npx tsc --noEmit -p tsconfig.json
+        working-directory: frontend
+      - run: npx vite build --outDir "$RUNNER_TEMP/tp-build" --emptyOutDir
+        working-directory: frontend
+      - run: node scripts/check-truck-chunks.mjs "$RUNNER_TEMP/tp-build"
+        working-directory: frontend
+      - run: npm ci && node --test
+        working-directory: tools/truck-etl

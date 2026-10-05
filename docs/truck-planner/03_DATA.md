@@ -1346,7 +1346,10 @@ SELECT kernel_json FROM tp_region_packs WHERE region_id = ? AND dataset_version 
 
 It compares `kernel_json.kernel` with the kernel object built from the PHP model's seeds (the `kernel` object of
 section 11). Compare the decoded structures, never the strings: numbers as doubles, lists and strings exactly, objects
-key by key. MySQL re-orders the keys of a `JSON` column and re-prints its numbers (`400.0` comes back as `400`) [V]. On
+key by key. MySQL re-orders the keys of a `JSON` column and re-prints its numbers (`400.0` comes back as `400`) [V]. It
+also hands about one in nine of the numbers that need 16 or 17 significant digits back one unit in the last place off
+(numbers of at most 15 digits come back exact) [V on MySQL 8.0.45], so two numbers within two units in the last place
+of each other count as equal here: that is not another build. On
 a difference the pack endpoint and every capture request answer
 `Response::error('Region data was built with different model constants', 409)`. This is the refusal that 02_MODEL.md 2.2
 requires for a pack whose recorded build values differ from the seed file.

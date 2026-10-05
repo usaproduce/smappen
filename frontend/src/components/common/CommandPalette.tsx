@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Search, MapPin, Layers, Settings, Star, Building2,
   ChefHat, DollarSign, Target, Users2, BookOpen, Heart, RefreshCw, FileText,
-  Home, ArrowLeftRight,
+  Home, ArrowLeftRight, Truck,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { createPortal } from 'react-dom';
@@ -148,6 +148,33 @@ export default function CommandPalette() {
   // ── Item set ─────────────────────────────────────────────────────
   const items: Item[] = useMemo(() => {
     const out: Item[] = [];
+
+    // ── Truck Planner navigation (always available) ──────────────────
+    // First in the list so the entries survive the 24-item cap of an
+    // empty query. Route strings only: importing anything from truck
+    // code here would pull it into the main bundle.
+    const truckNav: Array<{ label: string; sub: string; href: string; keywords: string }> = [
+      { label: 'Truck: Today',         sub: 'next stop, take-home',           href: '/truck',                keywords: 'truck planner today' },
+      { label: 'Truck: Map',           sub: 'who is where, by hour',          href: '/truck/map',            keywords: 'truck map hour demand' },
+      { label: 'Truck: Spots',         sub: 'saved spots',                    href: '/truck/spots',          keywords: 'truck spots saved' },
+      { label: 'Truck: Plan a day',    sub: 'stops, drive times, costs',      href: '/truck/plan',           keywords: 'truck plan day route' },
+      { label: 'Truck: Week',          sub: 'seven days',                     href: '/truck/week',           keywords: 'truck week' },
+      { label: 'Truck: Log a service', sub: 'actual orders',                  href: '/truck/log?new=1',      keywords: 'truck log orders' },
+      { label: 'Truck: Scout',         sub: 'places that could host a truck', href: '/truck/scout',          keywords: 'truck scout hosts' },
+      { label: 'Truck: Settings',      sub: 'truck and costs',                href: '/truck/settings/truck', keywords: 'truck settings costs' },
+    ];
+    for (const t of truckNav) {
+      out.push({
+        kind: 'nav',
+        id: t.href,
+        label: t.label,
+        sub: t.sub,
+        icon: Truck,
+        group: 'Truck Planner',
+        keywords: t.keywords,
+        run: () => navigate(t.href),
+      });
+    }
 
     // ── Carafe global: restaurant quick-switcher (always available) ─
     for (const r of restaurants) {

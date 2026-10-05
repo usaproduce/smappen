@@ -1,0 +1,8 @@
+/*
+ * Truck Planner print stylesheet (docs/truck-planner/05_FRONTEND.md 7.4). Empty until the day sheet
+ * package fills it.
+ *
+ * Rules for whoever does: plain CSS, no Tailwind directive and no @apply (it ships with the lazy
+ * Truck Planner chunk); every rule inside "@media print" and prefixed with "html.tp-printing", so
+ * that printing any other smappen page is untouched.
+ */

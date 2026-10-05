@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { lazy, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import LoginPage from './components/auth/LoginPage';
 import RegisterPage from './components/auth/RegisterPage';
@@ -45,12 +45,33 @@ import ReviewQueuePage           from './components/admin/ReviewQueuePage';
 import CogsHealthPage            from './components/admin/CogsHealthPage';
 import CommandPalette            from './components/common/CommandPalette';
 import ErrorBoundary from './components/ErrorBoundary';
+import TruckLayout from './components/truck/TruckLayout';
 import { useAuthStore } from './stores/authStore';
 import { useTheme } from './hooks/useTheme';
 
+// Truck Planner: ONE import() target, so the build emits one chunk (TruckPages-<hash>.js).
+// TruckLayout above is the only truck file in the main bundle; everything else
+// (pages, estimator, map engine, h3-js, truck api and stores) must be reached
+// through this import() and never through a static import from this file.
+const loadTruck = () => import('./components/truck/TruckPages');
+const TruckGate        = lazy(() => loadTruck().then((m) => ({ default: m.TruckGate })));
+const TruckToday       = lazy(() => loadTruck().then((m) => ({ default: m.TodayPage })));
+const TruckMap         = lazy(() => loadTruck().then((m) => ({ default: m.MapPage })));
+const TruckSpots       = lazy(() => loadTruck().then((m) => ({ default: m.SpotsPage })));
+const TruckSpotCompare = lazy(() => loadTruck().then((m) => ({ default: m.SpotComparePage })));
+const TruckSpotDetail  = lazy(() => loadTruck().then((m) => ({ default: m.SpotDetailPage })));
+const TruckPlanIndex   = lazy(() => loadTruck().then((m) => ({ default: m.PlanIndexRedirect })));
+const TruckPlanner     = lazy(() => loadTruck().then((m) => ({ default: m.PlannerPage })));
+const TruckDaySheet    = lazy(() => loadTruck().then((m) => ({ default: m.DaySheetPage })));
+const TruckWeekIndex   = lazy(() => loadTruck().then((m) => ({ default: m.WeekIndexRedirect })));
+const TruckWeek        = lazy(() => loadTruck().then((m) => ({ default: m.WeekPage })));
+const TruckLog         = lazy(() => loadTruck().then((m) => ({ default: m.LogPage })));
+const TruckScout       = lazy(() => loadTruck().then((m) => ({ default: m.ScoutPage })));
+const TruckSettings    = lazy(() => loadTruck().then((m) => ({ default: m.SettingsPage })));
+
 export default function App() {
   useTheme();
-  // Logged-in users hitting `/` go to their dashboard; everyone else sees the
+  // Logged-in users hitting `/` go to Truck Planner; everyone else sees the
   // marketing homepage. Avoids the "logged-in user lands on marketing copy"
   // confusion and keeps the SEO surface at `/` intact for anonymous visitors.
   const isAuthed = useAuthStore((s) => !!s.token);
@@ -64,7 +85,27 @@ export default function App() {
           offers the right commands per surface. */}
       <CommandPalette />
       <Routes>
-        <Route path="/" element={isAuthed ? <Navigate to="/dashboard" replace /> : <HomePage />} />
+        <Route path="/" element={isAuthed ? <Navigate to="/truck" replace /> : <HomePage />} />
+        {/* Truck Planner: own layout and sub-nav; the gate and all pages load as one lazy chunk */}
+        <Route path="/truck" element={<ProtectedRoute><TruckLayout /></ProtectedRoute>}>
+          <Route element={<TruckGate />}>
+            <Route index                   element={<TruckToday />} />
+            <Route path="map"              element={<TruckMap />} />
+            <Route path="spots"            element={<TruckSpots />} />
+            <Route path="spots/compare"    element={<TruckSpotCompare />} />
+            <Route path="spots/:spotId"    element={<TruckSpotDetail />} />
+            <Route path="plan"             element={<TruckPlanIndex />} />
+            <Route path="plan/:date"       element={<TruckPlanner />} />
+            <Route path="plan/:date/sheet" element={<TruckDaySheet />} />
+            <Route path="week"             element={<TruckWeekIndex />} />
+            <Route path="week/:weekStart"  element={<TruckWeek />} />
+            <Route path="log"              element={<TruckLog />} />
+            <Route path="scout"            element={<TruckScout />} />
+            <Route path="settings"         element={<Navigate to="/truck/settings/truck" replace />} />
+            <Route path="settings/:tab"    element={<TruckSettings />} />
+            <Route path="*"                element={<Navigate to="/truck" replace />} />
+          </Route>
+        </Route>
         <Route path="/blog" element={<BlogPage />} />
         <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
         <Route path="/projects" element={<ProtectedRoute><ProjectGalleryPage /></ProtectedRoute>} />

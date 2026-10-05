@@ -64,7 +64,7 @@
       "unit": "daypart by local clock hour 0..23",
       "tag": "assumed",
       "scope": "fixed",
-      "source": "breakfast 05-10, lunch 11-15, dinner 16-21, late 22-04; the 11/16/22 boundaries are those of PosSalesRepository::dayPart."
+      "source": "breakfast 05-10, lunch 11-15, dinner 16-21, late 22-04; the 11/16/22 boundaries are the ones smappen's point-of-sale daypart labels already use."
     }
   },
   "kernel": {

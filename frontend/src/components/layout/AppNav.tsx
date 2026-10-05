@@ -2,7 +2,7 @@ import { forwardRef, ReactNode, useCallback, useEffect, useMemo, useRef, useStat
 import { Link, useMatch, useNavigate } from 'react-router-dom';
 import {
   LayoutGrid, ChefHat, Building2, Map, Settings as SettingsIcon,
-  LogOut, ChevronDown, Menu, X, Plus, Bell, DollarSign, Keyboard,
+  LogOut, ChevronDown, Menu, X, Plus, Bell, DollarSign, Keyboard, Truck,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useUiPrefsStore } from '../../stores/uiPrefsStore';
@@ -45,6 +45,8 @@ interface NavItem {
 // Restaurants first per "Palantir for restaurants" positioning — entities
 // before tools, with Map demoted to the rightmost slot.
 const ITEMS: NavItem[] = [
+  // Truck Planner is the landing section. No `end`: every /truck/* route keeps it lit.
+  { to: '/truck',           label: 'Truck',       icon: Truck },
   { to: '/app/restaurants', label: 'Restaurants', icon: ChefHat },
   { to: '/app/vendors',     label: 'Vendors',     icon: Building2 },
   { to: '/dashboard',       label: 'Dashboard',   icon: LayoutGrid },
@@ -173,6 +175,7 @@ export default function AppNav({
                 <CreateLink to="/app/restaurants?new=1" icon={<ChefHat size={13} />}    label="New restaurant" onPick={() => setCreateOpen(false)} />
                 <CreateLink to="/app/vendors?new=1"     icon={<Building2 size={13} />}  label="New vendor"     onPick={() => setCreateOpen(false)} />
                 <CreateLink to="/projects?new=1"        icon={<LayoutGrid size={13} />} label="New project"    onPick={() => setCreateOpen(false)} />
+                <CreateLink to="/truck/spots?new=1"     icon={<Truck size={13} />}      label="New spot"       onPick={() => setCreateOpen(false)} />
               </div>
             )}
           </div>
