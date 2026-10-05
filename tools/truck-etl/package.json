@@ -1,0 +1,21 @@
+{
+  "name": "truck-etl",
+  "version": "1.0.0",
+  "description": "Truck Planner geodata pipeline: Census 2020 blocks, LODES jobs and OpenStreetMap places to source points, places and candidate map cells (docs/truck-planner/03_DATA.md).",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "truck-etl-build-region": "bin/build-region.mjs"
+  },
+  "scripts": {
+    "build:dc": "node bin/build-region.mjs --region=dc",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "h3-js": "4.5.0"
+  }
+}

@@ -1,0 +1,245 @@
+{
+  "about": "Frozen copy of the seed values the pipeline reads, for the mini fixture only. The real seeds are docs/truck-planner/reference/tp_seeds.json.",
+  "model_version": "tps-0.1.0",
+  "seeds_revision": 1,
+  "constants": {
+    "earth_radius_m": {
+      "value": 6371008.8
+    }
+  },
+  "kernel": {
+    "walk_decay_m": {
+      "value": 400
+    },
+    "walk_cutoff_m": {
+      "value": 1200
+    }
+  },
+  "segments": {
+    "w_office": {
+      "lodes_cns": [
+        "CNS09",
+        "CNS10",
+        "CNS11",
+        "CNS12",
+        "CNS13",
+        "CNS14"
+      ]
+    },
+    "w_health": {
+      "lodes_cns": [
+        "CNS16"
+      ]
+    },
+    "w_edu": {
+      "lodes_cns": [
+        "CNS15"
+      ]
+    },
+    "w_retail": {
+      "lodes_cns": [
+        "CNS07"
+      ]
+    },
+    "w_industrial": {
+      "lodes_cns": [
+        "CNS01",
+        "CNS02",
+        "CNS03",
+        "CNS04",
+        "CNS05",
+        "CNS06",
+        "CNS08"
+      ]
+    },
+    "w_hospitality": {
+      "lodes_cns": [
+        "CNS17",
+        "CNS18"
+      ]
+    },
+    "w_public": {
+      "lodes_cns": [
+        "CNS19",
+        "CNS20"
+      ]
+    }
+  },
+  "etl": {
+    "cns04_weight": {
+      "value": 0.3
+    },
+    "cell_min_nearby": {
+      "value": 100
+    },
+    "cell_min_venue": {
+      "value": 15
+    }
+  },
+  "place_types": {
+    "rows": {
+      "taproom": {
+        "visitor_segment": "v_nightlife",
+        "default_size": 40,
+        "rival_kind": null,
+        "host_fit": 1,
+        "kitchen_default": "no"
+      },
+      "bar": {
+        "visitor_segment": "v_nightlife",
+        "default_size": 45,
+        "rival_kind": "bar",
+        "host_fit": 0.3,
+        "kitchen_default": "yes"
+      },
+      "restaurant": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": "full",
+        "host_fit": 0,
+        "kitchen_default": "yes"
+      },
+      "fast_food": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": "quick",
+        "host_fit": 0,
+        "kitchen_default": "yes"
+      },
+      "cafe": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": "cafe",
+        "host_fit": 0,
+        "kitchen_default": "yes"
+      },
+      "convenience": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": "convenience",
+        "host_fit": 0,
+        "kitchen_default": "yes"
+      },
+      "gym": {
+        "visitor_segment": "v_leisure",
+        "default_size": 50,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "no"
+      },
+      "park": {
+        "visitor_segment": "v_leisure",
+        "default_size": 38,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "no"
+      },
+      "shopping_centre": {
+        "visitor_segment": "v_shopping",
+        "default_size": 150,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "yes"
+      },
+      "big_box": {
+        "visitor_segment": "v_shopping",
+        "default_size": 200,
+        "rival_kind": null,
+        "host_fit": 0.5,
+        "kitchen_default": "no"
+      },
+      "campus": {
+        "visitor_segment": "v_campus",
+        "default_size": 400,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "yes"
+      },
+      "hospital": {
+        "visitor_segment": "v_hospital",
+        "default_size": 120,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "yes"
+      },
+      "transit_station": {
+        "visitor_segment": "v_transit",
+        "default_size": 300,
+        "rival_kind": null,
+        "host_fit": 0.1,
+        "kitchen_default": "no"
+      },
+      "events_venue": {
+        "visitor_segment": "v_events",
+        "default_size": 80,
+        "rival_kind": null,
+        "host_fit": 0.6,
+        "kitchen_default": "no"
+      },
+      "stadium": {
+        "visitor_segment": "v_events",
+        "default_size": 0,
+        "rival_kind": null,
+        "host_fit": 0.3,
+        "kitchen_default": "yes"
+      },
+      "hotel": {
+        "visitor_segment": "v_lodging",
+        "default_size": 90,
+        "rival_kind": null,
+        "host_fit": 0.3,
+        "kitchen_default": "yes"
+      },
+      "attraction": {
+        "visitor_segment": "v_events",
+        "default_size": 150,
+        "rival_kind": null,
+        "host_fit": 0.3,
+        "kitchen_default": "yes"
+      },
+      "farmers_market": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": null,
+        "host_fit": 0.8,
+        "kitchen_default": "no"
+      },
+      "office_park": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": null,
+        "host_fit": 0.8,
+        "kitchen_default": "no"
+      },
+      "apartment_community": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": null,
+        "host_fit": 0.7,
+        "kitchen_default": "no"
+      },
+      "industrial_site": {
+        "visitor_segment": null,
+        "default_size": 0,
+        "rival_kind": null,
+        "host_fit": 0.6,
+        "kitchen_default": "no"
+      },
+      "car_dealership": {
+        "visitor_segment": "v_shopping",
+        "default_size": 15,
+        "rival_kind": null,
+        "host_fit": 0.5,
+        "kitchen_default": "no"
+      }
+    }
+  },
+  "traffic": {
+    "us_mean": {
+      "value": 1
+    },
+    "us_mean_typical": {
+      "value": 1
+    }
+  }
+}

@@ -8,14 +8,18 @@ loader (`scripts/truck/load-region.php`), the cell pack, the quality gates and t
 
 Evidence tags: **[V]** measured on real files on 2026-10-04 (source recon, the prototype run for this document on the
 recon block file, the four LODES 2023 files, 16 saved OpenStreetMap tiles, `h3-js` 4.5.0 and the seed file, or the
-statements of section 9 on a scratch MySQL 8.0.45). **[proto]** prototype figure: measured the same way with the seed
-values of revision 1 (construction jobs at 0.3, both pruning tests of 7.2), the seven starting entries of 4.3 with the
-automatic treatment for the other 79 flagged blocks, and the tile-set places, which hold no stations. A [proto] figure
-is indicative: the first pipeline run re-measures it on the Geofabrik extracts with the first-pass corrections file and
-records it in the manifest. Gate ranges, not [proto] figures, decide a build. **[S]** specified, not yet exercised.
-**[M]** from memory, confirm before relying on it. Not exercised at all: the Geofabrik `.md5` files, Overpass
-`out tags bb`, counts of `transit_station`, the PHP loader's run time and memory, the Google requests of 13.3 and 13.4,
-EIA with a registered key.
+statements of section 9 on a scratch MySQL 8.0.45). **[run]** measured by the first run of the pipeline itself
+(`tools/truck-etl`, 2026-10-05): the four Geofabrik extracts of 2026-10-03, seeds revision 1 and the first-pass
+corrections file `2026-10-05.1`, giving dataset `dc-20261003-d0514a63` with every pipeline gate of section 12 passed.
+**[proto]** prototype figure: measured for this document with the seed values of revision 1 (construction jobs at 0.3,
+both pruning tests of 7.2), the seven starting entries of 4.3 with the automatic treatment for the other 79 flagged
+blocks, and the tile-set places, which hold no stations. A [proto] figure is indicative. Where a [run] figure stands
+beside it, the [run] figure is the one to expect. Gate ranges, not [proto] or [run] figures, decide a build. **[S]**
+specified, not yet exercised. **[M]** from memory, confirm before relying on it. Not exercised at all: Overpass
+`out tags bb` and the tile fetch helper against the live server, the pipeline's downloads against the real hosts (the
+download code is tested against a local HTTP server and a stand-in for the hosts, and the first run made no request:
+it used files fetched earlier and adopted from the raw cache), the PHP loader's run time and memory, the Google
+requests of 13.3 and 13.4, EIA with a registered key.
 
 ## 0. Fixed choices and names
 
@@ -35,7 +39,10 @@ EIA with a registered key.
 ### 0.1 Seed values the pipeline reads
 
 The pipeline reads `docs/truck-planner/reference/tp_seeds.json` through one adapter module, `tools/truck-etl/src/seeds.mjs`,
-which is the only place that knows the JSON paths. A missing value is a hard error that names the path.
+which is the only place that knows the JSON paths. A missing value is a hard error that names the path (exit 1), and so
+is a value of the wrong type or outside its range: `cns04Weight` and every `host_fit` in 0 to 1, sizes and thresholds
+not negative, segment and rival-kind names from the shared vocabulary, `kitchen_default` `yes` or `no`, a row for each
+of the 22 place types, and each of CNS01 to CNS20 in exactly one `lodes_cns` list.
 
 | Adapter name | Seed path | Value at revision 1 | Used for |
 |---|---|---|---|
@@ -122,8 +129,14 @@ Path `tools/truck-etl/regions/<id>.json`. One file per region. `dc.json`, comple
     "blocks_with_residents": 48034, "blocks_with_jobs": 30247, "blocks_with_either": 51262,
     "jobs_by_segment": {"w_office": 1076149, "w_health": 356462, "w_edu": 292467, "w_retail": 261318, "w_industrial": 390336, "w_hospitality": 323428, "w_public": 439998},
     "cns04_jobs": 165397,
-    "res9_cells_with_residents_or_jobs": 29404, "res9_max_residents": 4512, "res9_max_jobs_raw": 39467,
+    "res9_cells_with_residents_or_jobs": 29404, "res9_max_residents": 4512, "res9_max_jobs_raw": 39467, "res9_max_jobs_after": 25000,
     "job_review": {"blocks": 86, "jobs": 572153},
+    "job_movement": {"discarded_share_max": 0.005, "moved_share_max": 0.12},
+    "halo_residents_share_max": 0.05,
+    "places": {"min": 22000, "max": 28000},
+    "rivals": {"min": 12100, "max": 14900},
+    "hosts_with_contact_share": {"min": 0.28, "max": 0.40},
+    "cells_kept": {"min": 54000, "max": 64000},
     "anchors": [
       {"geoid": "510594402021008", "label": "Inova Fairfax Hospital", "column": "CNS16", "min": 11000},
       {"geoid": "240317050005004", "label": "NIH, Bethesda", "column": "CNS20", "min": 16000},
@@ -148,6 +161,18 @@ state uses `NUS`. `holidays.inauguration_day` is the flag the holiday function r
 (`Assumptions.region.flags.inauguration_day`). Version 1 applies it to the whole region. `inauguration_day_counties` is
 kept for a later per-county rule (statutory list [M], confirm against 5 U.S.C. 6103(c)). `map_center` is the default map
 view only.
+
+Gate limits that differ from region to region are check values too, so that a second region (and the test fixture of
+section 12) needs no code change: `res9_max_jobs_after` (G11), `job_movement` (G8b), `halo_residents_share_max` (G16),
+`places`, `rivals` and `hosts_with_contact_share` (G12) and `cells_kept` (G17). Section 12 says how each is used.
+
+The pipeline validates the file when it reads it and stops with exit 1 on the first problem, naming the field:
+`schema` 1, `id` matching `[a-z0-9]{1,24}`, `h3_res` 9, `membership` `geoid_prefix`, `block_point` `census_intpt`,
+`fetch_box` with south < north and west < east, at least one state (lower-case `usps`, two-digit `fips`), every county
+a five-digit `fips` of a listed state and listed once, `census`, `lodes` and `job_review` as shown, and every key of
+`checks` shown above present with the type shown. An anchor block must lie in a county of the region. `cbsa`,
+`cbsa_name`, `delineation`, `fuel_area_by_state` and `holidays` are not read by the pipeline. They reach the loader
+through the manifest, which carries the file verbatim.
 
 ## 2. Sources
 
@@ -234,9 +259,9 @@ pick the newest year per state. `createdate` is not the vintage. `ctyname` and t
 | | |
 |---|---|
 | URL | `https://download.geofabrik.de/north-america/us/{geofabrik}-latest.osm.pbf` answers 307 with `Location: .../{geofabrik}-{YYMMDD}.osm.pbf`. Resolve the redirect, then download and store the **dated** name |
-| Checksum | `{dated url}.md5` (one line, `<32 hex><two spaces><name>`) [M, not fetched today] |
+| Checksum | `{dated url}.md5` (one line, `<32 hex><two spaces><name>`) [V: fetched on 2026-10-05 for the four `261003` extracts, all four match] |
 | Sizes [V] | dc 21,012,746 B. md 215,014,445 B. va 427,970,239 B. wv 99,014,658 B. Daily. Headers: `Last-Modified`, `ETag`, `Accept-Ranges: bytes` |
-| Snapshot rule | All states of a region must resolve to the same `YYMMDD`. If they differ, stop and re-run. `--osm-date=YYMMDD` pins a date already in the raw cache |
+| Snapshot rule | All states of a region must resolve to the same `YYMMDD`. If they differ, stop and re-run. `--osm-date=YYMMDD` pins a date: extracts of that date already in the raw cache are used, a missing one is fetched from its dated address |
 | Licence | ODbL 1.0. Duties and strings in section 14 |
 
 #### PBF reader (in repo, zero dependencies: `fs` and `zlib`)
@@ -272,7 +297,8 @@ Algorithm:
    may appear, after the first node no way or relation. Fail otherwise. Before building a tag object, test the
    element's key strings against the trigger keys of 5.1.
 4. Relation: keep if `type=multipolygon` and the taxonomy matches (5.1). Create a bounding-box accumulator. Register its
-   way members in `needWay[wayId]` and its node members in `needNode[nodeId]`. Other relation types are counted as dropped.
+   way members in `needWay[wayId]` and its node members in `needNode[nodeId]`. Members that are relations are ignored.
+   Other relation types are counted as `dropped_relation_type` (5.1).
 5. Way: keep as a place if the taxonomy matches. If kept, or if `needWay` has its id, decode `refs` and register each
    node id in `needNode` with every accumulator that wants it.
 6. Node: update every accumulator registered for its id (min and max of `e7` lat and lng). Keep as a place if the
@@ -280,13 +306,22 @@ Algorithm:
 7. Result per element: `osm_type`, `osm_id`, tags, and for ways and relations the bounding box. The point of a way or
    relation is the bounding-box centre, `centre_e7 = Math.floor((min_e7 + max_e7 + 1) / 2)` per axis. An accumulator that
    never received a node is counted as `dropped_no_geometry`.
-8. Discard elements whose point lies outside the region's `fetch_box` before any further work.
+8. Discard elements whose point lies outside the region's `fetch_box` before any further work (`dropped_outside_box`).
+   The test is made on the decimal degrees that will be written (`e7 / 1e7`), edges included. A node is tested as soon
+   as it is read, a way or relation when its box is complete.
+
+An element is "read" when it carries a trigger key. Every read element is classified (5.1) before its geometry is
+looked at, so the order of the drop reasons is: relation type, closed, no rule, unnamed, no geometry, outside the box.
 
 Measured [V]: the DC extract parses in 0.8 s at 165 MiB RSS and reproduces 6,241 of 6,247 elements of an Overpass pull
-taken two days later. The four states are about 30 s (extrapolated). The reader's assumptions hold on the downloaded DC
-and West Virginia extracts: required features `OsmSchema-V0.6` and `DenseNodes`, optional feature `Sort.Type_then_ID`,
-nodes then ways then relations with no mixed block, granularity 100, offsets 0, a `raw_size` on every blob, no plain
-`Node` message.
+taken two days later. The reader's assumptions hold on the four downloaded extracts: required features
+`OsmSchema-V0.6` and `DenseNodes`, optional feature `Sort.Type_then_ID`, nodes then ways then relations with no mixed
+block, granularity 100, offsets 0, a `raw_size` on every blob, no plain `Node` message. Measured [run]: the four
+extracts (763 MB, 103.5 million nodes, 9.5 million ways, 91,441 relations) are read in 26 to 29 s. 5,972,925 elements
+carry a trigger key, 5,818,235 of them match no rule (mostly plain buildings), and 33,160 classified elements lie in
+the fetch box. One element has no geometry. Implementation note: besides the `needNode` map, wanted node ids are marked
+in a bit set of 2^27 bits indexed by `id mod 2^27`, so that a node nobody asked for costs one array read instead of a
+map lookup. This took the places stage from 40 s to 26 s and does not change the result.
 
 #### Alternative input for development: a saved Overpass tile set
 
@@ -298,10 +333,15 @@ de-duplicated by `type/id`. The snapshot date is the UTC date of the largest `os
 fetched with `out tags bb qt;` and the centre is computed from `bounds` with the same formula as step 7. With only
 `center` (the 16 saved tiles of the source recon) the point is `Math.round(center.lat * 1e7)`,
 `Math.round(center.lon * 1e7)`. An element with neither is counted as `dropped_no_geometry`. Relations are kept only
-with `type=multipolygon`. The fetch helper `tools/truck-etl/bin/fetch-overpass-tiles.mjs` (developer tool) sends the
-User-Agent of section 3, one request at a time, `[timeout:60]`, waits at least 30 s after 429 or 504, and splits a tile
-in four when a response carries a `remark`. Query body [S, this exact form was not run today; recon ran an equivalent
-pair with `out tags center qt`]:
+with `type=multipolygon`. Tiles are read in file-name order and count as separate inputs for the identity step of 5.4.
+The fetch helper `tools/truck-etl/bin/fetch-overpass-tiles.mjs --region=<id> --contact=<email> [--out=<dir>]`
+(developer tool) cuts the fetch box into tiles of at most 0.45 degrees named `t<row><col>` (row 0 in the south, column
+0 in the west), sends the User-Agent of section 3, one `POST` at a time with the query as the form field `data`,
+`[timeout:60]`. After 429 or 504 it waits 30 s times the attempt number and tries again, at most six times per tile. A
+response with a `remark` splits the tile in four (`a` south-west, `b` south-east, `c` north-west, `d` north-east, at
+most three levels deep). Any other status stops the run. Each answer is written as `<name>.json.gz`, by default under
+`overpass/<region>/<YYYYMMDD>/` of the raw cache. Query body [S, this exact form was not run against the server; recon
+ran an equivalent pair with `out tags center qt`]:
 
 ```
 [out:json][timeout:60][bbox:{south},{west},{north},{east}];
@@ -358,17 +398,27 @@ storage/truck/raw/
   overpass/{region}/{YYYYMMDD}/t*.json.gz      development alternative only
 ```
 
-`index.json` entry: `{"path", "url", "final_url", "http_status", "bytes", "sha256", "last_modified", "etag", "fetched_at"}`.
-`fetched_at` (UTC, ISO 8601) exists only here, never in the manifest.
+`index.json` is a JSON list sorted by `path`, one entry per file:
+`{"path", "url", "final_url", "http_status", "bytes", "sha256", "last_modified", "etag", "fetched_at"}`. `path` is
+relative to the raw directory with forward slashes. `url` is the address asked for, `final_url` the one that answered
+(for an extract: the dated address). `fetched_at` (UTC, ISO 8601) exists only here, never in the manifest. While a
+download is under way the list also holds an entry for `<path>.part` with the validators of the response and
+`"accept_ranges": true or false`. It is removed when the file is complete.
 
 Download rules:
 
 1. Header on every request: `User-Agent: TruckPlanner-ETL/1.0.0 (contact: <email>)`. The email comes from `--contact=`
-   or the environment variable `TP_CONTACT_EMAIL`. The pipeline stops if neither is set. It never reads a `.env` file.
-2. One request at a time. No parallel downloads.
+   or the environment variable `TP_CONTACT_EMAIL`. If neither is set the pipeline never makes a request: it says so,
+   uses the raw cache exactly as with `--offline`, and stops at the first file it would have to download. With
+   `--offline` no request is made and no contact is needed. The pipeline never reads a `.env` file.
+2. One request at a time. No parallel downloads. Redirects are not followed.
 3. Write to `<name>.part`. If a `.part` exists and the server sent `Accept-Ranges: bytes`, resume with
    `Range: bytes=<size>-` and `If-Range: <stored ETag or Last-Modified>`. 206 appends, 200 restarts the file.
-4. A file is complete when its size equals `Content-Length` and its check passes. Then rename atomically and update `index.json`.
+4. A file is complete when its size equals `Content-Length` and its check passes. Then rename atomically and update
+   `index.json`. A response that ends short of its `Content-Length`, or a connection that breaks, stops the run and
+   leaves the `.part` for the next one. The check runs on the `.part`: a download that fails it is removed and stops
+   the run (gate G1), and a complete file of the same name that was already in the cache stays as it was. So the cache
+   never holds a file under its name that failed its check.
 
 | File | Check after download |
 |---|---|
@@ -378,15 +428,33 @@ Download rules:
 | Geofabrik `.osm.pbf` | MD5 equals the `.md5` file. First blob is `OSMHeader` |
 | TIGERweb GeoJSON | parses, feature set equals the county list |
 
-5. An existing complete file is reused without a request when `--offline` is given, or when a conditional request
-   (`If-None-Match`, else `If-Modified-Since`) answers 304. PL files and dated Geofabrik files are immutable and are
-   never re-requested once complete. With `--offline`, a file found at its cache path without an `index.json` entry is
-   adopted: its check runs, its SHA-256 is computed and an entry is written with `http_status` and `fetched_at` null
-   (as is every other field that only a response can supply). A missing `.md5` or `.sha256sum` sidecar is then a
-   warning, not a failure. A Geofabrik file must already have its dated name (`--osm-date`).
-6. Any status other than 200, 206, 304 or the Geofabrik 307 stops the run. There are no silent retries.
-7. Keep the raw files of the active and the previous dataset version. Geofabrik removes old dated files, so the cache
+5. An existing complete file is reused without a request when no request may be made (`--offline`, or no contact
+   address: "offline" below), or when a conditional request (`If-None-Match`, else `If-Modified-Since`) answers 304. PL
+   files and dated Geofabrik files (and their `.md5`) are immutable and are never re-requested once complete. Offline,
+   a file found at its cache path without an `index.json` entry is adopted: its check runs, its SHA-256 is computed and
+   an entry is written with `url` set to the address the file would be fetched from and `final_url`, `http_status`,
+   `last_modified`, `etag` and `fetched_at` null. A missing `.md5` or `.sha256sum` sidecar is then a warning, not a
+   failure (gate G1). A sidecar that is present is always used: a mismatch fails. Online, a file that has no entry is
+   fetched again. A Geofabrik file must already have its dated name: offline and without `--osm-date`, the newest date
+   for which every state of the region has an extract in the cache is used.
+6. Every build verifies every file it uses: the size and SHA-256 of a cached file must equal its `index.json` entry
+   (a difference stops the run with exit 1 and names the file), and the check of the table above runs again.
+7. Any status other than 200, 206 (to a `Range` request), 304 (to a conditional request) or the Geofabrik 307 stops
+   the run, and so does a request that cannot be made. There are no silent retries. A 416 to a resume request means
+   that the `.part` is not the beginning of the file the server holds (or is already all of it): the `.part` is
+   removed before the run stops, so the next run fetches the file from its start. The snapshot date is found with one
+   `HEAD` request per state to the `-latest` address. An answer other than 307 with a dated `Location` stops the run.
+8. Keep the raw files of the active and the previous dataset version. Geofabrik removes old dated files, so the cache
    is the archive of record. Disk use for `dc` is about 0.85 GB.
+
+Files fetched by other means are put into this layout by hand or with the helper
+`node tools/truck-etl/bin/adopt-raw.mjs --region=<id> --from=<dir> --raw-dir=<dir> [--counties=<geojson>]`. It finds
+the files by name anywhere under `--from`, hard-links them into place (copies when linking is not possible), never
+replaces a cache file and downloads nothing. An extract named `<state>-latest.osm.pbf` gets its dated name from the
+UTC date of the replication timestamp in its header. Without one, the newest dated extract of the state is taken. A
+LODES `version.txt` is accepted as `<usps>_version.txt` or as `version.txt` in a folder named `<usps>`. A name that
+occurs twice under `--from` stops the helper, and so does a missing file (exit 1, with the list of what was not found;
+checksum sidecars are optional). The next build that makes no request then adopts the files under rule 5.
 
 ## 4. Blocks and job corrections
 
@@ -395,7 +463,12 @@ Download rules:
 1. For each state, stream `{usps}geo2020.pl`. Keep rows with SUMLEV `750`. Record GEOID, POP100, HU100, AREALAND and the
    internal point for every block of the state (the state totals are gated). `in_region = county list contains GEOID[0..5)`.
 2. Join WAC on `w_geocode`. A WAC block missing from the PL set fails the build. Verify `sum(CNS01..CNS20) = C000` per row.
-3. Join the crosswalk for `ctyname`, `stplcname`, `milname` (review list only). The crosswalk and PL block sets must be equal.
+   A block without a WAC row has no jobs.
+3. Join the crosswalk for `ctyname`, `stplcname`, `milname` (review list only: the columns `county_name`, `place_name`
+   and `military_name` of 8.4, verbatim). The crosswalk and PL block sets must be equal. Only the labels of the blocks
+   that appear in the review list are kept in memory.
+
+The table is sorted by GEOID (byte order). "Ascending GEOID order" below always means this order.
 
 ### 4.2 Review rule
 
@@ -418,7 +491,7 @@ Path `tools/truck-etl/corrections/<region>.jobs.json`, committed to git, one per
 {
   "schema": 1,
   "region": "dc",
-  "version": "2026-10-04.1",
+  "version": "2026-10-05.1",
   "lodes": {"year": 2023, "job_type": "JT00", "vintage": "20251202_1657"},
   "entries": {
     "510594525011000": {"action": "spread", "cap": 500, "c000_at_review": 39466, "reviewed": "2026-10-04", "confirmed": false,
@@ -436,52 +509,80 @@ Path `tools/truck-etl/corrections/<region>.jobs.json`, committed to git, one per
 ```
 
 The seven entries above are the start of the file for `dc` (identities from the source recon; the three `cap` values
-are assumptions). The pipeline engineer completes a first-pass review of all 86 flagged blocks for this build (15.2) and
-commits one entry per block: `keep` for sites that plainly employ that many people there (hospitals, campuses, airports,
-federal complexes, office towers), `spread` for administrative addresses (school systems, county and city governments,
-staffing and home-health agencies). Every first-pass entry carries `"confirmed": false`, because the first pass awaits
-the owner's confirmation (DECISIONS 8). The automatic treatment remains only for blocks that a later vintage flags for
-the first time.
+are assumptions). The committed file holds one entry for each of the 86 flagged blocks: the first-pass review of this
+build (15.2), made from the sector mix, the block size, the residents and the named OpenStreetMap features within 350 m
+of each block point, not from a visit. `keep` for sites that plainly employ that many people there (hospitals,
+campuses, airports, federal complexes, office towers), `spread` for administrative addresses (school systems, county
+and city governments, staffing and home-health agencies). Every first-pass entry carries `"confirmed": false`, because
+the first pass awaits the owner's confirmation (DECISIONS 8). The automatic treatment remains only for blocks that a
+later vintage flags for the first time.
+
+First-pass result for `dc` [run]: 55 blocks kept as reported (347,543 jobs) and 31 spread (224,610 jobs, of which
+196,941 move and 27,669 stay on site).
+
+| Decision | Blocks | What they are |
+|---|---:|---|
+| `keep` | 55 | 12 hospitals, 7 university campuses, 2 airports, 10 federal sites (NIH, Federal Triangle, the Capitol complex on both sides, Constitution Center, Suitland, the Secret Service, NOAA, Judiciary Square, the National Mall museums), 24 office towers, corporate campuses and other single employers (Tysons, Reston, Rosslyn, downtown Washington, Capital One, MITRE, AstraZeneca, two county office buildings, a casino, a parcel hub) |
+| `spread`, cap 0 to 500 | 9 | school systems: Fairfax, Prince William, Montgomery, Loudoun, Arlington, Stafford, Spotsylvania, Alexandria, District of Columbia |
+| `spread`, cap 300 to 2,500 | 7 | county, city and regional government addresses: Montgomery, Fairfax, Prince George's, Prince William, Frederick, the District, the park and planning commission |
+| `spread`, cap 0 | 6 | single-sector lumps on residential blocks with no employer mapped, which look like jobs known only by ZIP code |
+| `spread`, cap 200 to 1,500 | 6 | employers whose staff work elsewhere: a consulting headquarters, a guard or staffing firm, a building-services firm, a data-centre operator, a transit authority depot, a construction contractor |
+| `spread`, cap 2,000 | 3 | not identified: the automatic cap is kept and the reason says so |
+
+Six entries use `sectors` so that the other sectors of the block stay untouched. The reason of each entry is one
+sentence and names what was assumed. Several identifications are inferences (the Smithsonian head count on the Mall,
+ZIP-code lumps, the names of single employers): the owner's confirmation is the review that counts.
 
 | Field | Meaning |
 |---|---|
 | key | 15-digit block GEOID. Any region block may have an entry, flagged or not |
 | `action` | `keep`: leave as reported (reviewed, real). `cap`: leave `cap` jobs, discard the excess. `spread`: leave `cap` jobs, move the excess to the rest of the county. `drop`: remove the jobs (same as `cap` with 0) |
-| `cap` | Jobs left in place, summed over the affected sectors. Required for `cap`. Default 0 for `spread` |
-| `sectors` | Optional list such as `["CNS15"]`. The action then touches only those columns. Default: all 20 |
+| `cap` | Jobs left in place, summed over the affected sectors. Required for `cap`. Default 0 for `spread`. Not allowed for `keep` and `drop` |
+| `sectors` | Optional list such as `["CNS15"]`. The action then touches only those columns. Default: all 20. Not allowed for `keep` |
 | `reason` | Required free text. Shown in the review list |
-| `c000_at_review`, `reviewed` | Required. `C000` when the entry was written, and the date. Used to detect stale entries |
+| `c000_at_review`, `reviewed` | Required. `C000` when the entry was written (a whole number), and the date (`YYYY-MM-DD`). Used to detect stale entries |
 | `confirmed` | Optional boolean, default true. False = first-pass decision awaiting the owner's confirmation. The entry is applied either way |
+
+The header keys `schema` (1), `region` (must equal the region id), `version` (non-empty) and `lodes` (an object, kept
+for the reader: the pipeline does not compare it) are required. A file that breaks any rule of this table stops the
+pipeline with exit 1 before any work, naming the entry and the field.
 
 ### 4.4 Applying corrections
 
 Work on the 20 sector columns as doubles, on region blocks in ascending GEOID order.
 
 1. Reduction. For a block with treatment `cap`, `spread` or `drop`: let `cur` = sum of the affected sectors, `keepJobs =
-   min(cap, cur)`, `f = keepJobs / cur` (0 if `cur` is 0). Each affected sector becomes `raw * f`. Its excess is `raw * (1 - f)`.
+   min(cap, cur)`, `f = keepJobs / cur` (0 if `cur` is 0). Each affected sector becomes `raw * f`. Its excess is
+   `raw * (1 - f)`. The block's own jobs count as reduced (`job_adj = 1`, 6.1) when the excess is above 0, that is when
+   `cur > cap`.
 2. Automatic default. A flagged block with no entry is treated as `spread` over all sectors with
    `cap = single_sector_min` if rule B holds, otherwise `cap = total_min`. So no unreviewed block keeps more than 5,000
    jobs and no unreviewed single-sector block more than 2,000.
 3. Spread. After all reductions, for each spread source in ascending GEOID order: receivers are the region blocks of the
-   same county with `POP100 > 0` that were not themselves reduced. Receiver `r` gets, per sector,
-   `excess * POP100_r / sum(POP100 of receivers)`. Residents are the weight because the employers in question (school
-   systems, county governments, home health agencies) work where people live. If a county has no receiver, the excess is
-   discarded and counted as `jobs_spread_lost`.
+   same county with `POP100 > 0` whose treatment is none or `keep` (a block with a `cap`, `spread`, `drop` or automatic
+   treatment never receives, whether or not anything was removed from it, so it can never exceed its cap). Receivers
+   are taken in ascending GEOID order and receiver `r` gets, per sector, `excess * POP100_r / sum(POP100 of receivers)`,
+   evaluated left to right. Residents are the weight because the employers in question (school systems, county
+   governments, home health agencies) work where people live. If a county has no receiver, the excess is discarded and
+   counted as `jobs_spread_lost`.
 4. Results are fractional. They are not rounded.
-5. Halo blocks (6.3) get no spread. A halo block that meets rule A or B is cut to the automatic cap and the excess is
-   discarded (`halo_jobs_capped` in the manifest).
-6. An entry is `stale` when `|C000 - c000_at_review| / c000_at_review > 0.25`, and `orphan` when the GEOID has no WAC row
-   or is outside the region. Both are warnings and appear in the review list. They never stop the build. A stale entry
-   is still applied exactly as written. An orphan entry is ignored. In `job_review.csv` an orphan row has empty county,
-   coordinate, count and sector columns, `treatment` = the entry's action, `entry_state` = `orphan`, and sorts after
-   all other rows by `geoid`.
+5. Halo blocks (6.3) get no spread. A halo block that meets rule A or B is cut to the automatic cap (`f` as in step 1,
+   over all sectors), the excess is discarded (`halo_jobs_capped` in the manifest) and its row carries `job_adj = 1`.
+   No entry applies to a halo block.
+6. An entry is `stale` when `|C000 - c000_at_review| / c000_at_review > 0.25` (when `c000_at_review` is 0: when `C000`
+   is not 0), and `orphan` when the GEOID has no WAC row or is outside the region. Both are warnings and appear in the
+   review list. They never stop the build. A stale entry is still applied exactly as written. An orphan entry is
+   ignored. In `job_review.csv` an orphan row has empty county, coordinate, count and sector columns, `treatment` =
+   the entry's action, `entry_state` = `orphan`, and sorts after all other rows by `geoid`.
 
-Effect on `dc` with the seven entries above and 79 automatic treatments [V, prototype with `cap` 0 for the three spreads]:
-286,284 jobs (9.1 %) move within their county (284,284, or 9.05 %, with the caps of 4.3), the region total stays
-3,140,158, the largest block after corrections is 18,644 (NIH, kept), and the largest resolution-9 job cell falls from
-39,467 to 18,644. Most of the 79 are real office and campus blocks, which the first-pass review of 4.3 turns into
-`keep`. The first build therefore moves fewer jobs than this, and with every real site kept its largest job cell is
-19,486 (`892aa845a17ffff`, downtown Washington) [V].
+Effect on `dc`. With the seven entries above and 79 automatic treatments [V, prototype with `cap` 0 for the three
+spreads]: 286,284 jobs (9.1 %) move within their county (284,284, or 9.05 %, with the caps of 4.3; the pipeline
+reproduces 284,284 exactly with that file), the region total stays 3,140,158 and the largest resolution-9 job cell
+falls from 39,467 to 18,644. With the committed first-pass file of 86 entries [run]: 196,941 jobs (6.27 %) move from
+31 blocks, nothing is discarded, the region total stays 3,140,158, the largest block after corrections is NIH (18,644
+raw, 18,644.07 with the spread it receives), which is also the largest resolution-9 job cell (`892aa841903ffff`). The
+four anchor blocks keep 11,208.0 / 16,919.0 / 10,382.3 / 8,121 jobs in their columns (Georgetown University has
+residents and receives a share of the school-system jobs of the District).
 
 ### 4.5 Construction weight
 
@@ -502,9 +603,10 @@ and outcome.
 
 An element is tested only if it has one of the trigger keys `amenity, craft, microbrewery, shop, healthcare, railway,
 public_transport, leisure, tourism, landuse, building, residential, industrial, man_made, office`. Rules are tried in
-this order. The first rule whose test holds decides the place type. "Named required" means a non-empty `name` tag. The
-`brand` fallback of 5.6 does not count. An element that matches a rule but lacks a required name is dropped
-(`dropped_unnamed`) and is not tried against later rules.
+this order. The first rule whose test holds decides the place type. "Named required" means a `name` tag that is not
+empty after trimming. The `brand` fallback of 5.6 does not count. An element that matches a rule but lacks a required
+name is dropped (`dropped_unnamed`) and is not tried against later rules. "Any `key=*`" means the tag is present with a
+non-empty value.
 
 | # | Place type | Test on OSM tags | Named required |
 |---|---|---|:---:|
@@ -531,12 +633,21 @@ this order. The first rule whose test holds decides the place type. "Named requi
 | R21 | `industrial_site` | `landuse=industrial` or `building` in {industrial, warehouse} or any `industrial=*` or `man_made=works` | yes |
 | R22 | `office_park` | `landuse=commercial` or `building=office` or (any `office=*` and the element is a way or relation) | yes |
 
-Before the rules: drop the element (`dropped_closed`) if `disused=yes`, `abandoned=yes` or `shop=vacant`. No vocabulary
-additions: all 22 shared place types are produced and no new type is introduced.
+Before the rules, in this order: a relation whose `type` tag is not `multipolygon` is dropped
+(`dropped_relation_type`), then an element with `disused=yes`, `abandoned=yes` or `shop=vacant` is dropped
+(`dropped_closed`). Lifecycle prefixes such as `disused:amenity` are not read. No vocabulary additions: all 22 shared
+place types are produced and no new type is introduced.
 
 Dropped by design (counted as `dropped_no_rule`): places of worship, clinics, community centres, golf courses,
 `office=*` nodes (individual tenants; OSM offices are a contact list, not a measure of workers), shops for sports,
-electronics, hardware, outdoor gear and motorcycles, butchers, cheese and confectionery shops, motels and hostels.
+electronics, hardware, outdoor gear and motorcycles, butchers, cheese and confectionery shops, motels and hostels, and
+every element whose only trigger key is a plain `building` or `landuse` value.
+
+Counters. Each occurrence of an element with a trigger key in an input (a state extract or a tile) is one element
+read. It ends in exactly one place: a row of `places.ndjson`, or one of the counters `dropped_relation_type`,
+`dropped_closed`, `dropped_no_rule`, `dropped_unnamed` (this section), `dropped_no_geometry`, `dropped_outside_box`
+(2.3), `merged_identity`, `merged_same_venue`, `merged_site_part` (5.4), `dropped_outside_region` (5.5, 6.3). Gate G8
+checks the sum.
 
 ### 5.2 Derived attributes
 
@@ -546,13 +657,14 @@ electronics, hardware, outdoor gear and motorcycles, butchers, cheese and confec
 | `kitchen` (three-state) | For `taproom` and `bar`, from the tags: `no` if `food=no`. `yes` if `food=yes`, or `amenity` in {restaurant, fast_food, cafe, food_court}, or a non-empty `cuisine`. Otherwise `unknown`. For every other type: the type's `kitchen_default` (`yes` or `no`). Readers resolve `unknown` with the type's `kitchen_default` |
 | `rival_kind` | Let `food` be the place type if it is one of `fast_food`, `restaurant`, `cafe`, `bar`, `convenience`, otherwise the type of the first of R02 to R06 that the element's tags also satisfy (only a `taproom` can have one), otherwise none. With a `food`: the seed `rival_kind` of that type, except none when `food` is `bar` and the resolved kitchen state is `no`. Without one: the seed `rival_kind` of the place type (none for every such type at revision 1). A place with a rival kind is a **rival** |
 | `visitor_segment`, `size_default` | The type's `visitor_segment` and `default_size`. Both become none and 0 when the size is 0, and for a `campus` whose `geom_kind` is not `area`. A place with a segment is a **visitor source** |
-| `host_fit` | The type's `host_fit`, forced to 0 when the place has no name. A place with `host_fit > 0` and `in_region = 1` is a **possible host**. It ranks Scout results and never enters an estimate. The model applies the same test whatever the type's `host_segment` (02_MODEL.md 4.16): a type without one, such as `farmers_market`, is a possible host ranked on its catchment alone |
+| `host_fit` | The type's `host_fit`, forced to 0 when the place has no name (its `name` of 5.6 is null, so the `brand` fallback counts here). A place with `host_fit > 0` and `in_region = 1` is a **possible host**. It ranks Scout results and never enters an estimate. The model applies the same test whatever the type's `host_segment` (02_MODEL.md 4.16): a type without one, such as `farmers_market`, is a possible host ranked on its catchment alone |
 
 Consequences at seeds revision 1 [V]. A bar is a rival unless it is tagged as serving no food (its default is `yes`).
 A taproom is not a rival (the seed gives it no rival kind and a default of `no`) unless the same element is also tagged
 as a restaurant, cafe, fast-food outlet or bar: in the region 2 taprooms become `full` and 5 become `bar`, 167 stay
-hosts only. Thirty of the 94 campus elements are single buildings or points (satellite offices, one hall of a larger
-campus) and would each carry a whole campus's default size, so only the 64 site polygons become visitor sources. The
+hosts only [run: the same]. Twenty-nine of the 93 campus places are single buildings or points (satellite offices, one
+hall of a larger campus) and would each carry a whole campus's default size, so only the 64 site polygons become
+visitor sources. The
 campus rule is this document's addition, and `02_MODEL.md` 2.3 accepts it. Scouting takes the host size from the
 place's own `size_default` (`PlaceInput.size_default`, 02_MODEL.md 4.16), never from the seed row, so a campus building
 stays a possible host that is ranked on its catchment alone.
@@ -573,18 +685,30 @@ place type. It is not copied into the data.
 
 ### 5.4 De-duplication
 
-Order of preference when two elements compete: `geom_kind` (area, then building, then point), then `osm_type` (relation,
-way, node), then lower `osm_id`. Process elements in that order within each step. An element is dropped when an already
-kept element satisfies the step's test. The kept row fills its own empty `phone`, `website`, `opening_hours_raw`,
-address fields, `cuisine` and `brand` from the dropped one.
+De-duplication works on place rows, that is after classification (5.1), the fetch-box test (2.3), the derived
+attributes (5.2) and normalisation (5.6), and before county assignment (5.5).
 
-1. Identity: same `osm_type` and `osm_id` seen in two state extracts or two tiles. Keep the first by state order of the region file.
-2. Same venue: same place type, equal normalised names (non-empty), distance <= 60 m. Normalised name = NFKD, combining
-   marks removed, lower case, `&` to `and`, every run of other non-alphanumerics to one space, trimmed.
-3. Site and its parts: same place type and distance <= radius, regardless of name. Radii: `campus` 400 m, `hospital` 250 m,
-   `transit_station` 250 m, `stadium` 250 m, `shopping_centre` 150 m.
+1. Identity: same `osm_type` and `osm_id` seen in two state extracts or two tiles. Inputs are read in the state order
+   of the region file (tiles in file-name order). The first occurrence that reached this step is kept, every later one
+   is counted as `merged_identity` and nothing is copied from it.
+2. Same venue (`merged_same_venue`): same place type, equal comparable names (non-empty), distance <= 60 m. Comparable
+   name = the `name` of 5.6 in NFKD, combining marks (`\p{M}`) removed, lower case, every `&` replaced by ` and ` with
+   the spaces, every run of characters outside `a-z` and `0-9` to one space, trimmed. `AT&T`, `AT & T` and `AT and T`
+   compare equal. A name without a Latin letter or digit is empty and never matches.
+3. Site and its parts (`merged_site_part`): same place type and distance <= radius, regardless of name. Radii: `campus`
+   400 m, `hospital` 250 m, `transit_station` 250 m, `stadium` 250 m, `shopping_centre` 150 m. Other types are not
+   touched by this step.
 
-Measured on the tile set (fetch box) [V]: step 2 removes 197, step 3 removes 88 (campus 32, shopping centre 37, hospital 16, stadium 3).
+Steps 2 and 3 each sort the rows by the order of preference: `geom_kind` (area, then building, then point), then
+`osm_type` (relation, way, node), then lower `osm_id` (compared as a number). They take the rows in that order. A row is
+dropped when an already kept row satisfies the step's test (distances are haversine, the limit included). If several
+kept rows do, the one that comes first in the order of preference absorbs it: it fills its own empty `phone`,
+`website`, `addr_line`, `city`, `state_code`, `postcode`, `cuisine` and `brand` from the dropped row, each field on its
+own, and `opening_hours_raw` together with `hours_mask`. Roles and `tags` are never copied.
+
+Measured with the pipeline on the tile set (fetch box): step 2 removes 196, step 3 removes 87 (shopping centre 37,
+campus 31, hospital 16, stadium 3). On the extracts [run]: 165 by identity (elements on a state line), 199 by step 2,
+124 by step 3 (the same four types plus 37 station parts).
 
 ### 5.5 Clipping and county assignment
 
@@ -597,28 +721,34 @@ bounding-box test first, counties tried in ascending FIPS order, first hit wins.
 
 | Field | Rule |
 |---|---|
-| `name` | `name` tag, else `brand` tag. Trim, collapse whitespace, NFC, cut to 160 characters. Empty means no name |
+| `name` | `name` tag, else `brand` tag (when the `name` tag is empty after the steps that follow). Collapse every run of whitespace to one space, trim, NFC, cut to 160 characters. Empty means no name (null) |
 | `brand` | `brand` tag, trimmed, 120 characters |
-| `phone` | First non-empty of `phone`, `contact:phone`. Take the part before the first `;`, `,`, `/` or " or ". Remove a trailing extension (`ext`, `x` and digits). Keep digits and a leading `+`. Strip `+1`, `001` or a leading `1` of an 11-digit number. Accept exactly 10 digits matching `^[2-9]\d{2}[2-9]\d{6}$`. Store `+1` and the 10 digits. Anything else is null and counted |
+| `phone` | First non-empty of `phone`, `contact:phone`. Take the part before the first `;`, `,`, `/` or " or ". Remove a trailing extension (`ext`, `ext.` or `x`, optional spaces, digits, at the end, any letter case). Delete every character that is not a digit or `+`. If the result starts with `+1`, remove those two characters. Else if it starts with `001`, remove those three. Else if it starts with `+`, the value is null. If 11 digits remain and the first is `1`, remove it. Accept exactly 10 digits matching `^[2-9]\d{2}[2-9]\d{6}$`. Store `+1` and the 10 digits. Anything else is null |
 | `website` | First non-empty of `website`, `contact:website`. Part before the first `;`, trimmed. Null if it contains whitespace. Prefix `https://` when there is no scheme. Scheme must be `http` or `https`. Lower-case scheme and host. Host must match `^[a-z0-9.-]+\.[a-z]{2,}(:\d+)?$`. Null above 255 characters |
 | `addr_line` | `addr:housenumber` + space + `addr:street`, then `, ` + `addr:unit` when present. If there is no street, `addr:full`. 200 characters |
 | `city`, `state_code`, `postcode` | `addr:city` (80). `addr:state` upper-cased when it is two letters, else null. First five digits of `addr:postcode` when it matches `^\d{5}(-\d{4})?$`, else null |
 | `cuisine` | Split `cuisine` on `;` and `,`. Trim, lower-case, spaces to `_`. Drop empties and repeats. First six, joined with `;`; drop values from the end until the joined string is at most 120 characters |
-| `tags_json` | Object with those of `brand:wikidata, operator, takeaway, drive_through, outdoor_seating, delivery, rooms, beds, capacity, building:levels, food, email` that are present, keys sorted. Null when empty |
+| `tags_json` | Object with those of `brand:wikidata, operator, takeaway, drive_through, outdoor_seating, delivery, rooms, beds, capacity, building:levels, food, email` that are present and not empty after trimming, values trimmed, keys sorted in byte order. Null when empty. The key in `places.ndjson` is `tags` |
 
-Every length limit counts Unicode code points and cuts on a code point boundary (`Array.from(s).slice(0, n).join('')`),
-which is how MySQL counts `VARCHAR(n)`. Production MySQL is strict: one value longer than its column fails the whole
-500-row insert, and a cut inside a surrogate pair gives JSON that PHP `json_decode` rejects.
+Every tag value is trimmed before it is used, and a value that is empty after trimming counts as absent. Every length
+limit counts Unicode code points and cuts on a code point boundary (`Array.from(s).slice(0, n).join('')`), which is how
+MySQL counts `VARCHAR(n)`. Production MySQL is strict: one value longer than its column fails the whole 500-row insert,
+and a cut inside a surrogate pair gives JSON that PHP `json_decode` rejects.
 
-Measured in the region [V]: named 98.8 %, phone normalises for 100.0 % of the places that have one, website for 100.0 %,
-brand on 7,168 places, cuisine on 9,082, street address on 16,919 of 24,724.
+Measured in the region [run]: named 98.8 % (24,589 of 24,886). Every one of the 9,496 phone values and 11,458 website
+values of the region normalises (in the whole fetch box 1 phone and 4 websites do not). Brand on 7,172 places, cuisine
+on 9,087, street address on 16,981. The longest values written are far below the column sizes (name 84, website 209,
+address 66, cuisine 58 characters), except `opening_hours_raw` (254).
 
 ### 5.7 Opening hours
 
-Keep the raw string in `opening_hours_raw` (255 characters, null if absent). Parse it into `hours_mask` when the small
-grammar below accepts the whole string. Otherwise `hours_mask` is null, which means unknown, never closed.
+Keep the trimmed raw string in `opening_hours_raw` (cut to 255 characters, null if absent or empty). Parse it into
+`hours_mask` when the small grammar below accepts the whole string. Otherwise `hours_mask` is null, which means unknown,
+never closed. A value longer than 255 characters is stored cut and is never parsed.
 
-Preparation: trim, lower-case, collapse whitespace, remove spaces around `-`, `,` and `;`, remove trailing `;`.
+Preparation: trim, lower-case, collapse whitespace, remove spaces around `-`, `,` and `;`, remove trailing `;`. A piece
+"begins with a day" when it starts with one of the eight tokens of `dayspec` followed by a character other than a
+letter, a digit or `_`, or by the end (`sat` and `thu` do not qualify, so English day names are rejected).
 
 ```
 value   := rule ( ";" rule )*
@@ -633,8 +763,10 @@ span    := H:MM "-" H:MM [ "+" ] | H:MM "+"     start < 24:00, end <= 48:00, min
 
 Evaluation: keep a list of spans per weekday (minutes from that day's midnight).
 
-1. A sub without days applies to all seven days. `mo-fr` expands in week order and wraps (`sa-mo` is Saturday, Sunday, Monday).
-2. A span whose end is not after its start ends on the next day (add 1,440). `H:MM+` runs to 24:00.
+1. A sub without days applies to all seven days. `mo-fr` expands in week order and wraps (`sa-mo` is Saturday, Sunday,
+   Monday). The day part of a sub is everything before its first space. `24/7` sets every day to open all day.
+2. A span whose end is not after its start ends on the next day (add 1,440). A span longer than 24 hours after that is
+   rejected. `H:MM+` runs to 24:00. A `+` after a full span (`10:00-12:00+`) is read as the span itself.
 3. `days` alone means open all day. `off` and `closed` give an empty list. Bare `off` or `closed` without days is rejected.
 4. The first sub of a rule **replaces** the list of each day it names. Later subs of the same rule **add** to it.
 5. `ph` is ignored: a sub naming only `ph` is validated and skipped. Holidays are handled by day types in the model.
@@ -660,29 +792,43 @@ Test vectors [V]:
 | `Fr 17:00+` | `0000000000000000000000000000fe000000000000` | 7 |
 | `sunrise-sunset`, `"by appointment"`, `Mo-Su 10:00-17:30; Dec 25 off`, `off` | null | |
 
-Measured [V]: 9,824 of 10,185 raw values in the fetch box parse (96.5 %). In the region 7,095 of 7,367 (96.3 %). 47 % of
-food outlets and 12 % of hosts have the tag at all. Version 1 stores the mask and does not use it in the share model.
+Measured [V]: 9,824 of 10,185 raw values in the fetch box parse (96.5 %; the pipeline's parser gives the same count on
+the tile set). In the region [run] 7,112 of 7,384 (96.3 %). 46 % of rivals and 12 % of possible hosts have the tag at
+all. Version 1 stores the mask and does not use it in the share model.
 
 ### 5.8 Expected result for `dc`
 
-Tile set of 2026-10-05, 42,616 elements in the fetch box, rules of this section, seeds revision 1 [V]:
+Two measurements with the rules of this section and seeds revision 1. "Extracts" is the first pipeline run on the four
+Geofabrik extracts of 2026-10-03 [run]. "Tile set" is the same pipeline on the 16 saved Overpass tiles of 2026-10-05
+(42,616 elements, no stations), which the prototype of this document had measured before: rivals, kitchen flags and
+halo places agree with the prototype to the unit, and the region's place count is ten below the prototype's 24,724,
+which is consistent with the 13 relations of a type other than multipolygon that the prototype had not excluded.
 
-| | Fetch box | Inside the 23 counties |
+| Inside the 23 counties | Extracts | Tile set |
 |---|---:|---:|
-| No rule / unnamed where a name is required / closed | 9,147 / 551 / 12 | |
-| Places after de-duplication | 32,621 | **24,724** |
-| Rivals (full / quick / convenience / cafe / bar) | 17,725 | **13,505** (5,443 / 3,535 / 2,193 / 1,766 / 568) |
-| Kitchen flag from tags: `taproom` yes / unknown, `bar` yes / unknown | | 9 / 165, 91 / 472 |
-| Visitor sources | | 7,790 |
-| Possible hosts, with phone or website | 15,597, 31.7 % | 11,782, 34.2 % |
-| `geom_kind` area / building / point | | 4,563 / 7,971 / 12,190 |
+| Places after de-duplication | **24,886** | 24,714 |
+| Rivals (full / quick / convenience / cafe / bar) | **13,508** (5,446 / 3,535 / 2,192 / 1,767 / 568) | 13,505 (5,443 / 3,535 / 2,193 / 1,766 / 568) |
+| Kitchen flag from tags: `taproom` yes / unknown, `bar` yes / unknown | 9 / 165, 91 / 472 | 9 / 165, 91 / 472 |
+| Visitor sources | 7,952 | 7,784 |
+| Possible hosts, with phone or website | 11,941, 34.7 % | 11,772, 34.3 % |
+| `geom_kind` area / building / point | 4,568 / 7,980 / 12,338 | 4,557 / 7,968 / 12,189 |
+| Named | 98.8 % | 98.8 % |
 
-Region counts by type: restaurant 5,441. fast_food 3,535. park 2,540. convenience 2,193. cafe 1,766. apartment_community
-1,698. office_park 1,519. gym 1,078. big_box 733. hotel 683. industrial_site 635. shopping_centre 574. bar 563.
-attraction 541. car_dealership 431. events_venue 351. taproom 174. campus 94 (64 areas). farmers_market 84. hospital 58.
-stadium 33. Herndon and Sterling test box (`38.92,-77.48,39.06,-77.32`): 1,187 places, 685 rivals. `transit_station` is
-absent from the tile set because the recon query did not ask for stations. Expect roughly 100 to 200 from the extracts
-(98 Metrorail stations plus commuter rail [M]). Each adds a `v_transit` source of 300.
+| Whole inputs | Extracts | Tile set |
+|---|---:|---:|
+| Elements read (with a trigger key) | 5,972,925 | 42,745 |
+| Relation of another type / closed / no rule / unnamed | 1,782 / 1,373 / 5,818,235 / 77,161 | 13 / 13 / 9,166 / 551 |
+| No geometry / outside the fetch box | 1 / 41,213 | 0 / 29 |
+| Merged: identity / same venue / site part | 165 / 199 / 124 | 108 / 196 / 87 |
+| Outside every county and not in the halo | 7,396 | 7,475 |
+| Rows of `places.ndjson` (region + halo) | 25,276 (24,886 + 390) | 25,107 (24,714 + 393) |
+
+Region counts by type [run]: restaurant 5,444. fast_food 3,535. park 2,537. convenience 2,192. cafe 1,767.
+apartment_community 1,697. office_park 1,518. gym 1,078. big_box 733. hotel 683. industrial_site 635. shopping_centre
+574. bar 563. attraction 540. car_dealership 431. events_venue 349. taproom 174. transit_station 168. campus 93 (64
+areas). farmers_market 84. hospital 58. stadium 33. Herndon and Sterling test box (`38.92,-77.48,39.06,-77.32`): 1,197
+places, 685 rivals. The 168 stations (148 points, 10 buildings, 10 areas, after 37 station parts were merged) each add
+a `v_transit` source of 300. The tile set has none because the recon query did not ask for stations.
 
 ## 6. Source points and rival rows
 
@@ -690,9 +836,13 @@ absent from the tile set because the recon query did not ask for stations. Expec
 
 One row per block with any base above 0 after corrections. `point_id = "b" + GEOID`. Coordinates are the internal point.
 `b_res = POP100`. The seven worker columns are the sums of 2.2 over the corrected sectors, with `cns04Weight` (4.5).
-Visitor columns are 0. `job_adj = 1` when the block's own jobs were reduced by a correction. Worked example, block
-`110010001011000` before any spread it may receive: POP100 607, C000 71 with CNS06 5, CNS09 1, CNS11 30, CNS12 8, CNS13 6,
-CNS14 11, CNS19 10. So `b_res` 607, `b_w_office` 56, `b_w_industrial` 5, `b_w_public` 10, the other columns 0.
+Visitor columns are 0. `job_adj = 1` when the block's own jobs were reduced by a correction (4.4 step 1, and step 5
+for a halo block cut to the automatic cap; receiving spread jobs does not set it). In the first build 32 rows carry
+it: the 31 spread blocks and one halo block [run]. Worked example, block `110010001011000` before any spread it may
+receive: POP100 607, C000 71 with CNS06 5, CNS09 1, CNS11 30, CNS12 8, CNS13 6, CNS14 11, CNS19 10. So `b_res` 607,
+`b_w_office` 56, `b_w_industrial` 5, `b_w_public` 10, the other columns 0. In the first build this block has residents
+and so receives its share of the jobs spread over the District: its row reads `b_w_office` 58.647..., `b_w_edu`
+7.593..., `b_w_public` 23.244... [run].
 
 ### 6.2 Place rows
 
@@ -737,8 +887,17 @@ source points (6.1 for region blocks, 6.2 for places inside a county) and `c = w
 `2c` covers every outside point within `c` of any candidate cell centre. `3c` covers every outside outlet within `c` of
 such a point. Halo rows take part in the kernel and in nothing else: they are excluded from totals, gates, Scout and the
 Data page. The halo covers only the region's own states (Pennsylvania north of Frederick County is not loaded).
-`dc` [V]: 1,311 halo blocks with 100,085 residents and 29,688 jobs (1.6 % and 0.9 % of the region), 115 halo visitor
-places and 281 halo rivals. 3,939 rivals of the fetch box fall outside both and are dropped.
+
+Details. "With residents or jobs" is tested on the raw counts (`POP100 > 0` or `C000 > 0`). A halo block's jobs then go
+through 4.4 step 5 and the grouping of 4.5, and it gets a row only if a base is above 0. A place outside every county
+that passes neither test is dropped (`dropped_outside_region`), whatever its type. A place that is both a visitor
+source and a rival and passes only the `3c` test is kept as a rival: it gets no point row, and its `visitor_segment`
+and `size_default` are written as null and 0, so that in `places.ndjson` a visitor segment always means that the point
+row `"p" + place_key` exists.
+
+`dc` [run]: 1,349 halo blocks with 102,158 residents and 29,763 raw jobs (1.6 % and 0.9 % of the region), one of them
+cut to the automatic cap (295 jobs discarded), 115 halo visitor places and 278 halo rivals, 4 of which lost their
+visitor role. 7,396 places of the fetch box lie outside every county and outside the halo and are dropped.
 
 ## 7. Candidate map cells
 
@@ -747,11 +906,12 @@ places and 281 halo rivals. 3,939 rivals of the fetch box fall outside both and 
 For each S0 point `p`: `c0 = latLngToCell(p.lat, p.lng, 9)`. For each cell `x` of `gridDiskDistances(c0, 5)`: accept `x`
 when `haversine(p, cellToLatLng(x)) <= walkCutoffM`. The candidate set is the union. Ring 5 exists only as a guard: if any
 cell of ring 5 is ever accepted, the disk is too small for this latitude and the build fails. With a centre spacing of
-336 to 356 m here, ring 5 starts at about 1,250 m from any point of the centre cell [V: zero ring-5 acceptances].
+336 to 356 m here, ring 5 starts at about 1,250 m from any point of the centre cell [V: zero ring-5 acceptances]. The
+result is a set, so it does not depend on the order of the points. Points of the same `c0` share one disk.
 
-`dc` [proto]: 150,848 candidates from 59,052 S0 points (51,262 block rows and 7,790 visitor places). That is nearly every
-cell of the region's land area, because rural block points are closer together than 2.4 km. Pruning is what keeps the
-pack useful.
+`dc` [run]: 150,849 candidates from 59,214 S0 points (51,262 block rows and 7,952 visitor places), zero ring-5
+acceptances. That is nearly every cell of the region's land area, because rural block points are closer together than
+2.4 km. Pruning is what keeps the pack useful.
 
 ### 7.2 Pruning rule
 
@@ -763,6 +923,10 @@ nearby_etl(C) = sum over p, over the 16 segments s in order:  base[p][s] * exp(-
 venue_etl(C)  = the same sum over the eight v_ segments only (indexes 8 to 15)
 keep the cell when nearby_etl(C) >= cellMinNearby (100)  or  venue_etl(C) >= cellMinVenue (15)
 ```
+
+Each sum is one accumulator that starts at 0: for every point in ascending `point_id`, compute
+`f = exp(-d / walkDecayM)` once and add `base[p][s] * f` for `s` = 0 to 15 (zero bases may be skipped, which changes
+nothing). `d` is the haversine distance of 02_MODEL.md 4.3, operation for operation, and the cutoff is inclusive.
 
 `nearby_etl` is the sum of the model's `nearby` vector and `venue_etl` the sum of its last eight entries. The loader
 recomputes `nearby_etl` with the PHP model and compares (section 10, step 9), which doubles as a cross-language check of
@@ -782,25 +946,64 @@ never reads the pack.
 | **100** | **58,327** | **96.6 %** |
 | 200 | 45,368 | 94.2 % |
 
-With both tests at the seed values **61,228 cells** are kept (96.8 % of the nearby mass): the second test adds 2,901.
-Under the first test alone 174 of the 7,790 visitor-source places would stand in a dropped cell, 43 of the 174
-taprooms among them. With both tests one does (a car dealership). 56,886 cells pass on residents and jobs alone, so the
-count depends little on venue seeds. Expect about 61,000 cells for `dc`. Gate: warn outside 54,000 to 64,000. For
-comparison, 31,237 cells contain a source point, 29,404 contain residents or jobs, and the map layer was measured at 55
-to 60 frames per second with 57,000 cells.
+With both tests at the seed values the prototype keeps **61,228 cells** (96.8 % of the nearby mass): the second test
+adds 2,901. Under the first test alone 174 of the 7,790 visitor-source places would stand in a dropped cell, 43 of the
+174 taprooms among them. With both tests one does (a car dealership). 56,886 cells pass on residents and jobs alone, so
+the count depends little on venue seeds. For comparison, 31,237 cells contain a source point, 29,404 contain residents
+or jobs, and the map layer was measured at 55 to 60 frames per second with 57,000 cells.
+
+`dc` [run]: **61,460 cells** are kept of 150,849 candidates, 58,420 by the first test and 3,040 by the second alone
+(the stations add venue cells, the first-pass corrections move the job cells a little). The kept cells have 2,324,212
+source points within the cutoff in all (37.8 per cell, 581 at most). Gate G17 warns outside `checks.cells_kept`
+(54,000 to 64,000).
 
 ## 8. Pipeline outputs
 
-Command: `node tools/truck-etl/bin/build-region.mjs --region=dc --contact=<email> [--raw-dir=] [--out-dir=storage/truck/build]
-[--seeds=] [--corrections=] [--places-source=geofabrik|overpass-tiles] [--tiles-dir=] [--osm-date=YYMMDD] [--offline]`.
-Exit 0 when every gate passes (warnings allowed), 2 when a gate fails (files go to `<out-dir>/<region>/_failed/`), 1 on
-usage or I/O errors. Output directory `<out-dir>/<region>/<dataset_version>/`.
+Command: `node tools/truck-etl/bin/build-region.mjs --region=dc [--contact=<email>] [--raw-dir=]
+[--out-dir=storage/truck/build] [--out=] [--region-file=] [--seeds=] [--corrections=]
+[--places-source=geofabrik|overpass-tiles] [--tiles-dir=] [--osm-date=YYMMDD] [--offline]`. Every option may be written
+`--name=value` or `--name value`.
 
-Layout of `tools/truck-etl/`: `package.json` (`"type": "module"`, dependency `h3-js` 4.5.0 only), `bin/build-region.mjs`,
-`bin/fetch-overpass-tiles.mjs`, `regions/<id>.json`, `corrections/<id>.jobs.json`, `test/`, and one module per concern
-under `src/`: `download`, `zip`, `pl`, `csv`, `lodes`, `pbf`, `overpass`, `counties`, `taxonomy`, `hours`, `normalise`,
-`dedupe`, `corrections`, `points`, `cells`, `geo` (haversine, grids), `seeds`, `gates`, `manifest`. Stages run in this
-order: download, blocks, jobs and corrections, places, source points and halo, cells, gates, write.
+| Option | Meaning | Default |
+|---|---|---|
+| `--region=<id>` | region to build; reads `regions/<id>.json` of the package | required unless `--region-file` is given |
+| `--region-file=<path>` | a region file elsewhere (the id comes from the file) | |
+| `--contact=<email>` | contact for the User-Agent of section 3. Needed for any download: without one nothing is requested and the build uses the raw cache as with `--offline` | environment `TP_CONTACT_EMAIL` |
+| `--raw-dir=<dir>` | raw download cache | environment `TP_RAW_DIR`, else `storage/truck/raw` |
+| `--out-dir=<dir>` | parent of all region builds: output goes to `<out-dir>/<region>/<dataset_version>/` | `storage/truck/build` |
+| `--out=<dir>` | the region's build directory itself: output goes to `<out>/<dataset_version>/`. Not together with `--out-dir` | |
+| `--seeds=<path>` | seed file | `docs/truck-planner/reference/tp_seeds.json` |
+| `--corrections=<path>` | job corrections file | `corrections/<region>.jobs.json` of the package |
+| `--places-source=` | `geofabrik` or `overpass-tiles` (development, with `--tiles-dir=<dir>`) | `geofabrik` |
+| `--osm-date=YYMMDD` | snapshot date of the extracts (2.3) | resolved, see section 3 |
+| `--offline` | never make a request, whether a contact is set or not: every file must be in the raw cache | off |
+
+Paths given on the command line are relative to the current directory. The defaults are relative to the repository
+root, whatever the current directory is. Exit 0 when every gate passes (warnings allowed). Exit 2 when a gate fails:
+the five files are then written to `_failed/` beside the version directories (`<out-dir>/<region>/_failed/`), replacing
+what was there, and a raw file that fails its check (gate G1) stops the run with exit 2 before anything is written.
+Exit 1 on usage or I/O errors, on an invalid region, seed or corrections file, on a download that did not finish, and
+on a file that is missing from the raw cache when no request may be made (`--offline`, or no contact address). The
+command prints the stages with elapsed seconds on standard error and, on standard output, the gate table (one line per
+gate entry; value and expectation for every entry that did not pass), the totals, the four output files with rows,
+bytes and SHA-256, the raw cache with the number of requests made, the output directory, wall-clock time and peak
+memory. An existing directory of the same `dataset_version` is replaced (its content is identical by construction).
+
+Layout of `tools/truck-etl/`: `package.json` (`"type": "module"`, dependency `h3-js` 4.5.0 only, scripts `build:dc` and
+`test`), `package-lock.json`, `README.md`, `.gitattributes`, `bin/build-region.mjs`, `bin/adopt-raw.mjs` (section 3),
+`bin/fetch-overpass-tiles.mjs` (2.3), `regions/<id>.json`, `corrections/<id>.jobs.json`, `test/` (test files and
+`fixtures/`), `test-support/` (helpers that write small PBF and ZIP files, and the tool that cuts the fixture), and one
+module per concern under `src/`: `args`, `download`, `zip`, `pl`, `csv`, `lodes`, `blocks` (the block table of 4.1),
+`corrections`, `pbf`, `overpass`, `taxonomy`, `normalise`, `hours`, `dedupe`, `counties`, `places` (the places stage of
+section 5), `points`, `cells`, `review` (the rows of 8.4), `writers`, `manifest`, `gates`, `geo` (haversine, bucket
+grid), `seeds`, `region` (section 1), `vocabulary` (segments, place types, sectors, versions) and `pipeline` (the stage
+order). Stages run in this order: download, blocks, jobs and corrections, places, source points and halo, cells, review
+list, gates, write. Model code paths never read a clock, use randomness or depend on the locale. The only clock reads
+are `fetched_at` of `index.json`, the elapsed time the command prints and the folder date of the tile helper.
+
+Measured for `dc` [run] on a laptop (Node 24, Windows), four runs with every raw file in the cache: 35 to 40 s wall
+clock and 481 to 488 MiB peak memory, of which 2 to 3 s verify the 830 MB of raw files, 2 s read the blocks and jobs,
+26 to 29 s read the extracts and 3 s enumerate and score the cells.
 
 `dataset_version = <region>-<YYYYMMDD of the OSM snapshot>-<h8>`, where `h8` is the first 8 hex characters of the SHA-256
 of six lines: `sha256(points.tsv)`, `sha256(places.ndjson)`, `sha256(cells.tsv)`, `sha256(job_review.csv)` (64 hex
@@ -810,8 +1013,12 @@ weights, the regime table) and that therefore changes none of the four files. Ex
 48 characters, `[a-z0-9-]` only.
 
 Determinism: identical raw files, region file, corrections file, seed file and pipeline version give identical bytes
-in all five files. No wall-clock value is written. Every sum runs in the stated order. `nearby_etl` is written as
-`String(Number(x.toPrecision(12)))`. It is the only column that depends on `Math.exp` and trigonometry.
+in the four data files, and with the same raw cache index (the `final_url` and `last_modified` of `sources[]` come from
+it) in `manifest.json` too. No wall-clock value is written. Every sum runs in the stated order. `nearby_etl` is written
+as `String(Number(x.toPrecision(12)))`. It and the cell centres are the only values that depend on `Math.exp` and
+trigonometry, so `cells.tsv` (and with it the `dataset_version`) is the one file that another JavaScript engine could
+write with a different last digit. Verified for `dc` [run]: two runs on the same machine gave the same SHA-256 for all
+five files.
 
 ### 8.1 `points.tsv`
 
@@ -827,6 +1034,10 @@ Tab-separated, header row, sorted by `point_id` in byte order. 23 columns:
 | 6, 7 | `lat`, `lng` | number | 7 decimals at most |
 | 8 to 23 | `b_res, b_w_office, b_w_health, b_w_edu, b_w_retail, b_w_industrial, b_w_hospitality, b_w_public, b_v_nightlife, b_v_shopping, b_v_leisure, b_v_campus, b_v_hospital, b_v_transit, b_v_events, b_v_lodging` | number >= 0 | base per segment, in the shared segment order |
 
+The header row holds the 23 column names. Every row has at least one base above 0. A block row has zeros in the eight
+`b_v_` columns, a place row has exactly one non-zero base. Real row of the first build [run] (a tab between values):
+`b110010001011001 block 110010001011001 1 0 38.9099975 -77.056197 282 6.229805175574284 0.01487631814098686 ...`.
+
 ### 8.2 `places.ndjson`
 
 One JSON object per line, keys in exactly this order, `JSON.stringify` without spaces, null for missing values, sorted by
@@ -838,7 +1049,10 @@ One JSON object per line, keys in exactly this order, `JSON.stringify` without s
 `unknown`), `phone`, `website`, `addr_line`, `city`, `state_code`, `postcode`, `cuisine`, `opening_hours_raw`,
 `hours_mask`, `tags` (object or null).
 
-Example, a real element of the tile set (rule R04; hours as in the 5.7 table) [V]:
+`lat` and `lng` are the place point, `e7 / 1e7` (7 decimals at most). Non-ASCII characters are written as UTF-8, not
+as `\u` escapes. Every row with `in_region = 0` has a `rival_kind` or a `visitor_segment` (6.3).
+
+Example, a real element (rule R04; hours as in the 5.7 table). The first build writes exactly this line [V, run]:
 
 ```json
 {"place_key":"n3413156622","osm_type":"node","osm_id":"3413156622","place_type":"cafe","geom_kind":"point","in_region":1,"county_fips":"51107","name":"Starbucks","brand":"Starbucks","lat":38.9455121,"lng":-77.4516722,"rival_kind":"cafe","visitor_segment":null,"size_default":0,"host_fit":0,"kitchen":"yes","phone":"+13017428261","website":"https://www.starbucks.com/store-locator/store/12403/iad-terminal-d-gate-d-15-44844-aviation-dr-sterling-va-20166-us","addr_line":"44844 Aviation Drive","city":"Sterling","state_code":"VA","postcode":"20166","cuisine":"coffee_shop","opening_hours_raw":"04:30-21:00","hours_mask":"f0ff1ff0ff1ff0ff1ff0ff1ff0ff1ff0ff1ff0ff1f","tags":{"brand:wikidata":"Q37158","takeaway":"yes"}}
@@ -847,7 +1061,8 @@ Example, a real element of the tile set (rule R04; hours as in the 5.7 table) [V
 ### 8.3 `cells.tsv`
 
 Tab-separated, header row, sorted by `h3` ascending (string order equals numeric order). Columns: `h3` (15 hex), `lat`,
-`lng` (the `cellToLatLng` centre, full double precision), `nearby_etl`. Only kept cells are written.
+`lng` (the `cellToLatLng` centre, full double precision), `nearby_etl`. Only kept cells are written. First row of the
+first build [run]: `892a8c9062fffff 38.370839826675905 -78.10995892889304 126.985036476`.
 
 ### 8.4 `job_review.csv`
 
@@ -858,35 +1073,79 @@ and come after all other rows, by `geoid`. Columns:
 top1_jobs, top1_share, top2_sector, top2_jobs, top3_sector, top3_jobs, rule, treatment, manual, confirmed, cap, jobs_after,
 jobs_spread, jobs_discarded, entry_state, hint_place, reason`
 
-`rule` is `A`, `B`, `AB` or empty (entry on an unflagged block). `treatment` is `keep`, `cap`, `spread`, `drop` or
-`auto_spread`. `manual` is 1 when an entry exists. `confirmed` is 0 for an entry with `"confirmed": false`, 1 for any
-other entry and empty without an entry. `jobs_spread` is what the block gave to the rest of its county and
-`jobs_discarded` what `cap` or `drop` removed from it, both summed over the 20 sectors at weight 1. A spread that found
-no receiver (4.4 step 3) counts in neither column, only in `jobs_spread_lost` of the manifest. `entry_state` is `ok`,
-`stale`, `orphan` or empty. `map_url` is the free Google Maps link
-`https://www.google.com/maps/search/?api=1&query=<lat>%2C<lng>` (a URL, not an API call).
-`hint_place` names the nearest `hospital` or `campus` place within 800 m as `type: name (distance m)`, or is empty. It
-is an aid for the reviewer, never a decision. `place_name` and `military_name` come from the crosswalk (`stplcname`,
-`milname`).
+One row for every region block that is flagged or has an entry (and a WAC row), plus one row per orphan entry. Lines
+end with LF. Numbers are written as in section 0, empty values as nothing.
+
+| Column | Content |
+|---|---|
+| `county_fips`, `county_name`, `place_name`, `military_name` | the first five characters of the GEOID, then the crosswalk's `ctyname`, `stplcname` and `milname`, verbatim (for example `Fairfax County, VA`, `Springfield CDP, VA`) |
+| `lat`, `lng`, `residents`, `land_area_m2` | the block's internal point, POP100 and AREALAND |
+| `map_url` | the free Google Maps link `https://www.google.com/maps/search/?api=1&query=<lat>%2C<lng>` with `lat` and `lng` as written in their columns (a URL, not an API call) |
+| `c000`, `top1_sector` ... `top3_jobs` | raw counts. The three largest sectors, by jobs descending, then by sector number. `top1_share` = `top1_jobs / c000`, rounded to 4 decimals |
+| `rule` | `A`, `B`, `AB` or empty (entry on an unflagged block) |
+| `treatment` | `keep`, `cap`, `spread`, `drop` or `auto_spread` |
+| `manual`, `confirmed` | `manual` is 1 when an entry exists, else 0. `confirmed` is 0 for an entry with `"confirmed": false`, 1 for any other entry and empty without an entry |
+| `cap` | the cap applied: the entry's `cap` (0 for `drop`, the default 0 for `spread`), the automatic cap for `auto_spread`, empty for `keep` |
+| `jobs_after` | the block's jobs after all corrections, summed over the 20 sectors at weight 1, including spread jobs a kept block received |
+| `jobs_spread`, `jobs_discarded` | what the block gave to the rest of its county, and what `cap` or `drop` removed from it, both summed over the 20 sectors at weight 1. A spread that found no receiver (4.4 step 3) counts in neither column, only in `jobs_spread_lost` of the manifest |
+| `entry_state` | `ok`, `stale`, `orphan`, or empty without an entry |
+| `hint_place` | the nearest named `hospital` or `campus` place of `places.ndjson` within 800 m of the block point, as `type: name (distance m)` with the distance rounded to whole metres (ties: lower `place_key`), or empty. An aid for the reviewer, never a decision |
+| `reason` | the entry's `reason`, empty for `auto_spread` |
 
 ### 8.5 `manifest.json`
 
-Pretty-printed with two-space indent, keys in this order. No timestamps of the run.
+`JSON.stringify(manifest, null, 2)` plus a final LF, keys in the order of these tables. No timestamps of the run.
+Region counts and totals cover `in_region = 1` rows only. What concerns the halo sits under `counts.halo` and in
+`totals.halo_jobs_capped`.
 
 | Key | Content |
 |---|---|
-| `schema`, `dataset_version`, `region_id`, `pipeline_version`, `model_version` | identity |
+| `schema` | 1 |
+| `dataset_version`, `region_id`, `pipeline_version`, `model_version` | identity (`model_version` from the seed file) |
 | `region` | the region definition file, verbatim (the loader fills `tp_regions` from it) |
 | `bounds` | `lat_min, lng_min, lat_max, lng_max` of the county polygons |
-| `inputs` | `region_file_sha256`, `seeds_revision`, `seeds_sha256`, `corrections_version`, `corrections_sha256`, `places_source` |
-| `parameters` | every seed value used: `walk_decay_m`, `walk_cutoff_m`, `earth_radius_m`, `cns04_weight`, `cell_min_nearby`, `cell_min_venue`, `segment_cns` (the seven lists), `place_types` (the five fields of 0.1 for all 22 types). Also `h3_res` and the `job_review` thresholds |
-| `sources[]` | per raw file: `kind` (`census_pl`, `lodes_wac`, `lodes_xwalk`, `lodes_version`, `tigerweb`, `osm_pbf`, `overpass_tile`), `state`, `url`, `final_url`, `bytes`, `sha256`, `last_modified` |
-| `vintages` | `census_reference_date` `2020-04-01`, `lodes_year`, `lodes_format`, `lodes_vintage`, `osm_snapshot_date`, `osm_replication_timestamp` |
-| `counts` | blocks (state, region, with residents, with jobs, with either, halo), points (block, place, halo), places (total, in region, by type, by `geom_kind`), rivals by kind, visitor sources by type, hosts, cells (candidates, kept), every `dropped_*` and `merged_*` counter, phone, website and hours coverage |
-| `totals` | residents, housing units, raw jobs, jobs by sector, corrected base per segment over region points, `jobs_spread`, `jobs_discarded`, `halo_jobs_capped`, `jobs_spread_lost`, `blocks_adjusted` (region blocks with `jobs_spread` above 0), review blocks and jobs, by-county rows |
-| `gates[]` | `{id, level: "fail" or "warn", value, expected, pass}` for every gate of section 12 |
-| `outputs[]` | `{file, bytes, sha256, rows}` for the other four files |
+| `inputs` | `region_file_sha256`, `seeds_revision`, `seeds_sha256`, `corrections_version`, `corrections_sha256`, `places_source` (`geofabrik` or `overpass-tiles`). The three hashes are SHA-256 of the file bytes as read |
+| `parameters` | every seed value used: `walk_decay_m`, `walk_cutoff_m`, `earth_radius_m`, `cns04_weight`, `cell_min_nearby`, `cell_min_venue` (numbers), `segment_cns` (object: the seven `w_` segments in shared order, each a list of sector names as in the seed file), `place_types` (object: the 22 types in vocabulary order, each `{visitor_segment, default_size, rival_kind, host_fit, kitchen_default}`), then `h3_res` and `job_review` (`{total_min, single_sector_min, single_sector_share}` of the region file) |
+| `sources[]` | one entry per raw file used, sidecars excluded: `kind` (`census_pl`, `lodes_wac`, `lodes_xwalk`, `lodes_version`, `tigerweb`, `osm_pbf`, `overpass_tile`), `state` (lower-case `usps`, null for `tigerweb` and tiles), `path` (relative to the raw directory, which names the dated extract; a tile's file name), `url`, `final_url`, `bytes`, `sha256`, `last_modified`. The last five come from `index.json` (null where it has null; a tile has null `url`, `final_url` and `last_modified`). Order: by `kind` as listed, then by state order of the region file, tiles by name |
+| `vintages` | `census_reference_date` (`2020-04-01`), `lodes_year`, `lodes_format`, `lodes_vintage` (from `version.txt`; the values of the states joined with `,` if they differ), `osm_snapshot_date` (`YYYY-MM-DD`: the dated extract name, or the UTC date of the newest tile), `osm_replication_timestamp` (ISO 8601 UTC to the second: the largest header timestamp of the extracts, or the newest `timestamp_osm_base`; null if absent) |
+| `counts` | table below |
+| `totals` | table below |
+| `gates[]` | one entry per check of the gates G1 to G17 of section 12, in gate order: `{id, part, level, check, value, expected, pass}`. `id` is the gate number (`G1` ... `G17`, `G8b`). `part` names the check when a gate has several (`files`, `sidecars`, ...) and is null otherwise: section 12 lists them as `id.part`. `level` is `fail` or `warn`, `check` one line of plain text, `value` what was measured, `expected` the check value or limit, `pass` a boolean. A reader that only wants "which gates warned" takes the distinct `id` of the entries with `level = "warn"` and `pass = false` |
+| `outputs[]` | `{file, bytes, sha256, rows}` for `points.tsv`, `places.ndjson`, `cells.tsv`, `job_review.csv` in that order. `rows` excludes the header row |
 | `attribution` | object with the keys `osm` (string 1 of section 14), `osm_long` (string 2), `residents` (string 3), `jobs` (string 4, placeholders left as written), `places` (string 5 with `{osm_snapshot_date}` filled and `{contact}` left as written), `boundaries` (string 8) |
+
+`counts`, keys in this order:
+
+| Key | Content |
+|---|---|
+| `blocks` | `state` (blocks of all state files), `by_state` (object by state FIPS), `region`, `with_residents`, `with_jobs`, `with_either` (region blocks, raw counts) |
+| `points` | `total` (rows of `points.tsv`), `block` and `place` (region rows), `halo_block`, `halo_place` |
+| `places` | `total` (rows of `places.ndjson`), `in_region`, `halo`, `named` (region places with a name), `by_type` (the 22 types in vocabulary order), `by_geom_kind` (`area`, `building`, `point`). The last three count region places |
+| `rivals` | `total`, `by_kind` (`quick`, `full`, `cafe`, `bar`, `convenience`): region places with a rival kind |
+| `visitor_sources` | `total`, `by_type` (22 types): region places with a visitor segment |
+| `hosts` | `total` (region places with `host_fit > 0`), `with_contact` (of those, with a phone or a website) |
+| `halo` | `residents`, `jobs_raw` (of the halo block rows), `blocks_capped`, `visitor_places`, `rival_places` |
+| `cells` | `candidates`, `kept`, `kept_by_venue_test_only`, `point_cell_pairs` and `max_points_in_range` (source points within the cutoff of the kept cells: the sum and the largest), `occupied`, `max_residents`, `max_jobs_raw`, `max_jobs_after` (gates G10 and G11), `max_jobs_after_cell` (its H3 id) |
+| `elements_read` and the ten counters of 5.1 | `dropped_relation_type`, `dropped_closed`, `dropped_no_rule`, `dropped_unnamed`, `dropped_no_geometry`, `dropped_outside_box`, `merged_identity`, `merged_same_venue`, `merged_site_part`, `dropped_outside_region` |
+| `coverage` | region places: `phone_raw` and `website_raw` (places whose own element carries a value), `phone_ok` and `website_ok` (of those, normalised), `hours_raw` (places with `opening_hours_raw`), `hours_parsed` (with `hours_mask`) |
+
+`totals`, keys in this order:
+
+| Key | Content |
+|---|---|
+| `residents`, `housing_units`, `jobs` | region sums of POP100, HU100 and raw `C000` |
+| `jobs_by_sector` | raw region jobs per sector, `CNS01` to `CNS20` |
+| `base_by_segment` | sum of each of the 16 base columns over the region rows of `points.tsv`, in shared segment order (the corrected worker bases with `cns04Weight`, and the default sizes of the visitor sources) |
+| `jobs_spread`, `jobs_discarded`, `halo_jobs_capped`, `jobs_spread_lost` | jobs moved to receivers, removed by `cap` and `drop`, removed from halo blocks, and lost for want of a receiver, at weight 1 |
+| `blocks_adjusted` | region blocks with `jobs_spread` above 0 |
+| `review_blocks`, `review_jobs` | flagged region blocks and their raw jobs |
+| `by_county` | one `{fips, residents, housing_units, jobs, blocks}` per county, in the order of the region file |
+
+The values the backend reads by name (04_BACKEND.md): `inputs.corrections_version`, `inputs.places_source`,
+`vintages.*`, `parameters.*`, `totals.residents`, `totals.jobs`, `totals.blocks_adjusted`, `totals.jobs_spread`,
+`counts.points.total`, `counts.places.total`, `counts.cells.kept`, `gates[]`, `outputs[]`, `region`, `bounds`.
+First build [run]: `counts.points.total` 60,678, `counts.places.total` 25,276, `counts.cells.kept` 61,460,
+`totals.residents` 6,278,542, `totals.jobs` 3,140,158, `totals.jobs_spread` 196,941, `totals.blocks_adjusted` 31.
 
 ## 9. MySQL reference tables
 
@@ -1040,8 +1299,8 @@ bit with native prepares and a `PDO::PARAM_LOB` bind]. The value is the place's 
 with the place's own source point excluded, computed by the loader (section 10, step 8a). Scout decodes it and never
 computes vectors per candidate (02_MODEL.md 4.4).
 
-Expected size per dataset version for `dc` [proto]: about 60,600 point rows (15 MB), about 25,300 place rows (15 MB, plus
-4.7 MB for about 11,800 host vectors), one pack row (3.4 MB). Two versions are kept.
+Expected size per dataset version for `dc`: 60,678 point rows and 25,276 place rows [run] (about 15 MB each in MySQL
+[proto]), plus 4.8 MB for the 11,941 host vectors, and one pack row (about 3.4 MB). Two versions are kept.
 
 ### 9.2 Versioned loads
 
@@ -1171,7 +1430,7 @@ labelled outside, and so are 3 of the 11,782 possible hosts [proto].
 Q5, one place by key, is defined with the host link rule in 6.2.
 
 Rules. `ORDER BY` fixes the summation order, so the request path and the loader add the same doubles in the same
-order. Q1 returns at most about 900 rows for 1,200 m in `dc` (575 points lie within 1,200 m of the densest cell [V]).
+order. Q1 returns at most about 900 rows for 1,200 m in `dc` (581 points lie within 1,200 m of the densest cell [run]).
 Plan of Q1 and Q2: range scan on `idx_tpp_geo` or `idx_tpl_geo` with index condition pushdown [V on MySQL 8.0.45: range
 scan with `Using index condition; Using filesort`]. Q4 uses the same range scan, and Q3 returned every host of a
 synthetic table exactly once across its pages [V]. With native prepares `DOUBLE` columns arrive as PHP floats, and a
@@ -1265,11 +1524,11 @@ Steps:
 13. With `--activate`: the switch of 9.2, then prune. Print region, version, counts, pack size and timings.
 
 `--dry-run` does steps 1, 4 (reading only, no inserts), 5, 6, 8, 8a (no updates), 9 and 11 from the files and writes
-nothing. Expected cost for `dc` [proto]: about 2.3 million point-to-cell pairs (38 points per cell on average) and 1.5
-million point-to-host pairs (130 points per host, because hosts stand where blocks are small), an estimated two to
-three minutes and 400 MB at most in PHP [S]. Run it with the same PHP minor version as the web tier (`php8.3` on the
-server). The kernel constants written to the pack come from the PHP model. Changing any of them means a new
-`seeds_revision`, a rebuild and a reload of the region (section 8).
+nothing. Expected cost for `dc`: 2,324,212 point-to-cell pairs for the 61,460 cells (38 points per cell on average, 581
+at most) [run] and about 1.5 million point-to-host pairs for the 11,941 hosts (130 points per host, because hosts stand
+where blocks are small) [proto], an estimated two to three minutes and 400 MB at most in PHP [S]. Run it with the same
+PHP minor version as the web tier (`php8.3` on the server). The kernel constants written to the pack come from the PHP
+model. Changing any of them means a new `seeds_revision`, a rebuild and a reload of the region (section 8).
 
 ## 11. Cell pack format (version 1)
 
@@ -1341,8 +1600,10 @@ Writing in PHP: `pack('VV', hexdec(substr($h, -8)), hexdec(substr($h, 0, -8)))` 
 `pack('v*', ...$codes)` per column chunk. Formatting hex is not H3 arithmetic. The uncompressed bytes can differ in a
 few codes between platforms because `exp()` comes from the C library. The header JSON is deterministic.
 
-Size for `dc` [proto]: N = 61,228 gives 6,612,624 bytes plus the header and 3.41 MB gzipped (level 9). 44 % of the codes
-are zero. Splitting high and low bytes into planes saves only 6 %, so it is not done. Largest values seen: 32,731
+Size for `dc`: the first build has N = 61,460 cells [run], so the two sections take 108 x N = 6,637,680 bytes (491,680
+for the ids, 6,146,000 for the codes), plus the prefix, the header of about 3 kB and its padding. The prototype pack of
+N = 61,228 was 6,612,624 bytes of sections and 3.41 MB gzipped (level 9) [proto], so expect about 3.4 MB. 44 % of the
+codes are zero. Splitting high and low bytes into planes saves only 6 %, so it is not done. Largest values seen: 32,731
 distance-weighted office jobs near one cell, rival pull 88 by day and 113 in the evening.
 
 ### 11.1 Serving
@@ -1398,39 +1659,99 @@ the layer. Hexagon outlines come from `cellToBoundary(id)`.
 ## 12. Quality gates
 
 Evaluated by the pipeline (P) or the loader (L). A `fail` stops the build or the load. A `warn` is recorded and printed.
-Every gate result goes into the manifest. Values are for `dc`. Region counts and totals use `in_region = 1` rows only.
+Every check of the pipeline gates G1 to G17 is one entry of `manifest.gates` (8.5), named `id.part` in the table. G18
+is evaluated by the test suite and by the operator's second run, G19 to G22 by the loader. Values are for `dc`: what
+differs by region comes from `checks` of the region file (section 1), what holds for every region is a constant of the
+pipeline. Region counts and totals use `in_region = 1` rows only. "On this vintage" means that every state's
+`version.txt` names the `lodes.vintage` of the region file: the check is then exact and `fail`. On another vintage it
+is `warn` and passes within 2 %.
 
 | # | Check | Pass condition for `dc` | Level |
-|---:|---|---|---|
-| G1 | Downloads (P) | every file complete, non-empty, opens as gzip, zip or PBF, checksum of section 3 matches. A checksum sidecar that is missing for a file adopted with `--offline` (section 3, rule 5): warn | fail / warn |
-| G2 | Headers (P) | WAC 53 columns starting `w_geocode,C000`. Crosswalk 41 starting `tabblk2020`. Every PL geo row has 97 fields | fail |
-| G3 | LODES release (P) | `version.txt` says format 8.4: else fail. Vintage equals `lodes.vintage`: else warn | fail / warn |
-| G4 | State residents (P) | DC 689,545. MD 6,177,224. VA 8,631,393. WV 1,793,716, exactly | fail |
-| G5 | Block sets (P) | every WAC block is in the PL set. PL and crosswalk sets are equal (325,888 blocks: 6,012 + 83,827 + 163,491 + 72,558) | fail |
+|---|---|---|---|
+| G1.files | Downloads (P) | every raw file used is complete, non-empty, opens as gzip, zip or PBF and passes its check of section 3. A failure stops the run at once with exit 2 | fail |
+| G1.sidecars | Checksum sidecars (P) | no file was verified without its `.sha256sum` or `.md5` sidecar (possible only when no request is made, section 3 rule 5) | warn |
+| G2 | Headers (P) | every PL geo row has 97 fields (counted, gated at the end). WAC 53 columns starting `w_geocode,C000,CA01` with CNS01 to CNS20 at positions 9 to 28, crosswalk 41 columns starting `tabblk2020`, and the same field count on every row of both: a violation stops the run at once | fail |
+| G3.format | LODES release (P) | every `version.txt` says `lodes.format` (8.4) | fail |
+| G3.vintage | LODES vintage (P) | every `version.txt` says `lodes.vintage` | warn |
+| G4 | State residents (P) | equal to `checks.state_residents`: DC 689,545. MD 6,177,224. VA 8,631,393. WV 1,793,716, exactly | fail |
+| G5.wac_in_pl | Block sets (P) | every WAC block is in the PL set | fail |
+| G5.state_blocks | Block sets (P) | blocks per state equal to `checks.state_blocks` (6,012 / 83,827 / 163,491 / 72,558) | fail |
+| G5.xwalk | Block sets (P) | the crosswalk rows number the sum of `checks.state_blocks` (325,888), every one is a PL block, none twice, no PL block missing | fail |
 | G6 | Sector sums (P) | `sum(CNS01..20) = C000` on every WAC row | fail |
-| G7 | Region totals (P) | residents 6,278,542, housing units 2,458,414, blocks 64,615, and all 23 county rows of the region file, exactly. Raw jobs 3,140,158, the seven raw segment sums (CNS04 at weight 1, before corrections) equal to `checks.jobs_by_segment` and CNS04 equal to `checks.cns04_jobs`: exactly when the vintage matches, within 2 % otherwise | fail (warn for jobs on a new vintage) |
-| G8 | Conservation (P) | per segment, `sum over region block rows = raw segment total - discarded`, both sides with `cns04Weight` applied to CNS04, relative 1e-9 (`w_industrial` expected 274,558.1 minus discarded). `discarded` is what `cap`, `drop` and a spread without receivers removed. Residents in rows equal 6,278,542. Places read = places kept + every `dropped_*` and `merged_*` counter | fail |
-| G8b | Job movement (P) | `jobs_discarded + jobs_spread_lost` at most 0.5 % of raw region jobs: else fail. Jobs moved by `spread` and `auto_spread` at most 12 % of raw region jobs: else fail (9.05 % with 79 automatic treatments; lower after the first-pass review). The sums of the `jobs_spread` and `jobs_discarded` columns of `job_review.csv` equal the manifest totals, and every block with a non-zero value has a row | fail |
-| G9 | Geometry (P) | every point and place inside the fetch box. Every `in_region = 1` place inside a county polygon. Every cell passes `isValidCell` at resolution 9. `h3_probe` reproduces `892aaab3043ffff` | fail |
-| G10 | Occupied cells (P) | resolution-9 cells holding a region block with raw residents or jobs: 29,404 (warn beyond 1 %) | warn |
-| G11 | Largest cells (P) | residents 4,512 (warn beyond 1 %). Jobs: 39,467 before corrections on this vintage (warn otherwise). After corrections: fail when any block treated `spread`, `cap`, `drop` or `auto_spread` keeps more than its cap in the affected sectors, relative 1e-9 (this is the test for "corrections not applied"); warn when a cell exceeds 25,000 (19,486 expected with all real sites kept) | warn / fail |
-| G12 | Places (P) | region places 22,000 to 28,000 (24,724 + stations). Rivals 12,100 to 14,900 (13,505). Named >= 97 %. Possible hosts with phone or website 28 to 40 % (34.2 %). Hours parse rate >= 93 % of raw values (96.3 %). Zero places without coordinates. Every place type of the vocabulary present except possibly `transit_station` on the tile input | warn (fail on missing coordinates) |
-| G13 | Anchors (P) | the four `checks.anchors` blocks keep at least `min` jobs in their column after corrections (11,208 / 16,919 / 10,344 / 8,121 raw) | fail |
-| G14 | West Virginia (P) | Jefferson County rows hold 57,701 residents and 17,187 raw jobs | fail |
-| G15 | Job review (P) | flagged 86 blocks and 572,153 jobs on this vintage (warn otherwise). Stale or orphan entries: warn. More than half of the flagged jobs under automatic treatment: warn "review pending". Entries with `confirmed` false: warn "N job corrections await the owner's confirmation" | warn |
-| G16 | Halo (P) | halo residents at most 5 % of region residents (1.6 %). No halo row in any total | fail |
-| G17 | Cells (P) | zero ring-5 acceptances. Kept cells 54,000 to 64,000 (61,228 [proto]) | fail / warn |
-| G18 | Determinism (P, test suite) | two runs on the same inputs give byte-identical files | fail |
+| G7.residents, G7.housing_units, G7.blocks, G7.blocks_with_residents | Region totals (P) | 6,278,542 / 2,458,414 / 64,615 / 48,034, exactly | fail |
+| G7.counties | County rows (P) | residents, housing units and blocks of all 23 county rows of the region file, exactly | fail |
+| G7.county_jobs, G7.jobs, G7.jobs.`<segment>` (seven), G7.cns04_jobs, G7.blocks_with_jobs, G7.blocks_with_either | Jobs (P) | raw jobs per county, 3,140,158 in all, the seven raw segment sums (CNS04 at weight 1, before corrections) of `checks.jobs_by_segment`, CNS04 165,397, 30,247 and 51,262 blocks: on this vintage | fail (warn on another vintage) |
+| G8.segments | Conservation (P) | per worker segment, `sum over region block rows = raw segment total - discarded`, both sides with `cns04Weight` applied to CNS04, relative 1e-9 (`w_industrial`: 274,558.1 minus discarded). `discarded` is what `cap`, `drop` and a spread without receivers removed. The value recorded is the largest relative error (4e-14 in the first build) | fail |
+| G8.residents | Conservation (P) | `b_res` over the region block rows equals `checks.residents` | fail |
+| G8.places | Conservation (P) | elements read = rows of `places.ndjson` + the ten counters of 5.1 | fail |
+| G8b.discarded | Job movement (P) | `(jobs_discarded + jobs_spread_lost) / raw region jobs` at most `checks.job_movement.discarded_share_max` (0.5 %; 0 in the first build) | fail |
+| G8b.moved | Job movement (P) | `jobs_spread / raw region jobs` at most `checks.job_movement.moved_share_max` (12 %; 6.27 % in the first build, 9.05 % with 79 automatic treatments) | fail |
+| G8b.review_sums | Job movement (P) | the sums of the `jobs_spread` and `jobs_discarded` columns of `job_review.csv` equal the manifest totals (relative 1e-9), and every block with a non-zero value has a row | fail |
+| G9.fetch_box | Geometry (P) | every point and place inside the fetch box, edges included | fail |
+| G9.county | Geometry (P) | every `in_region = 1` place lies in the county polygon of its `county_fips` | fail |
+| G9.cells | Geometry (P) | every kept cell passes `isValidCell` and has resolution 9 | fail |
+| G9.h3_probe | Geometry (P) | `latLngToCell` of `checks.h3_probe` gives its `cell` (`892aaab3043ffff`) | fail |
+| G10 | Occupied cells (P) | resolution-9 cells holding a region block with raw residents or jobs: `checks.res9_cells_with_residents_or_jobs` (29,404) within 1 % | warn |
+| G11.residents | Largest cells (P) | most residents in one cell: `checks.res9_max_residents` (4,512) within 1 % | warn |
+| G11.jobs_raw | Largest cells (P) | most raw jobs in one cell: `checks.res9_max_jobs_raw` (39,467), exactly | warn |
+| G11.caps | Corrections applied (P) | no block treated `spread`, `cap`, `drop` or `auto_spread` keeps more than its cap in the affected sectors, relative 1e-9 | fail |
+| G11.jobs_after | Largest cells (P) | most jobs in one cell after corrections at most `checks.res9_max_jobs_after` (25,000; 18,644 in the first build, the NIH cell) | warn |
+| G12.places, G12.rivals | Places (P) | region places within `checks.places` (22,000 to 28,000; 24,886 in the first build), rivals within `checks.rivals` (12,100 to 14,900; 13,508) | warn |
+| G12.named | Places (P) | at least 97 % of the region places have a name (98.8 %) | warn |
+| G12.host_contact | Places (P) | share of possible hosts with a phone or a website within `checks.hosts_with_contact_share` (28 to 40 %; 34.7 %) | warn |
+| G12.hours | Places (P) | at least 93 % of the raw opening hours of region places parse (96.3 %) | warn |
+| G12.coordinates | Places (P) | zero places without finite coordinates | fail |
+| G12.types | Places (P) | every place type of the vocabulary occurs in the region. `transit_station` may be missing on the tile input | warn |
+| G13 | Anchors (P) | every `checks.anchors` block keeps at least `min` jobs in its column after corrections (11,208 / 16,919 / 10,344 / 8,121 raw) | fail |
+| G14 | State coverage (P) | every state of the region file has region blocks, and its residents and (on this vintage) raw jobs equal the sums of its county rows. For `dc` this is the West Virginia check: Jefferson County, 57,701 residents and 17,187 raw jobs | fail |
+| G15.flagged | Job review (P) | flagged blocks and their jobs equal `checks.job_review` (86 and 572,153) | warn |
+| G15.entries | Job review (P) | no stale and no orphan entry | warn |
+| G15.review_pending | Job review (P) | at most half of the flagged jobs are under automatic treatment | warn |
+| G15.unconfirmed | Job review (P) | no entry with `confirmed` false. The value is the number of job corrections that await the owner's confirmation (86 in the first build, its one standing warning) | warn |
+| G16.share | Halo (P) | halo residents at most `checks.halo_residents_share_max` of the region's residents (5 %; 1.6 % in the first build) | fail |
+| G16.totals | Halo (P) | no halo row is flagged `in_region` or counted in a total, and no region row lies outside the county list | fail |
+| G17.ring5 | Cells (P) | zero ring-5 acceptances (7.1) | fail |
+| G17.kept | Cells (P) | kept cells within `checks.cells_kept` (54,000 to 64,000; 61,460 in the first build) | warn |
+| G18 | Determinism (P, test suite) | two runs on the same inputs give byte-identical files. Not an entry of the manifest | fail |
 | G19 | Model match (L) | manifest model version and every seed value in `manifest.parameters` equal the PHP model's. The load fails if `traffic.<name>` or `traffic.<name>_typical` is missing from the PHP model's seeds for the region's `traffic_matrix` (`us_mean` when the key is absent) | fail |
 | G20 | Pruning cross-check (L) | step 9 of section 10 | fail |
 | G21 | Request-path self-check (L) | step 10 of section 10: sampled cells and sampled host vectors | fail |
 | G22 | Pack (L) | decode within the quantisation bound. `cell_count` equals rows of `cells.tsv`. Compressed size at most 16 MB | fail |
 
-Pipeline tests (`tools/truck-etl/test`, `node --test`, run in the Truck Planner CI job): varint, zigzag and packed
-arrays. A PBF fixture of a few kilobytes cut from the DC extract. The 5.7 vectors. Phone and website cases
-(`+1 301-742-8261` gives `+13017428261`, `+-804-867-5421` and `https://www/x.com` give null). One element per taxonomy
-rule and one per drop reason. The zip reader on a small archive. The corrections arithmetic on a synthetic county.
-Fixture files are marked `-text` in a `.gitattributes` entry for that directory so checksums survive Windows checkouts.
+Pipeline tests (`tools/truck-etl/test/*.test.mjs`, run in the Truck Planner CI job with `npm test`, which is
+`node --test` in the package directory; about 150 tests, 3 s): varint, zigzag, packed arrays and the PBF reader on
+files written by a test helper (bounding-box centres, granularity and offsets, compression fields, required features,
+sort order, missing geometry). One element per taxonomy rule and tag alternative, and one per drop reason. The 5.7
+vectors and the edges of the grammar. Phone and website cases (`+1 301-742-8261` gives `+13017428261`,
+`+-804-867-5421` and `https://www/x.com` give null) and code-point cuts. De-duplication and the counters of the places
+stage. The zip reader on small archives. Three real lines of the District's PL geo header, the real WAC header and
+first row, a real crosswalk row. The corrections arithmetic on a synthetic county, and the committed `dc` corrections
+file (86 entries whose `c000_at_review` add up to 572,153). County point-in-polygon. Source points and the three halo
+distances. Cell enumeration (against a brute-force search, independent of the order of the points, the ring-5 guard)
+and pruning. The writers, including the example line of 8.2 character for character, the `dataset_version` formula and
+the manifest key order. Every gate on good and on bad facts. The download rules against a local HTTP server (fresh
+file, 304, replaced file, a connection cut in mid-file and its resume with `Range` and `If-Range`, restart, 416,
+refused status, a request that cannot be made, a download that fails its check, adoption, MD5 and SHA-256 failures,
+the snapshot date). The adoption helper on the fixture's files under other names. The tile reader, and the tile fetch
+helper against a fake server. Source rules: one dependency, no randomness, no clock outside `index.json` and the
+console, requests only from the download and tile modules and only to the hosts of section 2.
+
+End to end, the suite builds the committed fixture `test/fixtures/mini` twice (195 kB, cut from the real `dc` raw files
+by `test-support/make-mini-fixture.mjs`): Falls Church city, Virginia, with all 164 of its census blocks, their WAC and
+crosswalk rows, the county polygon and the OpenStreetMap elements of the area (851 ways, 25 relations and their nodes),
+plus a strip of 254 neighbouring blocks that stands for the rest of the state, so that the halo has blocks to keep and
+blocks to leave out. It checks byte-identical output (G18), the official county totals (14,658 residents, 6,172 housing
+units, 10,691 jobs) against an independent reading of the files, the structure of all five files, the recorded hashes,
+and the command line with its three exit codes. One more build runs online from an empty cache against a stand-in for
+the hosts that answers the real source addresses with the fixture's files: it checks the order of the requests, one
+request at a time, the cache and its index, the conditional requests of a second run, and that the four data files
+are those of the offline build. The fixture has its own region file (`mini`), a corrections file with
+one entry per treatment, one stale and one orphan, and a frozen copy of the seed values, so that a change of the seed
+file does not move the recorded result. Fixture files are marked `-text` in `tools/truck-etl/.gitattributes` so
+checksums survive Windows checkouts, and the region and corrections files are marked `eol=lf` so that their hashes in
+the manifest are the same on every platform. The fixture build is a valid pipeline build with real H3 ids. Built with
+the repository seed file (`--region-file`, `--corrections`, `--raw-dir` pointing into the fixture, `--offline`), it is
+the mini region that the backend tests load.
 
 ## 13. Runtime data notes for the live services
 
@@ -1606,7 +1927,7 @@ Nothing in this procedure touches production before step 9, and step 9 needs the
 6. Compare with the previous manifest: residents identical, jobs within 2 % unless the vintage changed, places and
    rivals within 10 %, cells within 5 %. Read every `warn` line. Larger moves need an explanation before going on.
 7. Commit the corrections file and any region-file change. Note the `dataset_version`.
-8. Copy the build directory `storage/truck/build/dc/<dataset_version>/` (about 25 MB) to the same path on the server.
+8. Copy the build directory `storage/truck/build/dc/<dataset_version>/` (28 MB) to the same path on the server.
 9. On the server, with the owner's go-ahead: take a database dump (`scripts/backup-db.sh`), run pending migrations
    (`php8.3 scripts/migrate.php`), then `php8.3 scripts/truck/load-region.php --build=storage/truck/build/dc/<dataset_version>`.
    It must end with all loader gates passed and `load_state ready`.

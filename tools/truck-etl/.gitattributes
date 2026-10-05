@@ -1,0 +1,5 @@
+# Fixtures are compared by checksum: git must never translate their line endings.
+test/fixtures/** -text
+# The region and corrections files are hashed into the manifest: the same bytes on every platform.
+regions/*.json text eol=lf
+corrections/*.json text eol=lf

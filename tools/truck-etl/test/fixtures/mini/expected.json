@@ -1,0 +1,69 @@
+{
+  "about": "Expected result of building test/fixtures/mini with its frozen seeds. Regenerate with test-support/make-mini-fixture.mjs.",
+  "dataset_version": "mini-20261003-8d5536a4",
+  "outputs": [
+    {
+      "file": "points.tsv",
+      "bytes": 51374,
+      "sha256": "d4a8314dc3ca5cf556ebded7d65cdde5c369bd43da45c07593bdf87b520211d9",
+      "rows": 363
+    },
+    {
+      "file": "places.ndjson",
+      "bytes": 247494,
+      "sha256": "07f022b8504c1c48de603562be171791b24807bb60da560390176704e26e1bcb",
+      "rows": 420
+    },
+    {
+      "file": "cells.tsv",
+      "bytes": 13225,
+      "sha256": "b7ab2184caea7554f6bae2f370b3233b497076a3388ddc775d9d54568f74db33",
+      "rows": 197
+    },
+    {
+      "file": "job_review.csv",
+      "bytes": 2239,
+      "sha256": "7c7171a347183604e787f804299bff7dbd0c82a994ab25872957d6a36afe056b",
+      "rows": 7
+    }
+  ],
+  "counts": {
+    "points": {
+      "total": 363,
+      "block": 152,
+      "place": 49,
+      "halo_block": 109,
+      "halo_place": 53
+    },
+    "places_total": 420,
+    "places_in_region": 226,
+    "cells": {
+      "candidates": 211,
+      "kept": 197
+    }
+  },
+  "totals": {
+    "residents": 14658,
+    "jobs": 10691,
+    "jobs_spread": 1288,
+    "jobs_discarded": 266
+  },
+  "gates_not_passed": [
+    {
+      "gate": "G12.hours",
+      "level": "warn"
+    },
+    {
+      "gate": "G12.types",
+      "level": "warn"
+    },
+    {
+      "gate": "G15.entries",
+      "level": "warn"
+    },
+    {
+      "gate": "G15.unconfirmed",
+      "level": "warn"
+    }
+  ]
+}

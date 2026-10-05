@@ -1,0 +1,133 @@
+{
+  "schema": 1,
+  "id": "mini",
+  "name": "Falls Church test region",
+  "timezone": "America/New_York",
+  "h3_res": 9,
+  "membership": "geoid_prefix",
+  "block_point": "census_intpt",
+  "map_center": {
+    "lat": 38.8847,
+    "lng": -77.1756
+  },
+  "fetch_box": {
+    "south": 38.868,
+    "west": -77.2,
+    "north": 38.904,
+    "east": -77.1
+  },
+  "states": [
+    {
+      "usps": "va",
+      "fips": "51",
+      "pl_dir": "Virginia",
+      "geofabrik": "virginia"
+    }
+  ],
+  "census": {
+    "product": "PL 94-171",
+    "year": 2020,
+    "reference_date": "2020-04-01"
+  },
+  "lodes": {
+    "release": "LODES8",
+    "format": "8.4",
+    "year": 2023,
+    "segment": "S000",
+    "job_type": "JT00",
+    "vintage": "20251202_1657"
+  },
+  "fuel_area_by_state": {
+    "VA": "R1Z"
+  },
+  "holidays": {
+    "inauguration_day": true,
+    "inauguration_day_counties": [
+      "51610"
+    ]
+  },
+  "job_review": {
+    "total_min": 500,
+    "single_sector_min": 200,
+    "single_sector_share": 0.9
+  },
+  "counties": [
+    {
+      "fips": "51610",
+      "name": "Falls Church city",
+      "state": "VA",
+      "residents": 14658,
+      "housing_units": 6172,
+      "jobs": 10691,
+      "blocks": 164
+    }
+  ],
+  "checks": {
+    "state_residents": {
+      "51": 43409
+    },
+    "state_blocks": {
+      "51": 418
+    },
+    "residents": 14658,
+    "housing_units": 6172,
+    "jobs": 10691,
+    "blocks": 164,
+    "blocks_with_residents": 136,
+    "blocks_with_jobs": 106,
+    "blocks_with_either": 152,
+    "jobs_by_segment": {
+      "w_office": 2632,
+      "w_health": 2152,
+      "w_edu": 1073,
+      "w_retail": 1359,
+      "w_industrial": 1017,
+      "w_hospitality": 1463,
+      "w_public": 995
+    },
+    "cns04_jobs": 720,
+    "res9_cells_with_residents_or_jobs": 59,
+    "res9_max_residents": 982,
+    "res9_max_jobs_raw": 1668,
+    "res9_max_jobs_after": 2153,
+    "job_review": {
+      "blocks": 6,
+      "jobs": 3755
+    },
+    "job_movement": {
+      "discarded_share_max": 0.1,
+      "moved_share_max": 0.5
+    },
+    "halo_residents_share_max": 10,
+    "places": {
+      "min": 203,
+      "max": 249
+    },
+    "rivals": {
+      "min": 131,
+      "max": 161
+    },
+    "hosts_with_contact_share": {
+      "min": 0.1,
+      "max": 0.7
+    },
+    "cells_kept": {
+      "min": 177,
+      "max": 217
+    },
+    "anchors": [
+      {
+        "geoid": "516105002004003",
+        "label": "Largest block of the fixture (kept)",
+        "column": "CNS15",
+        "min": 560
+      }
+    ],
+    "h3_probe": {
+      "lat": 38.9696,
+      "lng": -77.3861,
+      "res": 9,
+      "cell": "892aaab3043ffff"
+    }
+  }
+}

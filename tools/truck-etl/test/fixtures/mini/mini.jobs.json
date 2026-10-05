@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "region": "mini",
+  "version": "2026-10-05.1",
+  "lodes": {
+    "year": 2023,
+    "job_type": "JT00",
+    "vintage": "20251202_1657"
+  },
+  "entries": {
+    "516105002004003": {
+      "action": "keep",
+      "c000_at_review": 1087,
+      "reviewed": "2026-10-05",
+      "reason": "Fixture: the largest block is kept as a real site."
+    },
+    "516105001001015": {
+      "action": "spread",
+      "cap": 100,
+      "c000_at_review": 646,
+      "reviewed": "2026-10-05",
+      "confirmed": false,
+      "reason": "Fixture: spread over the county, 100 jobs left on site."
+    },
+    "516105003002003": {
+      "action": "cap",
+      "cap": 50,
+      "sectors": [
+        "CNS07"
+      ],
+      "c000_at_review": 580,
+      "reviewed": "2026-10-05",
+      "reason": "Fixture: the largest sector is capped at 50, the excess discarded."
+    },
+    "516105001001014": {
+      "action": "spread",
+      "c000_at_review": 1042,
+      "reviewed": "2026-10-05",
+      "reason": "Fixture: a stale entry (the count at review was twice today's), spread with nothing left on site."
+    },
+    "510594712041005": {
+      "action": "drop",
+      "c000_at_review": 11706,
+      "reviewed": "2026-10-05",
+      "reason": "Fixture: an orphan entry, the block is outside the mini region."
+    }
+  }
+}
