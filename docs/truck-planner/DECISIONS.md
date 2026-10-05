@@ -114,10 +114,11 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
   paid crew (2) and wage (18.00), payroll burden %, food cost % (0.30), packaging per order, card fee % + fixed +
   card share, optional tips, mpg (9), fuel type, fuel price override, generator gallons/hour, prep / setup /
   teardown / close-out minutes (45 / 30 / 20 / 30), fixed cost per service day, daypart fit (breakfast, lunch,
-  dinner, late), routing profile (car / truck) and truck time factor (1.10), licence counties, scouting drive-time
-  limit, sparse overrides of seed assumptions.
+  dinner, late), routing options (avoid tolls, avoid highways) and truck time factor (1.10), licence counties,
+  scouting drive-time limit, sparse overrides of seed assumptions.
 - **Spot** — name, point, address, notes; host (kind, name, contact, phone, website, linked place), host size
-  (busiest-hour headcount), "truck is the only food" flag, visibility (hidden / normal / prominent), fee (flat, %
+  (in the host segment's own unit: busiest-hour headcount for venues, jobs for workplaces, residents for housing),
+  "truck is the only food" flag, visibility (hidden / normal / prominent), fee (flat, %
   of sales, minimum), optional allowed days/hours, stored capture vectors with their data version.
 - **Day plan** — service date, optional "treat this day as…" override, ordered stops, notes, status, a stored
   result snapshot. **Stop** — kind (spot / event / catering), open and close minutes, "gap before is an unpaid
@@ -148,14 +149,22 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
    clicked point or saved spot. Kernel constants (`walk_decay_m`, cutoff, `A0`, rival weights, regime table) are
    **build-time constants** recorded in the pack; changing them means rebuilding the region.
 5. **Hourly demand** = Σ segments `capture × presence × day-of-week factor × meal intent × menu fit`, plus a
-   **host term** when the spot has a venue host (size × presence × intent × captive or shared-kitchen share — the
-   host's own default data point is excluded so it is not counted twice), × weather × calibration, then **capped
-   once per hour at truck capacity**. Unserved demand is not carried forward.
+   **host term** when the spot has a host (size × presence × intent × share). Nightlife and event venues are
+   *captive* hosts with flat shares (truck is the only food / venue has its own kitchen); every other host
+   (shops, gyms, campuses, hospitals, stations, hotels, workplaces, housing) uses the kernel at distance zero, so
+   nearby rivals and an on-site kitchen still count. The host's own data is excluded from the catchment so it is
+   not counted twice. Then × weather × calibration, **capped once per hour at truck capacity**. Unserved demand
+   is not carried forward.
 6. **Curves** are three day types (weekday / Saturday / Sunday) × 24 hours per segment plus Monday–Friday factors,
    expanded to 168 hours. Federal holidays and the owner's "treat this day as…" remap day types per segment.
 7. **Ranges**: every count is a mean with an 80 % interval from a log-normal model whose spread combines model
    uncertainty (wide before any logs, narrowing with the owner's logged services) and counting noise. Extra spread
    when weak-seed segments (hospitals, campuses, transit) dominate. Day totals add lows to lows and highs to highs.
+   **Before any logged service the spread matches the blueprint's worked example** — about value ÷ 1.7 to
+   value × 1.5 (seeds `uncertainty.sd_truck` 0.24, `sd_spot` 0.19, `sd_day` 0.20, tagged as derived from the
+   blueprint's stated ranges) — **and the confidence label reads `rough`**. An estimate dominated by weak-seed
+   segments or resting on a default host size reads `very_rough`. Labels improve to `fair` and `good` only through
+   the owner's logged services; the label thresholds are set so that this holds.
 8. **Calibration** is shrinkage on log ratios of actual to predicted orders: one factor for the truck, one per
    spot, recency-weighted, with sold-out services treated as lower bounds. Ordinary statistics only.
 9. **Determinism**: no clocks, no randomness, no locale, no process time zone inside the model. One explicit
@@ -171,12 +180,20 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
   coordinates** come from the Census internal point for residents and jobs alike.
 - **Jobs**: LEHD LODES 8.4 WAC, all jobs (`JT00`), data year 2023, CNS01–20 grouped into the seven worker
   segments. Payroll-address artefacts (86 blocks hold 18 % of metro jobs) go through a versioned corrections file
-  plus an automatic cap, and every capped block is listed for review.
+  plus an automatic cap-and-spread, and every treated block is listed for review. A first-pass review of the
+  flagged blocks is part of this build (real large sites such as hospitals, campuses, airports and federal
+  complexes are kept; head-office payroll addresses are spread) and is marked as needing the owner's confirmation.
+  Construction jobs (CNS04) are coded to the contractor's office, not the building site, so they count at
+  **0.3** in the industrial segment (seed `etl.cns04_weight`, tagged assumed). The cell pruning threshold is the
+  seed `etl.cell_min_nearby` (100 distance-weighted people).
 - **Places** (the metro-wide dataset behind the heat map, the share model and Scout's candidate list): one dated
   OpenStreetMap snapshot per region from Geofabrik state extracts, read by an in-repo zero-dependency PBF reader.
   Never Overpass at request time, never a bulk Google Places sweep, never the vendor tables. OSM-derived rows stay
   in their own table with `osm_type`/`osm_id`/snapshot date. Attribution "© OpenStreetMap contributors" appears
-  wherever that data is listed (Scout, the spot card's nearby-outlets list, the day sheet, the Data page).
+  wherever that data is listed (Scout, the spot card's nearby-outlets list, the day sheet, the Data page) **and in
+  the source line of the map legend** ("People: US Census 2020, LEHD 2023 · Venues: © OpenStreetMap
+  contributors"), because the heat layer is partly computed from it. It is our own legend text, not a change to
+  Google's map attribution.
   Google Places is used only on demand, for one candidate at a time, to look up phone and website (section 0).
 - **Map cells**: H3 **resolution 9** (≈ 350 m across). H3 ids travel as 15-character strings. PHP never does H3
   arithmetic; the pipeline (Node) and the browser (`h3-js`) do.
@@ -185,7 +202,14 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
   vectors per cell with the same PHP code the API uses, and stores the **cell pack** (a compact binary blob,
   versioned, served with long-lived HTTP caching).
 - **Tables** (shared reference, no organization column): `tp_regions`, `tp_points`, `tp_places`,
-  `tp_region_packs`, `tp_fuel_prices`.
+  `tp_region_packs`, `tp_fuel_prices`, created by `042_tp_reference_data.sql`; owner tables start at
+  `043_truck_planner_core.sql`. Map cells exist only inside the pack (there is no cells table). `tp_places`
+  additionally carries, for every place that could host a truck, its 50-number location vector computed by the
+  loader with the place's own source point excluded (stored as one binary column), so Scout can rank thousands
+  of candidates without a query per place. Accepted details
+  from the data specification: H3 ids are 64-bit integers inside the binary pack and 15-character strings
+  everywhere else; fuel prices are stored in thousandths of a dollar (`price_milli`) because EIA publishes three
+  decimals; a halo of out-of-region source points is kept so the kernel is correct at the region's edge.
 - Residents are April 2020 and are not scaled; every vintage is shown on the Data page.
 
 ## 9. Backend decisions
@@ -203,7 +227,10 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
     routing preference `TRAFFIC_UNAWARE`; if the key answers "API not enabled / permission denied", the legacy
     Distance Matrix API (`maps.googleapis.com/maps/api/distancematrix/json`) is tried once, and if that is also
     refused the service returns a **straight-line estimate labelled as such** and remembers the refusal for an
-    hour so it does not hammer Google. Legs are cached per directed pair of rounded coordinates for **30 days**
+    hour so it does not hammer Google. Google's traffic-unaware duration already contains average traffic, so the
+    model scales it by (time-of-day factor ÷ the table's all-hours typical value) rather than by the raw factor.
+    The owner's routing options (avoid tolls, avoid highways) are sent as route modifiers and are part of the
+    cache key. Legs are cached per directed pair of rounded coordinates for **30 days**
     (`tp_drive_legs.fetched_at`); owner corrections and tolls sit on top and never expire; time-of-day factors
     come from our own seed table (not `TrafficService`). Google's toll estimate, when returned, pre-fills the toll.
     **OpenRouteService and the existing `DriveTimeMatrixService` are not used.**

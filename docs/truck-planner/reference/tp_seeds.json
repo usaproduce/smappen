@@ -1,0 +1,1778 @@
+{
+  "model_version": "tps-0.1.0",
+  "seeds_revision": 1,
+  "as_of": "2026-10-04",
+  "about": "Seed assumptions for Truck Planner on smappen, model tps-0.1.0. Defined by docs/truck-planner/02_MODEL.md. Nothing here is measured from food-truck sales. Tags: measured = published by a source that was opened; derived = arithmetic on measured inputs; assumed = engineering judgement; tuned = no outside evidence, set so two sanity anchors land in range.",
+  "entry_format": {
+    "value": "the seed (number, string, or array). Compound entries (curves, tables) hold several named values instead and share one set of metadata.",
+    "unit": "unit of the value",
+    "tag": "measured | derived | assumed | tuned",
+    "scope": "build = baked into the region pack, changing it means rebuilding the region; fixed = runtime constant; owner = may be overridden per truck through Assumptions.overrides; profile_default = initial value of a TruckProfile field",
+    "min_max": "validation bounds for every number an override may set (inclusive). Metadata is inherited from the nearest enclosing object that defines it.",
+    "source": "short note naming the publisher or the reasoning; 'recon 10' and 'recon 09' are the session-0 reconnaissance reports of 2026-10-04 (behavioural seeds; data sources), which hold the URL of every source and are not in the repository",
+    "override_path": "dot-separated keys from the root, for example segments.w_office.intent.weekday or host.captive_share; the last key may not be one of vocabulary.structural_keys"
+  },
+  "vocabulary": {
+    "segments": ["res", "w_office", "w_health", "w_edu", "w_retail", "w_industrial", "w_hospitality", "w_public", "v_nightlife", "v_shopping", "v_leisure", "v_campus", "v_hospital", "v_transit", "v_events", "v_lodging"],
+    "regimes": ["day", "eve"],
+    "rival_kinds": ["quick", "full", "cafe", "bar", "convenience"],
+    "day_types": ["weekday", "saturday", "sunday"],
+    "dayparts": ["breakfast", "lunch", "dinner", "late"],
+    "visibility_levels": ["hidden", "normal", "prominent"],
+    "place_types": ["taproom", "bar", "restaurant", "fast_food", "cafe", "convenience", "gym", "park", "shopping_centre", "big_box", "campus", "hospital", "transit_station", "events_venue", "stadium", "hotel", "attraction", "farmers_market", "office_park", "apartment_community", "industrial_site", "car_dealership"],
+    "confidence_labels": ["fixed", "good", "fair", "rough", "very_rough"],
+    "dow": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+    "structural_keys": ["value", "unit", "tag", "scope", "min", "max", "source", "note", "order", "rows", "match", "match_rule", "upper_f", "upper_mph", "allowed", "as_of", "index", "label", "group", "base_unit", "host_mode", "weak", "lodes_cns", "rules"]
+  },
+  "constants": {
+    "earth_radius_m": {
+      "value": 6371008.8,
+      "unit": "m",
+      "tag": "measured",
+      "scope": "build",
+      "source": "IUGG mean Earth radius R1; the only radius used anywhere in the model."
+    },
+    "pi": {
+      "value": 3.141592653589793,
+      "unit": "",
+      "tag": "derived",
+      "scope": "fixed",
+      "source": "Mathematical constant; written out so no runtime constant is used."
+    },
+    "ln2": {"value": 0.6931471805599453, "unit": "", "tag": "derived", "scope": "fixed", "source": "Mathematical constant."},
+    "z80": {
+      "value": 1.2815515655446004,
+      "unit": "standard deviations",
+      "tag": "derived",
+      "scope": "fixed",
+      "source": "0.9 quantile of the standard normal: half-width of an 80 % interval."
+    },
+    "meters_per_mile": {"value": 1609.344, "unit": "m", "tag": "measured", "scope": "fixed", "source": "International mile (exact by definition)."},
+    "round_half": {"value": 0.500000001, "unit": "", "tag": "derived", "scope": "fixed", "source": "0.5 plus a 1e-9 nudge, added before floor in round_half_away."},
+    "qkey_scale": {"value": 1000000.0, "unit": "", "tag": "assumed", "scope": "fixed", "source": "Ranking keys are compared in whole millionths."}
+  },
+  "hours": {
+    "regime_of_hour": {
+      "value": ["eve", "eve", "eve", "eve", "eve", "day", "day", "day", "day", "day", "day", "day", "day", "day", "day", "day", "eve", "eve", "eve", "eve", "eve", "eve", "eve", "eve"],
+      "unit": "regime by local clock hour 0..23",
+      "tag": "assumed",
+      "scope": "build",
+      "source": "day = 05:00-15:59, eve = 16:00-04:59. DECISIONS s7.3"
+    },
+    "daypart_of_hour": {
+      "value": ["late", "late", "late", "late", "late", "breakfast", "breakfast", "breakfast", "breakfast", "breakfast", "breakfast", "lunch", "lunch", "lunch", "lunch", "lunch", "dinner", "dinner", "dinner", "dinner", "dinner", "dinner", "late", "late"],
+      "unit": "daypart by local clock hour 0..23",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "breakfast 05-10, lunch 11-15, dinner 16-21, late 22-04; the 11/16/22 boundaries are those of PosSalesRepository::dayPart."
+    }
+  },
+  "kernel": {
+    "walk_decay_m": {
+      "value": 400.0,
+      "unit": "m (e-folding distance)",
+      "tag": "assumed",
+      "scope": "build",
+      "source": "2009 NHTS walking trips for meals e-fold at 649 m (Yang and Diez-Roux 2012, measured); tightened because a 35-minute lunch break caps the round trip. Sensitivity range 300-650. recon 10 s4.1"
+    },
+    "walk_cutoff_m": {
+      "value": 1200.0,
+      "unit": "m",
+      "tag": "derived",
+      "scope": "build",
+      "source": "exp(-1200/400) = 5 % weight; sources beyond are ignored. recon 10 s4.1"
+    },
+    "outside_option_a0": {
+      "value": 1.6,
+      "unit": "truck-at-the-door equivalents",
+      "tag": "tuned",
+      "scope": "build",
+      "source": "Weight of 'buy elsewhere, bring lunch, give up'. A truck at the door with no rival wins 1/2.6 = 38 % of people who buy a meal that hour. Set so the office-park anchor lands near the blueprint's 66; entangled with lunch intent and walk decay. recon 10 s4.1"
+    },
+    "rival_weight": {
+      "unit": "truck-at-the-same-distance equivalents",
+      "scope": "build",
+      "quick": {
+        "day": 1.0,
+        "eve": 1.0,
+        "tag": "assumed",
+        "source": "One ordinary quick-service or fast-casual outlet = one truck at the same distance. recon 10 s4.1"
+      },
+      "full": {
+        "day": 0.6,
+        "eve": 1.0,
+        "tag": "assumed",
+        "source": "A sit-down meal is a weaker substitute inside a 35-minute lunch break; equal in the evening. Not in recon 10."
+      },
+      "cafe": {"day": 0.5, "eve": 0.2, "tag": "assumed", "source": "Partial substitute (recon 10: coffee 0.5); most are shut or irrelevant in the evening."},
+      "bar": {"day": 0.1, "eve": 0.6, "tag": "assumed", "source": "Bar food competes in the evening only. Not in recon 10."},
+      "convenience": {"day": 0.5, "eve": 0.4, "tag": "assumed", "source": "Partial substitute (recon 10: 0.5)."}
+    },
+    "visibility": {
+      "hidden": {"value": 0.6, "unit": "multiplier on the truck's pull", "tag": "assumed", "scope": "build", "source": "Easy to miss. recon 10 s2"},
+      "normal": {
+        "value": 1.0,
+        "unit": "multiplier on the truck's pull",
+        "tag": "assumed",
+        "scope": "build",
+        "source": "Reference level; the level every map cell is built at."
+      },
+      "prominent": {
+        "value": 1.3,
+        "unit": "multiplier on the truck's pull",
+        "tag": "assumed",
+        "scope": "build",
+        "source": "Seen from the main approach, or announced by the host. recon 10 s2"
+      }
+    }
+  },
+  "segments": {
+    "res": {
+      "index": 0,
+      "label": "Residents at home",
+      "group": "residents",
+      "base_unit": "residents (2020 Census block count)",
+      "host_mode": "open",
+      "weak": false,
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.95, 0.96, 0.96, 0.96, 0.96, 0.94, 0.88, 0.76, 0.6, 0.51, 0.47, 0.46, 0.46, 0.46, 0.47, 0.51, 0.57, 0.64, 0.71, 0.77, 0.82, 0.87, 0.91, 0.94],
+        "saturday": [0.93, 0.95, 0.96, 0.96, 0.96, 0.96, 0.94, 0.9, 0.84, 0.76, 0.68, 0.63, 0.6, 0.6, 0.61, 0.62, 0.64, 0.66, 0.67, 0.69, 0.73, 0.78, 0.84, 0.89],
+        "sunday": [0.93, 0.95, 0.96, 0.96, 0.96, 0.96, 0.95, 0.92, 0.87, 0.79, 0.7, 0.65, 0.63, 0.64, 0.65, 0.67, 0.7, 0.74, 0.78, 0.82, 0.86, 0.9, 0.93, 0.95],
+        "source": "Shape from Mitra et al. 2020 (ATUS 2006-18 home occupancy, measured); age weights and the work-from-home shift assumed. recon 10 s4.2"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.004, 0.005, 0.004, 0.003, 0.01, 0.02, 0.012, 0.005, 0.004, 0.008, 0.025, 0.035, 0.03, 0.015, 0.008, 0.004, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.006, 0.008, 0.008, 0.015, 0.03, 0.025, 0.012, 0.006, 0.01, 0.03, 0.04, 0.035, 0.02, 0.01, 0.006, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.006, 0.01, 0.012, 0.018, 0.03, 0.025, 0.012, 0.006, 0.01, 0.028, 0.036, 0.03, 0.015, 0.008, 0.004, 0.0],
+        "source": "Assumed shape; daily totals 0.125 weekday / 0.175 Sat / 0.184 Sun meals bought nearby per resident, checked against CDC fast-food day share 32 % and ATUS eating-out trips 14.1 % / 21.4 %. recon 10 s4.3"
+      },
+      "dow_factor": {
+        "value": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "No day-of-week pattern assumed."
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "sunday",
+        "minor": "weekday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "w_office": {
+      "index": 1,
+      "label": "Office workers",
+      "group": "workers",
+      "base_unit": "jobs (LODES WAC)",
+      "host_mode": "open",
+      "weak": false,
+      "lodes_cns": ["CNS09", "CNS10", "CNS11", "CNS12", "CNS13", "CNS14"],
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "derived",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.004, 0.003, 0.003, 0.003, 0.004, 0.01, 0.047, 0.165, 0.29, 0.36, 0.369, 0.364, 0.363, 0.362, 0.352, 0.32, 0.235, 0.126, 0.043, 0.018, 0.016, 0.013, 0.009, 0.006],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.001, 0.003, 0.012, 0.021, 0.026, 0.027, 0.027, 0.027, 0.027, 0.026, 0.023, 0.017, 0.009, 0.003, 0.001, 0.001, 0.001, 0.001, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.001, 0.003, 0.01, 0.017, 0.022, 0.022, 0.022, 0.022, 0.022, 0.021, 0.019, 0.014, 0.008, 0.003, 0.001, 0.001, 0.001, 0.001, 0.0],
+        "source": "BLS ATUS Table A-5 2021-25 (share working by industry and hour) x ATUS 2025 Tables 5 and 7 (works that day; at the workplace), lunch dip bridged; weekend and night on-site factors assumed. recon 10 s2.1; blend 0.55 professional/business + 0.30 financial + 0.15 information"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.03, 0.02, 0.01, 0.08, 0.18, 0.11, 0.03, 0.015, 0.01, 0.01, 0.02, 0.02, 0.0, 0.0, 0.0, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.017, 0.0255, 0.017, 0.0085, 0.068, 0.153, 0.0935, 0.0255, 0.0127, 0.0085, 0.0085, 0.017, 0.017, 0.0, 0.0, 0.0, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.017, 0.0255, 0.017, 0.0085, 0.068, 0.153, 0.0935, 0.0255, 0.0127, 0.0085, 0.0085, 0.017, 0.017, 0.0, 0.0, 0.0, 0.0],
+        "source": "Assumed shape; 0.40 across 11:00-14:59 sits between Talker/Buddig 0.33 and ezCater 0.52; timing from ATUS A-3 (peak 12:00). Weekend = weekday x 0.85. recon 10 s4.3"
+      },
+      "dow_factor": {
+        "value": [0.9, 1.19, 1.16, 1.08, 0.67],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "Kastle Back to Work Barometer: Tuesday 65.3 / weekly 54.7 = 1.19 (measured, Sept 2026); Friday 0.67 shaded from Kastle's 2022 low/average ratio 0.69; Monday, Wednesday and Thursday assumed so the five average 1.0. Large-city offices. recon 10 s3.1 #1.13"
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "sunday",
+        "minor": "weekday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "w_health": {
+      "index": 2,
+      "label": "Healthcare workers",
+      "group": "workers",
+      "base_unit": "jobs (LODES WAC)",
+      "host_mode": "open",
+      "weak": false,
+      "lodes_cns": ["CNS16"],
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "derived",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.033, 0.032, 0.032, 0.038, 0.051, 0.079, 0.153, 0.29, 0.429, 0.496, 0.507, 0.501, 0.491, 0.482, 0.465, 0.415, 0.296, 0.166, 0.102, 0.074, 0.061, 0.056, 0.048, 0.038],
+        "saturday": [0.013, 0.013, 0.013, 0.015, 0.02, 0.032, 0.061, 0.116, 0.172, 0.199, 0.203, 0.201, 0.197, 0.193, 0.187, 0.166, 0.119, 0.067, 0.041, 0.03, 0.024, 0.023, 0.019, 0.015],
+        "sunday": [0.013, 0.012, 0.012, 0.014, 0.019, 0.03, 0.058, 0.109, 0.162, 0.187, 0.192, 0.189, 0.186, 0.182, 0.176, 0.157, 0.112, 0.063, 0.039, 0.028, 0.023, 0.021, 0.018, 0.014],
+        "source": "BLS ATUS Table A-5 2021-25 (share working by industry and hour) x ATUS 2025 Tables 5 and 7 (works that day; at the workplace), lunch dip bridged; weekend and night on-site factors assumed. recon 10 s2.1; healthcare and social assistance"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.01, 0.01, 0.01, 0.0, 0.0, 0.0, 0.03, 0.04, 0.03, 0.01, 0.01, 0.06, 0.12, 0.08, 0.02, 0.01, 0.01, 0.03, 0.04, 0.03, 0.01, 0.0, 0.01, 0.01],
+        "saturday": [0.01, 0.01, 0.01, 0.0, 0.0, 0.0, 0.03, 0.04, 0.03, 0.01, 0.01, 0.06, 0.12, 0.08, 0.02, 0.01, 0.01, 0.03, 0.04, 0.03, 0.01, 0.0, 0.01, 0.01],
+        "sunday": [0.01, 0.01, 0.01, 0.0, 0.0, 0.0, 0.03, 0.04, 0.03, 0.01, 0.01, 0.06, 0.12, 0.08, 0.02, 0.01, 0.01, 0.03, 0.04, 0.03, 0.01, 0.0, 0.01, 0.01],
+        "source": "Assumed; lunch total 0.28 (cafeteria on site counts as an outlet). recon 10 s4.3"
+      },
+      "dow_factor": {
+        "value": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "No day-of-week pattern assumed."
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "saturday",
+        "minor": "weekday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "w_edu": {
+      "index": 3,
+      "label": "Education workers",
+      "group": "workers",
+      "base_unit": "jobs (LODES WAC)",
+      "host_mode": "open",
+      "weak": false,
+      "lodes_cns": ["CNS15"],
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "derived",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.002, 0.001, 0.0, 0.001, 0.003, 0.01, 0.064, 0.26, 0.439, 0.508, 0.509, 0.505, 0.509, 0.513, 0.482, 0.381, 0.233, 0.119, 0.049, 0.023, 0.021, 0.017, 0.01, 0.004],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.002, 0.008, 0.014, 0.016, 0.016, 0.016, 0.016, 0.016, 0.015, 0.012, 0.007, 0.004, 0.002, 0.001, 0.001, 0.001, 0.0, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.001, 0.006, 0.009, 0.011, 0.011, 0.011, 0.011, 0.011, 0.01, 0.008, 0.005, 0.003, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "source": "BLS ATUS Table A-5 2021-25 (share working by industry and hour) x ATUS 2025 Tables 5 and 7 (works that day; at the workplace), lunch dip bridged; weekend and night on-site factors assumed. recon 10 s2.1; educational services (annual average, includes summer)"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.01, 0.0, 0.0, 0.04, 0.08, 0.04, 0.0, 0.02, 0.02, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.01, 0.0, 0.0, 0.04, 0.08, 0.04, 0.0, 0.02, 0.02, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.01, 0.0, 0.0, 0.04, 0.08, 0.04, 0.0, 0.02, 0.02, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "source": "Assumed; lunch total 0.16 (staff rarely leave the building). recon 10 s4.3"
+      },
+      "dow_factor": {
+        "value": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "No day-of-week pattern assumed."
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "sunday",
+        "minor": "sunday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "w_retail": {
+      "index": 4,
+      "label": "Retail workers",
+      "group": "workers",
+      "base_unit": "jobs (LODES WAC)",
+      "host_mode": "open",
+      "weak": false,
+      "lodes_cns": ["CNS07"],
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "derived",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.017, 0.018, 0.018, 0.031, 0.052, 0.084, 0.134, 0.216, 0.319, 0.392, 0.425, 0.432, 0.433, 0.433, 0.418, 0.374, 0.296, 0.206, 0.143, 0.115, 0.094, 0.065, 0.041, 0.022],
+        "saturday": [0.014, 0.015, 0.014, 0.025, 0.042, 0.069, 0.11, 0.176, 0.26, 0.319, 0.347, 0.353, 0.353, 0.353, 0.341, 0.305, 0.241, 0.168, 0.117, 0.094, 0.077, 0.053, 0.033, 0.018],
+        "sunday": [0.011, 0.012, 0.011, 0.02, 0.033, 0.054, 0.086, 0.139, 0.205, 0.251, 0.273, 0.277, 0.277, 0.278, 0.268, 0.24, 0.189, 0.132, 0.092, 0.074, 0.06, 0.042, 0.026, 0.014],
+        "source": "BLS ATUS Table A-5 2021-25 (share working by industry and hour) x ATUS 2025 Tables 5 and 7 (works that day; at the workplace), lunch dip bridged; weekend and night on-site factors assumed. recon 10 s2.1; retail trade"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.01, 0.01, 0.05, 0.11, 0.09, 0.05, 0.02, 0.02, 0.04, 0.05, 0.03, 0.01, 0.0, 0.0, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.01, 0.01, 0.05, 0.11, 0.09, 0.05, 0.02, 0.02, 0.04, 0.05, 0.03, 0.01, 0.0, 0.0, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.01, 0.01, 0.05, 0.11, 0.09, 0.05, 0.02, 0.02, 0.04, 0.05, 0.03, 0.01, 0.0, 0.0, 0.0],
+        "source": "Assumed; lunch total 0.30, staggered breaks. recon 10 s4.3"
+      },
+      "dow_factor": {
+        "value": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "No day-of-week pattern assumed."
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "saturday",
+        "minor": "weekday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "w_industrial": {
+      "index": 5,
+      "label": "Industrial and logistics workers",
+      "group": "workers",
+      "base_unit": "jobs (LODES WAC)",
+      "host_mode": "open",
+      "weak": false,
+      "lodes_cns": ["CNS01", "CNS02", "CNS03", "CNS04", "CNS05", "CNS06", "CNS08"],
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "derived",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.039, 0.036, 0.034, 0.042, 0.065, 0.114, 0.207, 0.329, 0.416, 0.451, 0.46, 0.456, 0.451, 0.446, 0.433, 0.38, 0.271, 0.159, 0.102, 0.087, 0.081, 0.076, 0.065, 0.049],
+        "saturday": [0.019, 0.017, 0.016, 0.02, 0.031, 0.054, 0.099, 0.157, 0.198, 0.215, 0.219, 0.217, 0.215, 0.212, 0.206, 0.181, 0.129, 0.076, 0.048, 0.042, 0.039, 0.036, 0.031, 0.023],
+        "sunday": [0.011, 0.01, 0.01, 0.012, 0.019, 0.033, 0.059, 0.094, 0.119, 0.129, 0.132, 0.13, 0.129, 0.127, 0.124, 0.109, 0.077, 0.045, 0.029, 0.025, 0.023, 0.022, 0.019, 0.014],
+        "source": "BLS ATUS Table A-5 2021-25 (share working by industry and hour) x ATUS 2025 Tables 5 and 7 (works that day; at the workplace), lunch dip bridged; weekend and night on-site factors assumed. recon 10 s2.1; 0.50 manufacturing + 0.30 transportation/warehousing + 0.20 wholesale"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.01, 0.015, 0.01, 0.0, 0.02, 0.03, 0.03, 0.01, 0.01, 0.03, 0.09, 0.12, 0.04, 0.01, 0.01, 0.0, 0.0, 0.03, 0.04, 0.02, 0.0, 0.01, 0.0],
+        "saturday": [0.0, 0.01, 0.015, 0.01, 0.0, 0.02, 0.03, 0.03, 0.01, 0.01, 0.03, 0.09, 0.12, 0.04, 0.01, 0.01, 0.0, 0.0, 0.03, 0.04, 0.02, 0.0, 0.01, 0.0],
+        "sunday": [0.0, 0.01, 0.015, 0.01, 0.0, 0.02, 0.03, 0.03, 0.01, 0.01, 0.03, 0.09, 0.12, 0.04, 0.01, 0.01, 0.0, 0.0, 0.03, 0.04, 0.02, 0.0, 0.01, 0.0],
+        "source": "Assumed; lunch total 0.28 over 10:00-13:59, synchronised early lunch. recon 10 s4.3"
+      },
+      "dow_factor": {
+        "value": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "No day-of-week pattern assumed."
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "sunday",
+        "minor": "weekday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "w_hospitality": {
+      "index": 6,
+      "label": "Hospitality workers",
+      "group": "workers",
+      "base_unit": "jobs (LODES WAC)",
+      "host_mode": "open",
+      "weak": false,
+      "lodes_cns": ["CNS17", "CNS18"],
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "derived",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.031, 0.023, 0.013, 0.016, 0.029, 0.053, 0.094, 0.157, 0.231, 0.289, 0.329, 0.34, 0.335, 0.33, 0.306, 0.274, 0.254, 0.233, 0.207, 0.176, 0.146, 0.109, 0.067, 0.042],
+        "saturday": [0.025, 0.019, 0.011, 0.013, 0.024, 0.043, 0.076, 0.128, 0.188, 0.236, 0.268, 0.277, 0.273, 0.269, 0.25, 0.223, 0.207, 0.19, 0.168, 0.144, 0.119, 0.089, 0.055, 0.034],
+        "sunday": [0.021, 0.016, 0.009, 0.011, 0.02, 0.037, 0.065, 0.109, 0.16, 0.201, 0.228, 0.236, 0.233, 0.229, 0.213, 0.19, 0.177, 0.162, 0.143, 0.122, 0.102, 0.076, 0.047, 0.029],
+        "source": "BLS ATUS Table A-5 2021-25 (share working by industry and hour) x ATUS 2025 Tables 5 and 7 (works that day; at the workplace), lunch dip bridged; weekend and night on-site factors assumed. recon 10 s2.1; 0.80 accommodation/food + 0.20 arts/recreation"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.02, 0.04, 0.03, 0.02, 0.03, 0.03, 0.0, 0.0, 0.0, 0.0, 0.01, 0.02, 0.02],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.02, 0.04, 0.03, 0.02, 0.03, 0.03, 0.0, 0.0, 0.0, 0.0, 0.01, 0.02, 0.02],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.02, 0.04, 0.03, 0.02, 0.03, 0.03, 0.0, 0.0, 0.0, 0.0, 0.01, 0.02, 0.02],
+        "source": "Assumed; 0.09 (staff meals). recon 10 s4.3"
+      },
+      "dow_factor": {
+        "value": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "No day-of-week pattern assumed."
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "saturday",
+        "minor": "weekday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "w_public": {
+      "index": 7,
+      "label": "Public and other-services workers",
+      "group": "workers",
+      "base_unit": "jobs (LODES WAC)",
+      "host_mode": "open",
+      "weak": false,
+      "lodes_cns": ["CNS19", "CNS20"],
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "derived",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.008, 0.007, 0.007, 0.008, 0.012, 0.026, 0.075, 0.204, 0.338, 0.408, 0.426, 0.426, 0.419, 0.412, 0.397, 0.352, 0.244, 0.139, 0.074, 0.037, 0.027, 0.022, 0.015, 0.01],
+        "saturday": [0.002, 0.002, 0.001, 0.002, 0.003, 0.005, 0.016, 0.043, 0.072, 0.086, 0.09, 0.09, 0.089, 0.087, 0.084, 0.074, 0.052, 0.029, 0.016, 0.008, 0.006, 0.005, 0.003, 0.002],
+        "sunday": [0.002, 0.001, 0.001, 0.002, 0.002, 0.005, 0.014, 0.039, 0.065, 0.078, 0.081, 0.081, 0.08, 0.079, 0.076, 0.067, 0.047, 0.027, 0.014, 0.007, 0.005, 0.004, 0.003, 0.002],
+        "source": "BLS ATUS Table A-5 2021-25 (share working by industry and hour) x ATUS 2025 Tables 5 and 7 (works that day; at the workplace), lunch dip bridged; weekend and night on-site factors assumed. recon 10 s2.1; 0.50 public administration + 0.50 other services"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.02, 0.01, 0.01, 0.06, 0.15, 0.09, 0.02, 0.01, 0.01, 0.01, 0.02, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.02, 0.01, 0.01, 0.06, 0.15, 0.09, 0.02, 0.01, 0.01, 0.01, 0.02, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.02, 0.01, 0.01, 0.06, 0.15, 0.09, 0.02, 0.01, 0.01, 0.01, 0.02, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "source": "Assumed; lunch total 0.32, about Talker 0.33. recon 10 s4.3"
+      },
+      "dow_factor": {
+        "value": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "No day-of-week pattern assumed."
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "sunday",
+        "minor": "sunday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "v_nightlife": {
+      "index": 8,
+      "label": "Taproom and bar patrons",
+      "group": "visitors",
+      "base_unit": "people in the venue in its busiest regular hour",
+      "host_mode": "captive",
+      "weak": false,
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.03, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.03, 0.06, 0.06, 0.06, 0.15, 0.3, 0.5, 0.62, 0.6, 0.48, 0.33, 0.18, 0.08],
+        "saturday": [0.12, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.15, 0.35, 0.6, 0.8, 0.95, 1.0, 1.0, 0.95, 0.88, 0.75, 0.6, 0.42, 0.25],
+        "sunday": [0.12, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.62, 0.65, 0.6, 0.5, 0.38, 0.25, 0.13, 0.05, 0.0, 0.0],
+        "source": "Assumed shape; weekday array is the Thursday curve; weekly totals set against Brewers Association/Arryved taproom shares (Saturday about 30 %, Friday just over 20 %). Sunday 00:00-01:59 added so Saturday night does not stop at midnight. recon 10 s5"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "tuned",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.08, 0.06, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.22, 0.2, 0.12, 0.08, 0.1, 0.24, 0.28, 0.24, 0.16, 0.1, 0.08, 0.08],
+        "saturday": [0.08, 0.06, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.22, 0.2, 0.12, 0.08, 0.1, 0.24, 0.28, 0.24, 0.16, 0.1, 0.08, 0.08],
+        "sunday": [0.08, 0.06, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.22, 0.2, 0.12, 0.08, 0.1, 0.24, 0.28, 0.24, 0.16, 0.1, 0.08, 0.08],
+        "source": "No measurement found. Set together with host.captive_share so a size-120 taproom gives about 39 orders on a Thursday 17:00-20:00. recon 10 s4.3, s7.2"
+      },
+      "dow_factor": {
+        "value": [0.5, 0.54, 0.79, 1.0, 1.5],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "Set against Brewers Association/Arryved weekly sales shares; the weekday curve is Thursday. recon 10 s5"
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "saturday",
+        "minor": "weekday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "v_shopping": {
+      "index": 9,
+      "label": "Shoppers",
+      "group": "visitors",
+      "base_unit": "people on site in the busiest regular hour",
+      "host_mode": "open",
+      "weak": false,
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.03, 0.08, 0.18, 0.3, 0.45, 0.55, 0.52, 0.5, 0.5, 0.52, 0.56, 0.5, 0.38, 0.25, 0.12, 0.04, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.03, 0.1, 0.28, 0.52, 0.78, 0.95, 1.0, 1.0, 0.95, 0.85, 0.72, 0.58, 0.42, 0.28, 0.14, 0.05, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.05, 0.15, 0.35, 0.62, 0.82, 0.9, 0.9, 0.85, 0.72, 0.55, 0.38, 0.22, 0.12, 0.05, 0.0, 0.0],
+        "source": "Assumed shape following ATUS A-3 2025 consumer-purchases row. recon 10 s5"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.01, 0.015, 0.06, 0.12, 0.1, 0.05, 0.03, 0.03, 0.05, 0.07, 0.05, 0.02, 0.0, 0.0, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.01, 0.015, 0.06, 0.12, 0.1, 0.05, 0.03, 0.03, 0.05, 0.07, 0.05, 0.02, 0.0, 0.0, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.01, 0.015, 0.06, 0.12, 0.1, 0.05, 0.03, 0.03, 0.05, 0.07, 0.05, 0.02, 0.0, 0.0, 0.0],
+        "source": "Assumed. recon 10 s5"
+      },
+      "dow_factor": {
+        "value": [0.95, 0.95, 0.98, 1.02, 1.1],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "Assumed. recon 10 s5"
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "saturday",
+        "minor": "saturday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "v_leisure": {
+      "index": 10,
+      "label": "Park and gym visitors",
+      "group": "visitors",
+      "base_unit": "people on site in the busiest regular hour",
+      "host_mode": "open",
+      "weak": false,
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.15, 0.4, 0.45, 0.5, 0.55, 0.55, 0.55, 0.5, 0.45, 0.5, 0.6, 0.8, 1.0, 1.0, 0.85, 0.55, 0.25, 0.08, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.15, 0.35, 0.6, 0.85, 1.0, 1.0, 0.9, 0.85, 0.85, 0.85, 0.8, 0.7, 0.55, 0.4, 0.22, 0.08, 0.0, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.45, 0.7, 0.9, 0.95, 0.9, 0.85, 0.85, 0.85, 0.8, 0.65, 0.5, 0.32, 0.15, 0.05, 0.0, 0.0],
+        "source": "Assumed shape following ATUS A-3 2025 sports/exercise row and a gym check-in profile (South Africa). recon 10 s5"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.005, 0.005, 0.0, 0.0, 0.02, 0.04, 0.03, 0.01, 0.0, 0.01, 0.02, 0.03, 0.03, 0.01, 0.0, 0.0, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.02, 0.04, 0.08, 0.07, 0.04, 0.03, 0.03, 0.04, 0.05, 0.03, 0.0, 0.0, 0.0, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.02, 0.04, 0.08, 0.07, 0.04, 0.03, 0.03, 0.04, 0.05, 0.03, 0.0, 0.0, 0.0, 0.0],
+        "source": "Assumed. recon 10 s5"
+      },
+      "dow_factor": {
+        "value": [1.15, 1.1, 1.02, 0.95, 0.78],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "Gym check-in shares by weekday (South Africa) damped half-way to flat. recon 10 s5"
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "saturday",
+        "minor": "weekday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "v_campus": {
+      "index": 11,
+      "label": "Students on campus",
+      "group": "visitors",
+      "base_unit": "students on campus in the busiest regular hour",
+      "host_mode": "open",
+      "weak": true,
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.033, 0.033, 0.033, 0.033, 0.033, 0.033, 0.05, 0.167, 0.417, 0.7, 0.917, 1.0, 1.0, 0.967, 0.867, 0.7, 0.533, 0.417, 0.333, 0.283, 0.233, 0.167, 0.117, 0.067],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.05, 0.083, 0.117, 0.133, 0.133, 0.133, 0.117, 0.1, 0.083, 0.067, 0.067, 0.05, 0.033, 0.0, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.033, 0.067, 0.083, 0.1, 0.117, 0.117, 0.117, 0.1, 0.1, 0.1, 0.083, 0.067, 0.033, 0.0],
+        "source": "Assumed; shape follows ATUS A-3 2025 attending-class row; rescaled from an enrolment base (peak 0.60) to peak 1.0. Term time only. recon 10 s5"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.02, 0.02, 0.05, 0.1, 0.08, 0.04, 0.02, 0.02, 0.03, 0.04, 0.03, 0.02, 0.03, 0.03, 0.03],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.02, 0.02, 0.05, 0.1, 0.08, 0.04, 0.02, 0.02, 0.03, 0.04, 0.03, 0.02, 0.03, 0.03, 0.03],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.02, 0.02, 0.05, 0.1, 0.08, 0.04, 0.02, 0.02, 0.03, 0.04, 0.03, 0.02, 0.03, 0.03, 0.03],
+        "source": "Assumed; damped because about half of students are on a meal plan. Weak seed. recon 10 s5"
+      },
+      "dow_factor": {
+        "value": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "No day-of-week pattern assumed."
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "sunday",
+        "minor": "weekday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "v_hospital": {
+      "index": 12,
+      "label": "Hospital visitors",
+      "group": "visitors",
+      "base_unit": "visitors in the building in the busiest regular hour",
+      "host_mode": "open",
+      "weak": true,
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.1, 0.3, 0.6, 0.85, 1.0, 1.0, 0.9, 0.9, 0.95, 0.85, 0.7, 0.55, 0.5, 0.45, 0.3, 0.12, 0.05, 0.05],
+        "saturday": [0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.05, 0.08, 0.12, 0.2, 0.35, 0.45, 0.5, 0.55, 0.6, 0.6, 0.55, 0.5, 0.45, 0.38, 0.22, 0.08, 0.04, 0.04],
+        "sunday": [0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.05, 0.08, 0.12, 0.2, 0.35, 0.45, 0.5, 0.55, 0.6, 0.6, 0.55, 0.5, 0.45, 0.38, 0.22, 0.08, 0.04, 0.04],
+        "source": "Assumed. recon 10 s5"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.02, 0.02, 0.01, 0.04, 0.07, 0.06, 0.03, 0.01, 0.01, 0.03, 0.04, 0.03, 0.01, 0.0, 0.0, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.02, 0.02, 0.01, 0.04, 0.07, 0.06, 0.03, 0.01, 0.01, 0.03, 0.04, 0.03, 0.01, 0.0, 0.0, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.02, 0.02, 0.01, 0.04, 0.07, 0.06, 0.03, 0.01, 0.01, 0.03, 0.04, 0.03, 0.01, 0.0, 0.0, 0.0],
+        "source": "Assumed. Weak seed. recon 10 s5"
+      },
+      "dow_factor": {
+        "value": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "No day-of-week pattern assumed."
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "saturday",
+        "minor": "weekday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "v_transit": {
+      "index": 13,
+      "label": "Transit riders",
+      "group": "visitors",
+      "base_unit": "station entries in the busiest regular hour",
+      "host_mode": "open",
+      "weak": true,
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "derived",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.061, 0.02, 0.02, 0.02, 0.051, 0.162, 0.384, 0.788, 0.949, 0.596, 0.404, 0.374, 0.404, 0.455, 0.576, 0.727, 0.828, 1.0, 0.747, 0.495, 0.354, 0.303, 0.232, 0.141],
+        "saturday": [0.121, 0.061, 0.03, 0.03, 0.03, 0.061, 0.111, 0.172, 0.222, 0.263, 0.303, 0.354, 0.394, 0.424, 0.465, 0.485, 0.495, 0.485, 0.465, 0.424, 0.323, 0.283, 0.273, 0.202],
+        "sunday": [0.121, 0.061, 0.04, 0.03, 0.03, 0.051, 0.091, 0.131, 0.182, 0.232, 0.293, 0.323, 0.364, 0.394, 0.404, 0.414, 0.424, 0.414, 0.374, 0.313, 0.232, 0.192, 0.162, 0.101],
+        "source": "Measured: NYC subway hourly entries 2025-09-08..2025-10-05 (data.ny.gov 5wq4-mkjj), share of an average weekday by hour. Rescaled here so the weekday peak hour (17:00) = 1.0; Saturday day total 0.641 and Sunday 0.532 of a weekday. Other systems are more peaked. recon 10 s3.4"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.03, 0.03, 0.0, 0.0, 0.0, 0.01, 0.015, 0.015, 0.015, 0.01, 0.01, 0.02, 0.025, 0.02, 0.01, 0.01, 0.015, 0.02, 0.02, 0.02, 0.02, 0.025, 0.03, 0.03],
+        "saturday": [0.03, 0.03, 0.0, 0.0, 0.0, 0.01, 0.015, 0.015, 0.015, 0.01, 0.01, 0.02, 0.025, 0.02, 0.01, 0.01, 0.015, 0.02, 0.02, 0.02, 0.02, 0.025, 0.03, 0.03],
+        "sunday": [0.03, 0.03, 0.0, 0.0, 0.0, 0.01, 0.015, 0.015, 0.015, 0.01, 0.01, 0.02, 0.025, 0.02, 0.01, 0.01, 0.015, 0.02, 0.02, 0.02, 0.02, 0.025, 0.03, 0.03],
+        "source": "Assumed; rate per passer-by. Weak seed. recon 10 s5"
+      },
+      "dow_factor": {
+        "value": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "No day-of-week pattern assumed."
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "sunday",
+        "minor": "saturday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "v_events": {
+      "index": 14,
+      "label": "Event and culture visitors",
+      "group": "visitors",
+      "base_unit": "people on site in the busiest regular hour",
+      "host_mode": "captive",
+      "weak": false,
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.15, 0.24, 0.27, 0.27, 0.27, 0.23, 0.15, 0.06, 0.09, 0.18, 0.18, 0.15, 0.06, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.8, 0.95, 1.0, 1.0, 0.9, 0.65, 0.4, 0.4, 0.6, 0.6, 0.5, 0.25, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.35, 0.65, 0.85, 0.9, 0.9, 0.8, 0.55, 0.3, 0.2, 0.2, 0.15, 0.0, 0.0, 0.0],
+        "source": "Assumed shape; weekend/weekday total about 3.1 against ATUS 3.0 (arts) and 2.5 (sporting events). recon 10 s5"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.04, 0.1, 0.18, 0.16, 0.1, 0.08, 0.08, 0.14, 0.18, 0.16, 0.1, 0.08, 0.06, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.04, 0.1, 0.18, 0.16, 0.1, 0.08, 0.08, 0.14, 0.18, 0.16, 0.1, 0.08, 0.06, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.04, 0.1, 0.18, 0.16, 0.1, 0.08, 0.08, 0.14, 0.18, 0.16, 0.1, 0.08, 0.06, 0.0],
+        "source": "From the NCASS (UK trade) 35-45 % of attendees buying over a visit of about three hours. recon 10 s3.3"
+      },
+      "dow_factor": {
+        "value": [0.6, 0.8, 0.9, 1.1, 1.6],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "Assumed. recon 10 s5"
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "saturday",
+        "minor": "saturday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    },
+    "v_lodging": {
+      "index": 15,
+      "label": "Hotel guests",
+      "group": "visitors",
+      "base_unit": "guests in house overnight",
+      "host_mode": "open",
+      "weak": false,
+      "presence": {
+        "unit": "people present per unit of base, by local clock hour 0..23",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 2.0,
+        "weekday": [0.99, 1.0, 1.0, 1.0, 1.0, 0.99, 0.958, 0.885, 0.729, 0.521, 0.365, 0.292, 0.26, 0.26, 0.26, 0.312, 0.396, 0.5, 0.573, 0.625, 0.708, 0.813, 0.917, 0.969],
+        "saturday": [0.969, 0.99, 1.0, 1.0, 1.0, 1.0, 0.979, 0.938, 0.833, 0.646, 0.469, 0.365, 0.312, 0.292, 0.292, 0.333, 0.417, 0.5, 0.542, 0.542, 0.573, 0.677, 0.813, 0.917],
+        "sunday": [0.969, 0.99, 1.0, 1.0, 1.0, 1.0, 0.979, 0.938, 0.833, 0.625, 0.417, 0.26, 0.208, 0.208, 0.229, 0.292, 0.375, 0.469, 0.542, 0.604, 0.688, 0.792, 0.896, 0.958],
+        "source": "Assumed; rescaled from peak 0.96 to 1.0. recon 10 s5"
+      },
+      "intent": {
+        "unit": "probability a present person buys a meal or substantial snack from some outlet during the hour",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 1.0,
+        "weekday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.03, 0.04, 0.03, 0.0, 0.01, 0.03, 0.02, 0.0, 0.0, 0.0, 0.03, 0.06, 0.07, 0.05, 0.03, 0.02, 0.0],
+        "saturday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.03, 0.04, 0.03, 0.0, 0.01, 0.03, 0.02, 0.0, 0.0, 0.0, 0.03, 0.06, 0.07, 0.05, 0.03, 0.02, 0.0],
+        "sunday": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.03, 0.04, 0.03, 0.0, 0.01, 0.03, 0.02, 0.0, 0.0, 0.0, 0.03, 0.06, 0.07, 0.05, 0.03, 0.02, 0.0],
+        "source": "Assumed. recon 10 s5"
+      },
+      "dow_factor": {
+        "value": [1.0, 1.0, 1.0, 1.0, 1.0],
+        "unit": "multiplier on weekday presence, Monday..Friday",
+        "tag": "assumed",
+        "scope": "owner",
+        "min": 0.0,
+        "max": 3.0,
+        "source": "No day-of-week pattern assumed."
+      },
+      "holiday_day_type": {
+        "unit": "day type used on a federal holiday (observed date) of that class",
+        "tag": "assumed",
+        "scope": "owner",
+        "allowed": ["weekday", "saturday", "sunday"],
+        "major": "saturday",
+        "minor": "weekday",
+        "source": "Assumed. recon 10 s4.2 holiday_rule extended to all segments and split into major and minor holidays."
+      }
+    }
+  },
+  "etl": {
+    "cns04_weight": {
+      "value": 0.3,
+      "unit": "weight of construction jobs (LODES CNS04) in w_industrial",
+      "tag": "assumed",
+      "scope": "build",
+      "min": 0.0,
+      "max": 1.0,
+      "source": "LODES places construction workers at the contractor's office, not on site (165,397 of the Washington region's 390,336 industrial-segment jobs). DECISIONS s8."
+    },
+    "cell_min_nearby": {
+      "value": 100.0,
+      "unit": "distance-weighted people (sum of the nearby vector)",
+      "tag": "assumed",
+      "scope": "build",
+      "source": "Map cells below this are left out of the cell pack; a click there is still simulated exactly. 03_DATA.md s7.2, DECISIONS s8."
+    }
+  },
+  "host": {
+    "captive_share": {
+      "value": 0.75,
+      "unit": "share of the venue's meal intent",
+      "tag": "tuned",
+      "scope": "owner",
+      "min": 0.05,
+      "max": 1.0,
+      "source": "Truck is the venue's only food, segments with host_mode captive. Set so the taproom anchor gives 39; about 27 % of patrons order during a 1.4-hour visit. No measurement exists. recon 10 s4.1"
+    },
+    "shared_kitchen_share": {
+      "value": 0.3,
+      "unit": "share of the venue's meal intent",
+      "tag": "assumed",
+      "scope": "owner",
+      "min": 0.01,
+      "max": 1.0,
+      "source": "Venue has its own kitchen: 1 / (1/0.75 + 2.0) with an assumed kitchen weight of 2.0. recon 10 s4.1"
+    },
+    "onsite_kitchen_weight": {
+      "value": 2.0,
+      "unit": "truck-at-the-door equivalents",
+      "tag": "assumed",
+      "scope": "owner",
+      "min": 0.0,
+      "max": 10.0,
+      "source": "On-site cafeteria or kitchen as a rival at distance zero, for hosts whose segment has host_mode open. recon 10 s4.1"
+    },
+    "exclusion_radius_m": {
+      "value": 250.0,
+      "unit": "m",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "How far from the truck the host's declared workers or residents are looked for in the block data so they are not counted twice."
+    }
+  },
+  "place_types": {
+    "unit": "default_size in people (busiest-hour headcount); host_fit 0..1",
+    "scope": "build",
+    "note": "visitor_segment = segment of the place's own source point (null = none: its people are already in the census or jobs data, or it is handled as an event). default_size = base count of that point. rival_kind = food-outlet kind (null = not a rival). host_fit = prior that this kind of place hosts trucks; used only to rank scouting results, never in an estimate. kitchen_default = whether a place of this type is assumed to sell its own food (yes | no). host_segment = segment a host of this type declares its people in (null = not a host).",
+    "order": ["taproom", "bar", "restaurant", "fast_food", "cafe", "convenience", "gym", "park", "shopping_centre", "big_box", "campus", "hospital", "transit_station", "events_venue", "stadium", "hotel", "attraction", "farmers_market", "office_park", "apartment_community", "industrial_site", "car_dealership"],
+    "rows": {
+      "taproom": {
+        "visitor_segment": "v_nightlife",
+        "default_size": 40.0,
+        "rival_kind": null,
+        "host_fit": 1.0,
+        "kitchen_default": "no",
+        "host_segment": "v_nightlife",
+        "tag": "assumed",
+        "source": "Average taproom is about 11-15 people at its Saturday peak (weak derivation from Arryved pint counts); trucks are hosted by larger ones; range 15-150. recon 10 s4.7"
+      },
+      "bar": {
+        "visitor_segment": "v_nightlife",
+        "default_size": 45.0,
+        "rival_kind": "bar",
+        "host_fit": 0.3,
+        "kitchen_default": "yes",
+        "host_segment": "v_nightlife",
+        "tag": "assumed",
+        "source": "No source opened. recon 10 s4.7"
+      },
+      "restaurant": {
+        "visitor_segment": null,
+        "default_size": 0.0,
+        "rival_kind": "full",
+        "host_fit": 0.0,
+        "kitchen_default": "yes",
+        "host_segment": null,
+        "tag": "assumed",
+        "source": "Rival only."
+      },
+      "fast_food": {
+        "visitor_segment": null,
+        "default_size": 0.0,
+        "rival_kind": "quick",
+        "host_fit": 0.0,
+        "kitchen_default": "yes",
+        "host_segment": null,
+        "tag": "assumed",
+        "source": "Rival only."
+      },
+      "cafe": {
+        "visitor_segment": null,
+        "default_size": 0.0,
+        "rival_kind": "cafe",
+        "host_fit": 0.0,
+        "kitchen_default": "yes",
+        "host_segment": null,
+        "tag": "assumed",
+        "source": "Rival only."
+      },
+      "convenience": {
+        "visitor_segment": null,
+        "default_size": 0.0,
+        "rival_kind": "convenience",
+        "host_fit": 0.0,
+        "kitchen_default": "yes",
+        "host_segment": null,
+        "tag": "assumed",
+        "source": "Rival only."
+      },
+      "gym": {
+        "visitor_segment": "v_leisure",
+        "default_size": 50.0,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "no",
+        "host_segment": "v_leisure",
+        "tag": "assumed",
+        "source": "7,180 members per large club (Planet Fitness 2025) x 8 % visiting per day (assumed) x about 10 % of visits in the peak hour = about 57. recon 10 s4.7"
+      },
+      "park": {
+        "visitor_segment": "v_leisure",
+        "default_size": 38.0,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "no",
+        "host_segment": "v_leisure",
+        "tag": "assumed",
+        "source": "Measured average of 34-42 users per observed hour in 174 neighbourhood parks, 25 US cities (PMC5289920; summariser-read), used here as the busiest-hour figure. recon 10 s3.4 #4.3"
+      },
+      "shopping_centre": {
+        "visitor_segment": "v_shopping",
+        "default_size": 150.0,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "yes",
+        "host_segment": "v_shopping",
+        "tag": "assumed",
+        "source": "Strip centre; a regional mall is about 1,500. No source opened. recon 10 s4.7"
+      },
+      "big_box": {
+        "visitor_segment": "v_shopping",
+        "default_size": 200.0,
+        "rival_kind": null,
+        "host_fit": 0.5,
+        "kitchen_default": "no",
+        "host_segment": "v_shopping",
+        "tag": "assumed",
+        "source": "No source opened. recon 10 s4.7"
+      },
+      "campus": {
+        "visitor_segment": "v_campus",
+        "default_size": 400.0,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "yes",
+        "host_segment": "v_campus",
+        "tag": "assumed",
+        "source": "Conservative default for an unnamed campus; a real figure is 0.6 x enrolment. Weak seed. recon 10 s4.7"
+      },
+      "hospital": {
+        "visitor_segment": "v_hospital",
+        "default_size": 120.0,
+        "rival_kind": null,
+        "host_fit": 0.4,
+        "kitchen_default": "yes",
+        "host_segment": "v_hospital",
+        "tag": "assumed",
+        "source": "0.8 x staffed beds (guess) x 151 beds per community hospital (AHA 2026). Staff come from the jobs data. Weak seed. recon 10 s4.7"
+      },
+      "transit_station": {
+        "visitor_segment": "v_transit",
+        "default_size": 300.0,
+        "rival_kind": null,
+        "host_fit": 0.1,
+        "kitchen_default": "no",
+        "host_segment": "v_transit",
+        "tag": "assumed",
+        "source": "Entries in the busiest hour; about 10 % of a 3,000-entry weekday. Not sourced. Weak seed."
+      },
+      "events_venue": {
+        "visitor_segment": "v_events",
+        "default_size": 80.0,
+        "rival_kind": null,
+        "host_fit": 0.6,
+        "kitchen_default": "no",
+        "host_segment": "v_events",
+        "tag": "assumed",
+        "source": "Theatre, cinema, community or conference centre. Not sourced."
+      },
+      "stadium": {
+        "visitor_segment": "v_events",
+        "default_size": 0.0,
+        "rival_kind": null,
+        "host_fit": 0.3,
+        "kitchen_default": "yes",
+        "host_segment": "v_events",
+        "tag": "assumed",
+        "source": "Size 0 on the hourly map by design: use an event stop with the expected attendance. recon 10 s4.7"
+      },
+      "hotel": {
+        "visitor_segment": "v_lodging",
+        "default_size": 90.0,
+        "rival_kind": null,
+        "host_fit": 0.3,
+        "kitchen_default": "yes",
+        "host_segment": "v_lodging",
+        "tag": "assumed",
+        "source": "About 100 rooms x 0.6 occupancy x 1.5 guests. Not sourced."
+      },
+      "attraction": {
+        "visitor_segment": "v_events",
+        "default_size": 150.0,
+        "rival_kind": null,
+        "host_fit": 0.3,
+        "kitchen_default": "yes",
+        "host_segment": "v_events",
+        "tag": "assumed",
+        "source": "Museum, zoo, theme park. Not sourced."
+      },
+      "farmers_market": {
+        "visitor_segment": null,
+        "default_size": 0.0,
+        "rival_kind": null,
+        "host_fit": 0.8,
+        "kitchen_default": "no",
+        "host_segment": null,
+        "tag": "assumed",
+        "source": "A market runs a few hours a week, so it has no hourly presence: use an event stop (USDA 2019: 780 households on a peak-season market day). recon 10 s4.7"
+      },
+      "office_park": {
+        "visitor_segment": null,
+        "default_size": 0.0,
+        "rival_kind": null,
+        "host_fit": 0.8,
+        "kitchen_default": "no",
+        "host_segment": "w_office",
+        "tag": "assumed",
+        "source": "Workers come from the jobs data, so the place has no people of its own."
+      },
+      "apartment_community": {
+        "visitor_segment": null,
+        "default_size": 0.0,
+        "rival_kind": null,
+        "host_fit": 0.7,
+        "kitchen_default": "no",
+        "host_segment": "res",
+        "tag": "assumed",
+        "source": "Residents come from the census data; a host enters units x 2.0 (persons per unit not sourced)."
+      },
+      "industrial_site": {
+        "visitor_segment": null,
+        "default_size": 0.0,
+        "rival_kind": null,
+        "host_fit": 0.6,
+        "kitchen_default": "no",
+        "host_segment": "w_industrial",
+        "tag": "assumed",
+        "source": "Workers come from the jobs data."
+      },
+      "car_dealership": {
+        "visitor_segment": "v_shopping",
+        "default_size": 15.0,
+        "rival_kind": null,
+        "host_fit": 0.5,
+        "kitchen_default": "no",
+        "host_segment": "v_shopping",
+        "tag": "assumed",
+        "source": "15 customers on the shopping curve; 64 staff per franchised dealership (NADA 2024) are in the jobs data. recon 10 s4.7"
+      }
+    }
+  },
+  "holidays": {
+    "unit": "5 U.S.C. 6103 rules; no table, no API",
+    "tag": "measured",
+    "scope": "fixed",
+    "source": "Rules checked against OPM's published lists for 2025-2030 (recon 09 s7). The major/minor split is assumed.",
+    "rules": [
+      {"id": "new_year", "name": "New Year's Day", "rule": "fixed", "month": 1, "day": 1, "class": "major"},
+      {"id": "mlk", "name": "Birthday of Martin Luther King, Jr.", "rule": "nth_weekday", "month": 1, "dow": 0, "n": 3, "class": "minor"},
+      {"id": "washington", "name": "Washington's Birthday", "rule": "nth_weekday", "month": 2, "dow": 0, "n": 3, "class": "minor"},
+      {"id": "memorial", "name": "Memorial Day", "rule": "last_weekday", "month": 5, "dow": 0, "class": "major"},
+      {
+        "id": "juneteenth",
+        "name": "Juneteenth National Independence Day",
+        "rule": "fixed",
+        "month": 6,
+        "day": 19,
+        "from_year": 2021,
+        "class": "minor"
+      },
+      {"id": "independence", "name": "Independence Day", "rule": "fixed", "month": 7, "day": 4, "class": "major"},
+      {"id": "labor", "name": "Labor Day", "rule": "nth_weekday", "month": 9, "dow": 0, "n": 1, "class": "major"},
+      {"id": "columbus", "name": "Columbus Day", "rule": "nth_weekday", "month": 10, "dow": 0, "n": 2, "class": "minor"},
+      {"id": "veterans", "name": "Veterans Day", "rule": "fixed", "month": 11, "day": 11, "class": "minor"},
+      {"id": "thanksgiving", "name": "Thanksgiving Day", "rule": "nth_weekday", "month": 11, "dow": 3, "n": 4, "class": "major"},
+      {"id": "christmas", "name": "Christmas Day", "rule": "fixed", "month": 12, "day": 25, "class": "major"},
+      {
+        "id": "inauguration",
+        "name": "Inauguration Day",
+        "rule": "inauguration",
+        "month": 1,
+        "day": 20,
+        "class": "minor",
+        "region_flag": "inauguration_day"
+      }
+    ]
+  },
+  "weather": {
+    "floor": {
+      "value": 0.15,
+      "unit": "multiplier",
+      "tag": "assumed",
+      "scope": "owner",
+      "min": 0.0,
+      "max": 1.0,
+      "source": "Lowest combined weather multiplier. recon 10 s4.5"
+    },
+    "pop_when_missing": {
+      "value": 0.5,
+      "unit": "probability",
+      "tag": "assumed",
+      "scope": "owner",
+      "min": 0.0,
+      "max": 1.0,
+      "source": "Used when the text names precipitation but the forecast gives no probability."
+    },
+    "temperature_bands": {
+      "unit": "multiplier on walk-up demand; a band applies when temp_f < upper_f; the last band has no upper bound",
+      "scope": "owner",
+      "min": 0.05,
+      "max": 1.5,
+      "order": ["below_20", "20_31", "32_39", "40_49", "50_59", "60_79", "80_89", "90_94", "95_up"],
+      "rows": {
+        "below_20": {"upper_f": 20, "open": 0.4, "captive": 0.7, "tag": "assumed", "source": "Beyond the studied range. recon 10 s4.5"},
+        "20_31": {"upper_f": 32, "open": 0.55, "captive": 0.8, "tag": "assumed", "source": "Beyond the studied range. recon 10 s4.5"},
+        "32_39": {
+          "upper_f": 40,
+          "open": 0.66,
+          "captive": 0.88,
+          "tag": "derived",
+          "source": "Pedestrian counts +14 % per +5 C (de Montigny et al.), damped because lunch is less discretionary than a walk. recon 10 s4.5"
+        },
+        "40_49": {
+          "upper_f": 50,
+          "open": 0.78,
+          "captive": 0.93,
+          "tag": "derived",
+          "source": "Pedestrian counts +14 % per +5 C (de Montigny et al.), halved because lunch is less discretionary than a walk. recon 10 s4.5"
+        },
+        "50_59": {
+          "upper_f": 60,
+          "open": 0.9,
+          "captive": 0.97,
+          "tag": "derived",
+          "source": "Pedestrian counts +14 % per +5 C (de Montigny et al.), halved because lunch is less discretionary than a walk. recon 10 s4.5"
+        },
+        "60_79": {"upper_f": 80, "open": 1.0, "captive": 1.0, "tag": "assumed", "source": "Reference band."},
+        "80_89": {"upper_f": 90, "open": 0.95, "captive": 1.0, "tag": "assumed", "source": "recon 10 s4.5"},
+        "90_94": {"upper_f": 95, "open": 0.85, "captive": 0.95, "tag": "assumed", "source": "recon 10 s4.5"},
+        "95_up": {
+          "upper_f": null,
+          "open": 0.7,
+          "captive": 0.9,
+          "tag": "assumed",
+          "source": "Hot days reduce restaurant visits (Foursquare 2018). recon 10 s4.5"
+        }
+      }
+    },
+    "precip_classes": {
+      "unit": "multiplier on walk-up demand if it does precipitate; blended with the probability of precipitation",
+      "scope": "owner",
+      "min": 0.05,
+      "max": 1.0,
+      "match_rule": "ASCII-lower-case the short forecast; classes are tested in 'order'; the first class with any substring present wins; no match = dry",
+      "order": ["storm", "heavy_snow", "ice", "heavy_rain", "snow", "light_rain", "rain", "dry"],
+      "rows": {
+        "storm": {
+          "match": ["thunder", "t-storm", "tstorm", "tornado", "hurricane", "tropical storm"],
+          "open": 0.3,
+          "captive": 0.6,
+          "tag": "assumed",
+          "source": "Operators shut down in storms (two local news reports). recon 10 s4.5"
+        },
+        "heavy_snow": {
+          "match": ["heavy snow", "blizzard", "snow squall"],
+          "open": 0.25,
+          "captive": 0.5,
+          "tag": "assumed",
+          "source": "Snow to dry = +23 % pedestrians; 'notable decline' at restaurants. recon 10 s4.5"
+        },
+        "ice": {
+          "match": ["freezing rain", "freezing drizzle", "sleet", "ice pellets", "wintry mix", "ice storm"],
+          "open": 0.25,
+          "captive": 0.5,
+          "tag": "assumed",
+          "source": "Set equal to heavy snow. Not in recon 10."
+        },
+        "heavy_rain": {"match": ["heavy rain", "torrential", "downpour"], "open": 0.3, "captive": 0.6, "tag": "assumed", "source": "recon 10 s4.5"},
+        "snow": {"match": ["snow", "flurries"], "open": 0.5, "captive": 0.75, "tag": "assumed", "source": "recon 10 s4.5 (light snow)"},
+        "light_rain": {
+          "match": ["light rain", "drizzle", "sprinkles", "light showers"],
+          "open": 0.8,
+          "captive": 0.92,
+          "tag": "assumed",
+          "source": "Indoor restaurants -1.6 % (Foursquare 2018); pedestrians -32 % on wet days; a truck has no shelter. recon 10 s4.5"
+        },
+        "rain": {
+          "match": ["rain", "shower"],
+          "open": 0.55,
+          "captive": 0.8,
+          "tag": "assumed",
+          "source": "Operators report about -50 %; restaurants -7 to -11 %. recon 10 s4.5"
+        },
+        "dry": {"match": [], "open": 1.0, "captive": 1.0, "tag": "assumed", "source": "Reference."}
+      }
+    },
+    "wind_bands": {
+      "unit": "multiplier on walk-up demand; a band applies when wind_mph < upper_mph; the last band has no upper bound",
+      "scope": "owner",
+      "min": 0.05,
+      "max": 1.0,
+      "order": ["calm", "windy", "very_windy"],
+      "rows": {
+        "calm": {"upper_mph": 20, "open": 1.0, "captive": 1.0, "tag": "assumed", "source": "Reference band."},
+        "windy": {"upper_mph": 30, "open": 0.85, "captive": 0.95, "tag": "assumed", "source": "Nothing measured for wind. recon 10 s4.5"},
+        "very_windy": {"upper_mph": null, "open": 0.6, "captive": 0.85, "tag": "assumed", "source": "Nothing measured for wind. recon 10 s4.5"}
+      }
+    }
+  },
+  "traffic": {
+    "dc": {
+      "value": [
+        [1.08, 1.07, 1.07, 1.04, 1.02, 1.08, 1.22, 1.4, 1.43, 1.31, 1.25, 1.26, 1.29, 1.3, 1.38, 1.49, 1.56, 1.59, 1.41, 1.26, 1.2, 1.17, 1.14, 1.11],
+        [1.09, 1.08, 1.07, 1.04, 1.02, 1.09, 1.26, 1.49, 1.58, 1.43, 1.3, 1.28, 1.31, 1.32, 1.42, 1.56, 1.66, 1.73, 1.52, 1.31, 1.22, 1.18, 1.15, 1.12],
+        [1.1, 1.09, 1.08, 1.04, 1.02, 1.09, 1.25, 1.48, 1.57, 1.43, 1.31, 1.29, 1.31, 1.33, 1.43, 1.56, 1.66, 1.72, 1.53, 1.32, 1.23, 1.19, 1.16, 1.12],
+        [1.1, 1.08, 1.07, 1.04, 1.02, 1.09, 1.25, 1.47, 1.54, 1.4, 1.31, 1.29, 1.32, 1.34, 1.44, 1.58, 1.68, 1.72, 1.54, 1.33, 1.23, 1.19, 1.17, 1.13],
+        [1.09, 1.08, 1.07, 1.04, 1.02, 1.07, 1.19, 1.35, 1.37, 1.3, 1.29, 1.31, 1.36, 1.41, 1.5, 1.61, 1.64, 1.6, 1.47, 1.33, 1.26, 1.22, 1.2, 1.17],
+        [1.13, 1.1, 1.09, 1.07, 1.05, 1.04, 1.06, 1.1, 1.14, 1.2, 1.26, 1.31, 1.36, 1.39, 1.4, 1.41, 1.41, 1.4, 1.37, 1.29, 1.24, 1.22, 1.2, 1.16],
+        [1.13, 1.1, 1.09, 1.08, 1.06, 1.04, 1.05, 1.06, 1.09, 1.13, 1.18, 1.22, 1.28, 1.32, 1.32, 1.3, 1.29, 1.28, 1.26, 1.22, 1.19, 1.17, 1.13, 1.11]
+      ],
+      "unit": "travel time / free-flow travel time, rows Monday..Sunday, 24 local clock hours each",
+      "tag": "measured",
+      "scope": "fixed",
+      "source": "Washington DC metro area. TomTom Traffic Index 2025, metro area, all roads: 1 + congestion level / 100 for each hour of the week (parsed from the public pages 2026-10-04). Relative to TomTom's free-flow speeds; read TomTom's terms before shipping. Source rows were Sunday-first; rotated to Monday-first here. recon 10 s6"
+    },
+    "us_mean": {
+      "value": [
+        [1.08, 1.07, 1.06, 1.04, 1.03, 1.09, 1.22, 1.4, 1.42, 1.29, 1.25, 1.26, 1.29, 1.3, 1.37, 1.47, 1.53, 1.54, 1.36, 1.22, 1.17, 1.15, 1.12, 1.1],
+        [1.08, 1.07, 1.06, 1.04, 1.03, 1.09, 1.25, 1.48, 1.54, 1.38, 1.29, 1.28, 1.31, 1.32, 1.4, 1.53, 1.64, 1.68, 1.46, 1.27, 1.19, 1.16, 1.13, 1.1],
+        [1.09, 1.08, 1.07, 1.05, 1.03, 1.09, 1.25, 1.48, 1.53, 1.38, 1.29, 1.29, 1.32, 1.33, 1.41, 1.53, 1.64, 1.68, 1.47, 1.28, 1.2, 1.17, 1.14, 1.11],
+        [1.08, 1.07, 1.06, 1.04, 1.03, 1.09, 1.25, 1.46, 1.5, 1.36, 1.29, 1.3, 1.33, 1.34, 1.43, 1.56, 1.66, 1.69, 1.49, 1.3, 1.21, 1.18, 1.15, 1.11],
+        [1.09, 1.07, 1.06, 1.04, 1.03, 1.08, 1.19, 1.33, 1.34, 1.27, 1.28, 1.31, 1.37, 1.4, 1.49, 1.59, 1.61, 1.57, 1.44, 1.31, 1.23, 1.2, 1.18, 1.15],
+        [1.11, 1.09, 1.08, 1.06, 1.04, 1.04, 1.06, 1.09, 1.13, 1.18, 1.24, 1.3, 1.35, 1.37, 1.37, 1.37, 1.36, 1.35, 1.33, 1.26, 1.22, 1.19, 1.18, 1.15],
+        [1.11, 1.09, 1.08, 1.06, 1.05, 1.04, 1.04, 1.06, 1.08, 1.12, 1.17, 1.22, 1.27, 1.29, 1.29, 1.28, 1.27, 1.26, 1.23, 1.2, 1.17, 1.15, 1.12, 1.1]
+      ],
+      "unit": "travel time / free-flow travel time, rows Monday..Sunday, 24 local clock hours each",
+      "tag": "derived",
+      "scope": "fixed",
+      "source": "Mean of 11 US metros (Atlanta, Boston, Chicago, Dallas, Washington DC, Denver, Houston, Los Angeles, Minneapolis, Phoenix, Seattle). TomTom Traffic Index 2025, metro area, all roads: 1 + congestion level / 100 for each hour of the week (parsed from the public pages 2026-10-04). Relative to TomTom's free-flow speeds; read TomTom's terms before shipping. Source rows were Sunday-first; rotated to Monday-first here. recon 10 s6"
+    },
+    "dc_typical": {
+      "value": 1.265,
+      "unit": "travel time under average traffic / free-flow travel time",
+      "tag": "derived",
+      "scope": "fixed",
+      "source": "Mean of the matrix's 168 values, rounded to 3 decimals. Google's traffic-unaware durations are based on 'average time-independent traffic conditions' (Routes API reference, read 2026-10-04), so a Google leg is scaled by factor / this value. That Google's average equals this all-hours mean is an assumption."
+    },
+    "us_mean_typical": {
+      "value": 1.249,
+      "unit": "travel time under average traffic / free-flow travel time",
+      "tag": "derived",
+      "scope": "fixed",
+      "source": "Mean of the matrix's 168 values, rounded to 3 decimals. Google's traffic-unaware durations are based on 'average time-independent traffic conditions' (Routes API reference, read 2026-10-04), so a Google leg is scaled by factor / this value. That Google's average equals this all-hours mean is an assumption."
+    }
+  },
+  "drive_fallback": {
+    "detour_factor": {
+      "value": 1.3,
+      "unit": "road distance / straight-line distance",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Typical road circuity; no source opened. Used only when no routed leg exists."
+    },
+    "local_miles": {"value": 2.0, "unit": "mi", "tag": "assumed", "scope": "fixed", "source": "First part of every leg is driven at the local speed."},
+    "local_mph": {"value": 25.0, "unit": "mph free-flow", "tag": "assumed", "scope": "fixed", "source": "Streets and signals at the two ends of a leg."},
+    "trunk_mph": {
+      "value": 45.0,
+      "unit": "mph free-flow",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Rest of the leg. With 2 local miles a 9-mile leg averages 38 mph, TomTom's 2025 free-flow average for the Washington metro (61.1 km/h, measured)."
+    }
+  },
+  "profile_defaults": {
+    "avg_ticket": {
+      "value": 15.0,
+      "unit": "USD per order",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 1.0,
+      "max": 200.0,
+      "source": "Blueprint default. A bought workday lunch averages $13.39 (ezCater 2025). No truck-specific measurement."
+    },
+    "capacity_orders_per_hour": {
+      "value": 45.0,
+      "unit": "orders per hour",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 400.0,
+      "source": "Blueprint default. Trade rule: 40-60 customers an hour is a successful event."
+    },
+    "paid_crew": {
+      "value": 2,
+      "unit": "people",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 0,
+      "max": 12,
+      "source": "Blueprint default. Census 2018: 2.7 employees per employer truck."
+    },
+    "wage_per_hour": {
+      "value": 18.0,
+      "unit": "USD per hour",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 200.0,
+      "source": "Blueprint default. BLS median for restaurant cooks $17.98 (May 2025)."
+    },
+    "payroll_burden_pct": {
+      "value": 0.1,
+      "unit": "fraction of wages",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 1.0,
+      "source": "Employer payroll taxes; not sourced. Matches the blueprint's $79 for a two-hour gap."
+    },
+    "food_cost_pct": {
+      "value": 0.3,
+      "unit": "fraction of sales",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 0.95,
+      "source": "Analogue: Chipotle FY2025 food, beverage and packaging 29.6 % (measured); trade 28-35 %."
+    },
+    "packaging_per_order": {
+      "value": 0.5,
+      "unit": "USD per order",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 20.0,
+      "source": "Trade (Canada): $0.30-$0.70. Set to 0 if the food-cost figure already includes paper goods."
+    },
+    "card_fee_pct": {
+      "value": 0.026,
+      "unit": "fraction of card sales",
+      "tag": "measured",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 0.2,
+      "source": "Square in-person rate, Free plan, 2.6 % + 15 cents (price list; summariser-read)."
+    },
+    "card_fee_fixed": {
+      "value": 0.15,
+      "unit": "USD per card order",
+      "tag": "measured",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 5.0,
+      "source": "Square in-person rate, Free plan."
+    },
+    "card_share": {
+      "value": 0.85,
+      "unit": "fraction of sales paid by card",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 1.0,
+      "source": "Not sourced."
+    },
+    "tips_include": {
+      "value": false,
+      "unit": "boolean",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "source": "Tips are left out of take-home unless the owner opts in."
+    },
+    "tips_pct_of_card_sales": {
+      "value": 0.1,
+      "unit": "fraction of card sales",
+      "tag": "derived",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 0.5,
+      "source": "Weak: 66.6 % of card transactions tipped x about 16 % quick-service average (Toast, all venue types)."
+    },
+    "mpg": {
+      "value": 9.0,
+      "unit": "miles per gallon",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 1.0,
+      "max": 60.0,
+      "source": "Blueprint default. No source opened."
+    },
+    "fuel_type": {
+      "value": "gasoline",
+      "unit": "gasoline | diesel",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "source": "Blueprint example uses regular gasoline."
+    },
+    "generator_gal_per_hour": {
+      "value": 0.6,
+      "unit": "gallons per hour",
+      "tag": "measured",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 5.0,
+      "source": "Cummins Onan QG 7000i at half load (spec sheet); 0.9 at full load. Set to 0 on shore power."
+    },
+    "prep_minutes": {"value": 45, "unit": "minutes", "tag": "assumed", "scope": "profile_default", "min": 0, "max": 600, "source": "Blueprint default."},
+    "setup_minutes": {"value": 30, "unit": "minutes", "tag": "assumed", "scope": "profile_default", "min": 0, "max": 240, "source": "Blueprint default."},
+    "teardown_minutes": {"value": 20, "unit": "minutes", "tag": "assumed", "scope": "profile_default", "min": 0, "max": 240, "source": "Blueprint default."},
+    "closeout_minutes": {"value": 30, "unit": "minutes", "tag": "assumed", "scope": "profile_default", "min": 0, "max": 600, "source": "Blueprint default."},
+    "fixed_cost_per_service_day": {
+      "value": 0.0,
+      "unit": "USD per service day",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 5000.0,
+      "source": "Commissary, insurance and other fixed costs spread over service days. Trade: commissary $300-$1,500 a month. Left at 0 until the owner enters it."
+    },
+    "daypart_fit": {
+      "unit": "multiplier on meal intent in that daypart",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 0.0,
+      "max": 1.0,
+      "breakfast": 0.3,
+      "lunch": 1.0,
+      "dinner": 1.0,
+      "late": 0.8,
+      "source": "A lunch-and-dinner menu is not credited with the coffee and breakfast purchases in the curves. Assumed."
+    },
+    "routing_profile": {
+      "value": "car",
+      "unit": "car | truck",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "source": "Google routes as a car (travel mode DRIVE). 'truck' is kept for a later truck-aware source; the model treats both alike and applies truck_time_factor."
+    },
+    "truck_time_factor": {
+      "value": 1.1,
+      "unit": "multiplier on car drive time",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 0.5,
+      "max": 3.0,
+      "source": "A loaded step van accelerates and corners slower than the cars the data comes from. recon 10 s4.6"
+    },
+    "scout_drive_minutes_limit": {
+      "value": 45,
+      "unit": "minutes",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "min": 5,
+      "max": 60,
+      "source": "Default reach for scouting, in drive minutes from the base."
+    }
+  },
+  "money": {
+    "fee_warn_share": {
+      "value": 0.1,
+      "unit": "fraction of expected sales",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Trade rule: try not to pay more than 10 % of sales in fees. recon 10 s3.3 #3.18"
+    },
+    "fuel_price_fallback": {
+      "unit": "USD per gallon",
+      "tag": "measured",
+      "scope": "fixed",
+      "as_of": "2026-09-28",
+      "gasoline": {"R1Y": 4.411, "R1Z": 4.195, "NUS": 4.465},
+      "diesel": {"R1Y": 6.531, "R1Z": 5.953, "NUS": 6.382},
+      "source": "EIA weekly retail prices, regular gasoline (EPMR) and No 2 diesel (EPD2D), period 2026-09-28 (recon 09 s5). Used only when there is no owner price and no stored EIA value."
+    }
+  },
+  "events": {
+    "attendance_haircut": {
+      "value": 0.6,
+      "unit": "multiplier on the organiser's forecast",
+      "tag": "assumed",
+      "scope": "owner",
+      "min": 0.05,
+      "max": 1.0,
+      "source": "Trade (SoCal MFVA): festivals have delivered less than a quarter of projected attendance. recon 10 s4.3"
+    },
+    "p_buy": {
+      "unit": "share of attendees who buy a meal from some vendor",
+      "tag": "assumed",
+      "scope": "owner",
+      "min": 0.0,
+      "max": 1.0,
+      "general": 0.35,
+      "food_focused": 0.75,
+      "evening_show": 0.28,
+      "incidental": 0.15,
+      "source": "UK trade guideline (NCASS): local fetes and carnivals 35-45 %, all-day outdoor music 75-85 %, fireworks and music evenings 25-30 %; 'incidental' assumed. recon 10 s3.3 #3.6"
+    },
+    "min_attendees_per_vendor": {
+      "value": 200.0,
+      "unit": "expected attendees per food vendor",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Trade rule: 200-300 attendees per truck when everyone eats, double otherwise. Below this the stop gets a warning. recon 10 s3.3"
+    },
+    "suggested_fee_pct": {
+      "value": 0.1,
+      "unit": "fraction of sales",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Prefill only. Trucks expect 5-10 %; 10-25 % is seen. recon 10 s4.4"
+    },
+    "suggested_fee_min": {"value": 75.0, "unit": "USD", "tag": "assumed", "scope": "fixed", "source": "Prefill only. recon 10 s4.4"}
+  },
+  "uncertainty": {
+    "sd_truck": {
+      "value": 0.3,
+      "unit": "natural-log units",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Uncertainty about this truck's overall level before any log. sd_truck, sd_spot and sd_day combine to 0.47 (recon 10 prior_log_sd). The blueprint's ranges (66: 40-103; 39: 23-64) have a log half-width of about 0.47; using 0.47 as the standard deviation makes ranges before any log deliberately wider than the blueprint's. recon 10 s4.1"
+    },
+    "sd_spot": {
+      "value": 0.25,
+      "unit": "natural-log units",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Uncertainty about one spot relative to the truck's level."
+    },
+    "sd_day": {
+      "value": 0.26,
+      "unit": "natural-log units",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Day-to-day variation that no amount of logging removes; replaced by the logged residual spread as logs accumulate."
+    },
+    "sd_weak": {
+      "value": 0.4,
+      "unit": "natural-log units",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Extra spread when weak-seed segments (campus, hospital, transit) supply all of the demand; scaled by their share."
+    },
+    "sd_default_size": {
+      "value": 0.6,
+      "unit": "natural-log units",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Extra spread when a host size is a place-type default (taproom default 40, plausible 15-150); scaled by the host's share of demand."
+    },
+    "sd_event": {"value": 0.5, "unit": "natural-log units", "tag": "assumed", "scope": "fixed", "source": "Extra spread for attendance-based event estimates."},
+    "count_dispersion": {
+      "value": 2.0,
+      "unit": "variance / mean",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Counting noise: orders in a window scatter more than a Poisson count."
+    },
+    "resid_prior_weight": {"value": 6.0, "unit": "services", "tag": "assumed", "scope": "fixed", "source": "Weight of sd_day against the logged residual spread."},
+    "label_good_below": {"value": 0.3, "unit": "natural-log units", "tag": "assumed", "scope": "fixed", "source": "Model spread below this = 'good'."},
+    "label_fair_below": {"value": 0.4, "unit": "natural-log units", "tag": "assumed", "scope": "fixed", "source": "Below this = 'fair'."},
+    "label_rough_below": {"value": 0.55, "unit": "natural-log units", "tag": "assumed", "scope": "fixed", "source": "Below this = 'rough'; at or above = 'very_rough'."}
+  },
+  "calibration": {
+    "k_truck": {
+      "value": 4.0,
+      "unit": "services",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Prior weight for the truck factor: the logs carry n/(n+4), 71 % after ten services. recon 10 s4.1"
+    },
+    "k_spot": {"value": 3.0, "unit": "services", "tag": "assumed", "scope": "fixed", "source": "Prior weight for a spot factor."},
+    "half_life_days": {"value": 120.0, "unit": "days", "tag": "assumed", "scope": "fixed", "source": "A service this old counts half."},
+    "ratio_clamp": {"value": 4.0, "unit": "ratio", "tag": "assumed", "scope": "fixed", "source": "Actual / predicted is limited to 1/4 .. 4 before taking logs."},
+    "min_predicted": {"value": 3.0, "unit": "orders", "tag": "assumed", "scope": "fixed", "source": "Services predicted below this are not used."},
+    "min_actual": {"value": 0.5, "unit": "orders", "tag": "assumed", "scope": "fixed", "source": "Zero orders are counted as half an order so the log exists."},
+    "min_resid_n": {"value": 3, "unit": "services", "tag": "assumed", "scope": "fixed", "source": "Residual spread is reported from this many unsold-out services."}
+  },
+  "timeline": {
+    "long_gap_minutes": {"value": 90, "unit": "minutes", "tag": "assumed", "scope": "fixed", "source": "A paid gap at least this long raises a warning."},
+    "long_day_minutes": {"value": 720, "unit": "minutes", "tag": "assumed", "scope": "fixed", "source": "A day longer than this raises a warning."},
+    "early_start_minute": {"value": 300, "unit": "minute of day", "tag": "assumed", "scope": "fixed", "source": "Prep starting before 05:00 raises a warning."}
+  },
+  "suggest": {
+    "service_minutes": {
+      "value": 180,
+      "unit": "minutes",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Length of a suggested service window. Trade: office programmes serve lunch for 3 hours."
+    },
+    "earliest_open_minute": {"value": 360, "unit": "minute of day", "tag": "assumed", "scope": "fixed", "source": "No suggested window opens before 06:00."},
+    "latest_close_minute": {"value": 1440, "unit": "minute of day", "tag": "assumed", "scope": "fixed", "source": "No suggested window closes after midnight."},
+    "windows_per_spot": {"value": 2, "unit": "windows", "tag": "assumed", "scope": "fixed", "source": "Candidate windows per spot per day."},
+    "max_candidates": {"value": 24, "unit": "candidates", "tag": "assumed", "scope": "fixed", "source": "Candidates kept per day before combining."},
+    "max_stops_per_day": {"value": 2, "unit": "stops", "tag": "assumed", "scope": "fixed", "source": "Default; a request may ask for 1 to 3."},
+    "max_day_minutes": {"value": 840, "unit": "minutes", "tag": "assumed", "scope": "fixed", "source": "Days longer than 14 hours are not suggested."},
+    "min_stop_orders": {"value": 5.0, "unit": "orders", "tag": "assumed", "scope": "fixed", "source": "Windows expected below this are not candidates."},
+    "day_results": {"value": 3, "unit": "plans", "tag": "assumed", "scope": "fixed", "source": "Plans returned by suggest_day."},
+    "week_day_options": {"value": 5, "unit": "plans", "tag": "assumed", "scope": "fixed", "source": "Day plans considered per day by suggest_week."},
+    "max_days_per_week": {"value": 5, "unit": "days", "tag": "assumed", "scope": "fixed", "source": "Default; a request may ask for 1 to 7."},
+    "max_visits_per_spot_per_week": {
+      "value": 2,
+      "unit": "visits",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Default weekly frequency limit per spot; a request may ask for 1 to 7."
+    },
+    "min_day_take_home": {"value": 0.0, "unit": "USD", "tag": "assumed", "scope": "fixed", "source": "A day is suggested only if its expected take-home is above this."}
+  },
+  "scout": {
+    "window_minutes": {
+      "value": 180,
+      "unit": "minutes",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Scouting compares places on their best window of this length in a typical week."
+    },
+    "max_results": {"value": 50, "unit": "places", "tag": "assumed", "scope": "fixed", "source": "Length of the ranked list."}
+  },
+  "map": {
+    "opportunity_hi": {
+      "value": 45.0,
+      "unit": "orders per hour",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Top of the opportunity colour scale; the same for every hour of the week."
+    },
+    "people_hi": {
+      "value": 20000.0,
+      "unit": "people present, distance-weighted",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Top of the people-nearby colour scale."
+    },
+    "competition_hi": {
+      "value": 100.0,
+      "unit": "rival weight",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Top of the competition colour scale; the densest cells of the Washington region reach about 90 by day and 110 in the evening (prototype pack, 03_DATA.md)."
+    }
+  }
+}
