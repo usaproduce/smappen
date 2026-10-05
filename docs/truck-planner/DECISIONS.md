@@ -7,6 +7,38 @@ Written 2026-10-04 from a ten-part read of the codebase and a same-day check of 
 
 ---
 
+## 0. Owner instruction, 2026-10-04: Google Maps only
+
+> **"Stick with Google Maps only — the project already has the Google Maps API hooked up."**
+> This section supersedes anything else in this file, in any prompt, or in any other document that mentions
+> OpenRouteService or another map provider.
+
+Truck Planner uses **one maps platform: the Google Maps Platform that smappen already has wired in**
+(`VITE_GOOGLE_MAPS_API_KEY` in the browser, `GOOGLE_API_KEY` on the server). Concretely:
+
+| Need | Provider | Notes |
+|---|---|---|
+| The map itself, pins, the hex layer's host | Google Maps JavaScript API (existing loader, raster map, no map id) | Our hex layer is our own canvas inside a Google `OverlayView`. No Leaflet, Mapbox, MapLibre, deck.gl or other map library |
+| Address search and geocoding | Google (existing `GooglePlaceAutocomplete` widget; existing `/api/geocode`) | Unchanged |
+| **Drive times and distances** | **Google Routes API** `computeRouteMatrix` (server-side, `GOOGLE_API_KEY`), falling back to the legacy Distance Matrix API if Routes is not enabled on the key, then to a labelled straight-line estimate | **OpenRouteService is not used anywhere in Truck Planner.** Version 1 asks for traffic-unaware durations and applies our own time-of-day factors, so results are deterministic; Google's toll estimate is taken when present and the owner can overwrite it |
+| Scout: phone, website, "see it" | Whatever the place row already carries, plus a free **"Open in Google Maps"** link on every candidate, plus an on-demand **Google Places (New) Text Search** contact lookup when the owner asks for it | The Google place id is stored on the lead; looked-up details are cached for at most 30 days |
+| "Open in Maps" for a spot or a day's route | Google Maps URLs | Free deep links, no API call |
+
+Rules that follow:
+
+- **No new map or routing provider, SDK or key.** External hosts Truck Planner may call at runtime:
+  `routes.googleapis.com`, `maps.googleapis.com`, `places.googleapis.com`, `api.weather.gov`, `api.eia.gov`.
+- **Google content is not kept forever.** Route durations/distances and place details fetched from Google are
+  cached for at most **30 days** (place ids may be kept indefinitely). The leg cache therefore has a
+  `fetched_at` and is refreshed lazily; the owner's own corrections are the owner's data and are permanent.
+- Every Google call is metered the way the app already does it (`api_cost_events`, a rate-limit profile), is
+  never plan-gated, and never puts a URL that carries the key into an error message or a log line.
+- **The one thing Google cannot supply is the metro-wide list of every food outlet and venue** that the heat map
+  and the share model need (its Places API is per-search, billed per call, capped at 20 results, and its terms
+  forbid storing the results). That list comes from a free, public **OpenStreetMap data download** loaded once
+  into MySQL — a dataset like the Census files, not a map API, with no key and no runtime call. It is isolated
+  behind the pipeline so a different source can replace it later.
+
 ## 1. What we were given, and what that changes
 
 - Only the blueprint README exists. The reference implementation, golden cases, PHP/TypeScript ports, ETL
@@ -68,7 +100,7 @@ Truck Planner code never lives in `src/PrivateData`, `src/MarketData` or `src/Sh
 | Rule | Enforcement |
 |---|---|
 | **One truck is enough** | No feature reads another organization's rows. No `navigator.geolocation`, `watchPosition` or Permissions API call anywhere under the truck frontend paths or their import closure — a Vitest source test fails the build if one appears. The base and every spot are typed, picked from address search, or clicked on the map |
-| **No AI at runtime** | A PHPUnit source test and a Vitest source test scan Truck Planner code (comments stripped, paths normalised) for LLM/ML hosts, SDKs, key names and the first-party classes that reach an LLM today (`AiScoringController`, `OpsController`, `MenuEngineeringService`, `MenuEngineeringController`, `SampleDataService`, job type `pos.sync`, `ml-sidecar`), and for the endpoints `/ai-score`, `/ai-rankings`, `/dashboard/briefing`, `/recommendations/run`. External hosts are an allow-list: `api.openrouteservice.org`, `api.weather.gov`, `api.eia.gov`. No `random_int`, `mt_rand`, `shuffle`, `Math.random` or wall-clock reads inside the model |
+| **No AI at runtime** | A PHPUnit source test and a Vitest source test scan Truck Planner code (comments stripped, paths normalised) for LLM/ML hosts, SDKs, key names and the first-party classes that reach an LLM today (`AiScoringController`, `OpsController`, `MenuEngineeringService`, `MenuEngineeringController`, `SampleDataService`, job type `pos.sync`, `ml-sidecar`), and for the endpoints `/ai-score`, `/ai-rankings`, `/dashboard/briefing`, `/recommendations/run`. External hosts are an allow-list: `routes.googleapis.com`, `maps.googleapis.com`, `places.googleapis.com`, `api.weather.gov`, `api.eia.gov`. No `random_int`, `mt_rand`, `shuffle`, `Math.random` or wall-clock reads inside the model |
 | **Honest numbers** | Every estimate the UI shows is `value (low to high)` with a confidence label and an openable breakdown; a single shared component renders it, and model outputs carry `low`/`high`/`confidence` in their type so a bare number cannot be passed by accident. Logged results outrank the model through calibration. A wording test bans phrases that assert legality ("legal", "permitted", "allowed to park", "approved"); every spot and scout screen carries the standing line that permission and local rules are the owner's to check |
 
 ## 6. Domain model (provisional field lists; `02_MODEL.md` and `04_BACKEND.md` finalise them)
@@ -140,10 +172,12 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
 - **Jobs**: LEHD LODES 8.4 WAC, all jobs (`JT00`), data year 2023, CNS01–20 grouped into the seven worker
   segments. Payroll-address artefacts (86 blocks hold 18 % of metro jobs) go through a versioned corrections file
   plus an automatic cap, and every capped block is listed for review.
-- **Places**: one dated OpenStreetMap snapshot per region from Geofabrik state extracts, read by an in-repo
-  zero-dependency PBF reader. Never Overpass at request time, never Google Places, never the vendor tables.
-  OSM-derived rows stay in their own table with `osm_type`/`osm_id`/snapshot date. Attribution
-  "© OpenStreetMap contributors" appears on the map, the Scout list, the day sheet and the Data page.
+- **Places** (the metro-wide dataset behind the heat map, the share model and Scout's candidate list): one dated
+  OpenStreetMap snapshot per region from Geofabrik state extracts, read by an in-repo zero-dependency PBF reader.
+  Never Overpass at request time, never a bulk Google Places sweep, never the vendor tables. OSM-derived rows stay
+  in their own table with `osm_type`/`osm_id`/snapshot date. Attribution "© OpenStreetMap contributors" appears
+  wherever that data is listed (Scout, the spot card's nearby-outlets list, the day sheet, the Data page).
+  Google Places is used only on demand, for one candidate at a time, to look up phone and website (section 0).
 - **Map cells**: H3 **resolution 9** (≈ 350 m across). H3 ids travel as 15-character strings. PHP never does H3
   arithmetic; the pipeline (Node) and the browser (`h3-js`) do.
 - **Pipeline**: `tools/truck-etl` (Node) downloads, parses and writes `points`, `places`, candidate `cells`, a job
@@ -159,13 +193,24 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
 - Tenant key is `organization_id`; every query carries it; another tenant's id answers **404**. Never return 401
   for anything but "not authenticated" (the SPA logs out on any 401).
 - Owner tables: `tp_trucks`, `tp_spots`, `tp_plans`, `tp_plan_stops`, `tp_service_logs`, `tp_drive_legs`
-  (permanent, shared), `tp_drive_overrides`, `tp_scout_leads`. No foreign keys; deletes are explicit, child-first,
+  (shared 30-day cache of Google legs), `tp_drive_overrides` (the owner's corrections and tolls, permanent),
+  `tp_scout_leads`. No foreign keys; deletes are explicit, child-first,
   in a transaction. No MySQL 8 reserved words as identifiers (`rank`, `window`, `groups`, `lead`, `row`, …).
 - **External services**, each behind a small client class with a short timeout, a labelled fallback and no
   exception text that could carry a key:
-  - OpenRouteService `/v2/matrix` — existing `ORS_API_KEY`; legs cached forever per directed pair; owner
-    corrections and tolls on top; time-of-day factors from our own seed table (not `TrafficService`); a
-    straight-line fallback that is labelled as such. The existing `DriveTimeMatrixService` is not reused.
+  - **Google Routes API** `POST https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix` — existing
+    server `GOOGLE_API_KEY` in the `X-Goog-Api-Key` header, an explicit `X-Goog-FieldMask`, travel mode `DRIVE`,
+    routing preference `TRAFFIC_UNAWARE`; if the key answers "API not enabled / permission denied", the legacy
+    Distance Matrix API (`maps.googleapis.com/maps/api/distancematrix/json`) is tried once, and if that is also
+    refused the service returns a **straight-line estimate labelled as such** and remembers the refusal for an
+    hour so it does not hammer Google. Legs are cached per directed pair of rounded coordinates for **30 days**
+    (`tp_drive_legs.fetched_at`); owner corrections and tolls sit on top and never expire; time-of-day factors
+    come from our own seed table (not `TrafficService`). Google's toll estimate, when returned, pre-fills the toll.
+    **OpenRouteService and the existing `DriveTimeMatrixService` are not used.**
+  - **Google Places (New) Text Search** — on demand only, one Scout candidate at a time ("Look up phone and
+    website"): `textQuery` = the place name, a 500 m location bias around it, field mask limited to id, display
+    name, formatted address, national phone number, website URI and Google Maps URI. The place id is stored on
+    the lead; the looked-up fields are cached for 30 days. Rate-limited per user.
   - `api.weather.gov` hourly forecast — `User-Agent` with a contact from `TP_CONTACT_EMAIL` (falls back to
     `MAIL_FROM`); cached per grid point until it expires.
   - EIA weekly retail fuel price — optional `EIA_API_KEY`; the PADD sub-district follows the base state
@@ -174,7 +219,7 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
 - API surface (all under `/api/truck`, all behind the existing auth middleware): `bootstrap`, `profile`,
   `assumptions`, `regions` + cell pack, `simulate`, `spots`, `day-context` (holidays, weather, fuel),
   `drive-times` (+ overrides), `plans` (+ evaluate), `suggest/day`, `suggest/week`, `services`, `calibration`,
-  `accuracy`, `scout` (+ lead status, save as spot), `export`, `data` (delete), `sources`.
+  `accuracy`, `scout` (+ lead status, contact lookup, save as spot), `export`, `data` (delete), `sources`.
 - New endpoints are not plan-gated and never return `_meta.estimated_cost_usd`.
 - Legality: `PermitsService` and any `permit*` wording stay out of Truck Planner.
 
@@ -212,7 +257,9 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
 Sales import (Square, Clover, CSV) writing to `tp_service_logs` through its `source`/`external_key` columns;
 opt-in check-ins; anything needing other trucks; per-daypart calibration; real opening hours per outlet in the
 share model; more regions; a reduced navigation for truck-only accounts; "suppliers near your base" from the
-existing vendor network.
+existing vendor network; **Google traffic-aware drive times** for a planned departure (Routes API
+`TRAFFIC_AWARE` with a departure time) in place of the seed time-of-day factors; a Google Places sweep as an
+alternative source for the metro-wide places table, if the owner prefers to pay Google for it.
 
 ## 13. Defects found in existing code while reading (deliberately not fixed here)
 
@@ -230,7 +277,10 @@ existing vendor network.
 ## 14. Needs the owner
 
 - A go-ahead before anything touches production (migrations, the region load, the deploy).
+- **Routes API enabled** on the Google Cloud project that owns the existing server key (Places API (New) and
+  Geocoding already are). Until it is, drive times show as labelled straight-line estimates.
 - `EIA_API_KEY` (free) if weekly fuel prices should update themselves; a contact address for `TP_CONTACT_EMAIL`.
-- Confirmation that OpenStreetMap's ODbL terms (attribution; share-alike on the derived places table once there
-  are customers) are acceptable.
+- Confirmation that using a free OpenStreetMap **data download** for the metro-wide venue list is acceptable
+  (ODbL: an attribution line where that data is listed; share-alike on the derived places table once there are
+  customers). It is the only non-Google map-related source, and only because Google has no bulk equivalent.
 - The original blueprint bundle, if it exists, to reconcile the model against.
