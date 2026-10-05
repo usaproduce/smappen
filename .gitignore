@@ -15,3 +15,6 @@ public/uploads/*
 .idea/
 .vscode/
 *.log
+.phpunit.cache/
+storage/truck/
+tools/truck-etl/node_modules/
