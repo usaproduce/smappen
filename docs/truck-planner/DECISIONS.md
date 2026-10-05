@@ -127,7 +127,8 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
 - **Service log** — spot, date, open/close, orders, optional sales, "sold out / at capacity" flag (a censored
   observation), notes, source + external key (so a later sales import can write here), and the prediction
   snapshot it will be judged against.
-- **Drive leg** (permanent cache) and **owner correction** (minutes override, toll dollars) per directed leg.
+- **Drive leg** (a shared cache of Google results kept at most 30 days) and **owner correction** (minutes
+  override, toll dollars; the owner's own data, kept permanently) per directed leg.
 - **Scout lead** — place, status (new / shortlisted / contacted / booked / declined / hidden), notes.
 
 ## 7. Model decisions (summary — the reference implementation is the definition)
@@ -308,6 +309,12 @@ alternative source for the metro-wide places table, if the owner prefers to pay 
 - **Routes API enabled** on the Google Cloud project that owns the existing server key (Places API (New) and
   Geocoding already are). Until it is, drive times show as labelled straight-line estimates.
 - `EIA_API_KEY` (free) if weekly fuel prices should update themselves; a contact address for `TP_CONTACT_EMAIL`.
+- **A release gate on the time-of-day traffic table.** The seed factors were derived from TomTom's published 2025
+  Traffic Index pages. TomTom's terms must be read and the use recorded here before the first production deploy;
+  otherwise the table is replaced by neutral values (1.0) in a new seeds revision and drive times fall back to
+  Google's average-traffic durations.
+- Google Cloud quota caps for the Routes API on the server key (the in-app budgets only limit what this server
+  asks for), and whether sharing the existing server key with the rest of smappen is acceptable.
 - Confirmation that using a free OpenStreetMap **data download** for the metro-wide venue list is acceptable
   (ODbL: an attribution line where that data is listed; share-alike on the derived places table once there are
   customers). It is the only non-Google map-related source, and only because Google has no bulk equivalent.

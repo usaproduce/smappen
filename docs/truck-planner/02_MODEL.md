@@ -1,12 +1,12 @@
 # Truck Planner - model specification (`tps-0.1.0`)
 
-**Status.** This document is the definition of the math until `docs/truck-planner/reference/truck_planner_reference.py` is written from it; from then on the Python reference is the definition and this text must be kept equal to it. Seeds live in `docs/truck-planner/reference/tp_seeds.json` (revision 1, generated together with the tables below). [`DECISIONS.md`](DECISIONS.md) is binding, including its section 0 (Google Maps only: drive legs come from Google or from the straight-line fallback); section 9 lists where this document refines it.
+**Status.** The Python reference `docs/truck-planner/reference/truck_planner_reference.py` is the definition of the math; this document explains it and must be kept equal to it. The two change together, and the golden cases (section 8) are regenerated and committed in the same change (`docs/truck-planner/reference/README.md`). Seeds live in `docs/truck-planner/reference/tp_seeds.json` (revision 1, generated together with the tables below). [`DECISIONS.md`](DECISIONS.md) is binding, including its section 0 (Google Maps only: drive legs come from Google or from the straight-line fallback); section 9 lists where this document refines it.
 
 **Who implements what.** Every function in section 4 exists in three runtimes: Python (reference and golden-case generator), PHP (`App\TruckPlanner\Model`, no I/O) and TypeScript (`frontend/src/utils/truck/`). All three run the same golden cases (section 8) and must agree to the tolerance in 1.4. The browser never calls `rivals_at_origin`, `capture_at_point` or `host_link_point` in production (it receives vectors), but it carries them so one golden file serves all runtimes.
 
 **Nothing here is measured from food-truck sales.** Tags on seeds are `measured`, `derived`, `assumed`, `tuned` (2.1). Two constants are tuned (`kernel.outside_option_a0`, `host.captive_share`) and one curve is tuned with them (`segments.v_nightlife.intent`); they must never be shown to the owner as findings.
 
-Every table of seed values and every worked number in this document was produced by running the formulas written here against `tp_seeds.json` (scratch scripts, 2026-10-05). As a portability check, throwaway JavaScript and PHP implementations were written from this text alone for the core functions (dates, context, curves, geometry, capture, host links, host, weather, hourly and window orders, ranges, money, legs, timeline, calibration, events, best windows, the scouting strip): 2,150 values matched the Python numbers, PHP bit for bit under three time zones and JavaScript to a relative 2.9e-16. If a worked number and a formula ever disagree, the formula wins and the number is a defect to report.
+The worked numbers of sections 1.4 and 4 and the anchors of 8.3 are asserted by the self-test of the reference (`python truck_planner_reference.py --self-test`, more than a thousand "documented values"): a number printed here that the reference does not reproduce is a failure of that test. The seed tables of 2.3 were generated from `tp_seeds.json`. As a portability check made before the reference existed, throwaway JavaScript and PHP implementations were written from this text alone for the core functions (dates, context, curves, geometry, capture, host links, host, weather, hourly and window orders, ranges, money, legs, timeline, calibration, events, best windows, the scouting strip): 2,150 values matched the Python numbers, PHP bit for bit under three time zones and JavaScript to a relative 2.9e-16. If a worked number and a formula ever disagree, the formula wins and the number is a defect to report.
 
 ---
 
@@ -175,7 +175,8 @@ Examples: `seed(A, "kernel.outside_option_a0")` = 1.6; `seed(A, "segments.w_offi
 ```
 validate_overrides(seeds, overrides) -> list of { path, error }
     for (path, value) in overrides, ascending path:
-        1. walk the path; a missing key                                  -> "unknown_path"
+        1. walk the path; a missing key, or a key under something that
+           is not an object (an array, a number, a string)                -> "unknown_path"
         2. the last key is one of seeds.vocabulary.structural_keys         -> "not_a_seed"
         3. scope inherited at the node is not "owner"                      -> "not_overridable"
         4. target = node.value if node is an object with "value" else node
@@ -186,13 +187,15 @@ validate_overrides(seeds, overrides) -> list of { path, error }
         7. a string must be one of the inherited "allowed" list           -> "not_allowed"
 ```
 
+The result lists one entry per offending path, in ascending path order, with the first error the steps find for it; an empty list means the map is valid. "Inherited" is the rule of 2.1: the value of `scope`, `min`, `max` or `allowed` on the node itself if it is an object that defines it, otherwise on the nearest enclosing object that does; a path with no `scope` anywhere above it is `not_overridable`, and a bound that nothing defines does not apply. In step 5 an integer is a number (`0` is accepted where the seed is `0.15`) and a boolean is not.
+
 Examples against revision 1: `{"host.captive_share": 0.6}` is valid; `{"host.captive_share": 1.5}` -> `out_of_bounds`; `{"host.captive_share.value": 0.5}` and `{"weather.temperature_bands.rows.50_59.upper_f": 61}` -> `not_a_seed`; `{"kernel.outside_option_a0": 2.0}` and `{"profile_defaults.avg_ticket": 12.0}` -> `not_overridable`; `{"segments.w_office.presence.weekday": [23 numbers]}` -> `wrong_shape`; `{"segments.w_office.presence": {...}}` -> `not_a_leaf`; `{"segments.res.holiday_day_type.major": "monday"}` -> `not_allowed`; `{"no.such.path": 1}` -> `unknown_path`.
 
 Invalid overrides are rejected when saved (never clamped); the model functions assume a validated `Assumptions`. Paths that are overridable in revision 1: `segments.<s>.presence.<day_type>`, `segments.<s>.intent.<day_type>`, `segments.<s>.dow_factor`, `segments.<s>.holiday_day_type.major|minor`, `host.captive_share`, `host.shared_kitchen_share`, `host.onsite_kitchen_weight`, `weather.floor`, `weather.pop_when_missing`, `weather.<table>.rows.<id>.open|captive`, `events.attendance_haircut`, `events.p_buy.<type>`.
 
 ### 2.3 Seed values
 
-The JSON file is the source of truth and also holds the `source` note of every entry and all curve arrays; the tables below show every scalar and a checksum row per curve. To change a seed, edit the file, raise `seeds_revision`, regenerate the golden cases and update these tables (the reference implementation should be able to print them).
+The JSON file is the source of truth and also holds the `source` note of every entry and all curve arrays; the tables below show every scalar and a checksum row per curve. To change a seed: edit the file, raise `seeds_revision`, run `reference/generate_seed_copies.py` (the PHP and TypeScript copies), regenerate the golden cases and update these tables, all in one change. The self-test of the reference asserts the vocabulary, the constants, the rules for the curve arrays stated below, the traffic check values and the typical values; it does not read this document, so the tables here are kept by hand.
 
 **Kernel** (all `build`)
 
@@ -523,7 +526,7 @@ DayContext       = { date: string?, typical: bool, dow: int, eff_dow: int,
                      treat_as: null|"normal"|"holiday"|"mon"|"tue"|"wed"|"thu"|"fri"|"sat"|"sun",
                      day_type: [string x16], dow_factor: [number x16], traffic_dow: int,
                      forecast: [HourForecast? x24]?, fuel_price_per_gal: number?, fuel_price_source: "owner"|"eia"|"seed"|null }
-                   # the two fuel fields are null in typical contexts and wherever the caller passes null; day_plan requires fuel_price_per_gal
+                   # typical_context returns the two fuel fields null (a caller may fill them in, 4.12); day_plan requires fuel_price_per_gal
 
 CalibrationState = { model_version: string, seeds_revision: int, as_of: string,
                      truck_factor: number, truck_log_factor: number, bias_log: number, truck_n: int, truck_weight: number,
@@ -630,7 +633,7 @@ Helpers on `Estimate` used below:
 est_fixed(x)            = { value: x, low: x, high: x, confidence: "fixed" }
 est_levels(v, l, h, c)  = { value: v, low: min(v, l, h), high: max(v, l, h), confidence: c }
 weakest(labels)         = the label earliest in [very_rough, rough, fair, good, fixed]; "fixed" for an empty list
-est_sum(list)           = { value: sum of values, low: sum of lows, high: sum of highs (each in list order), confidence: weakest(labels) }
+est_sum(estimates)      = { value: sum of values, low: sum of lows, high: sum of highs (each in list order), confidence: weakest(their labels) }
 ```
 
 `est_sum` is how lows and highs combine across stops and days: lows add to lows and highs to highs. This treats stops as moving together, so a day total is deliberately at least as wide as an 80 % interval.
@@ -686,26 +689,26 @@ add_days(date, n: int) -> date  = format_date(civil_from_days(days_from_civil(pa
 **Federal holidays.**
 
 ```
-nth_weekday(year, month, dow, n) -> date
+nth_weekday(year, month, dow, n) -> date                 # the n-th (1-based) given weekday of a month
     first = days_from_civil(year, month, 1)
-    return civil_from_days(first + mod_floor(dow - mod_floor(first + 3, 7), 7) + 7 * (n - 1))
+    return format_date(civil_from_days(first + mod_floor(dow - mod_floor(first + 3, 7), 7) + 7 * (n - 1)))
 last_weekday(year, month, dow) -> date
     next_first = days_from_civil(year + 1, 1, 1) if month == 12 else days_from_civil(year, month + 1, 1)
     last = next_first - 1
-    return civil_from_days(last - mod_floor(mod_floor(last + 3, 7) - dow, 7))
+    return format_date(civil_from_days(last - mod_floor(mod_floor(last + 3, 7) - dow, 7)))
 
 federal_holidays(year: int, flags: { inauguration_day: bool }) -> [Holiday]
     for each rule in seeds.holidays.rules, in file order (position = rule order 1..12):
         skip if rule.from_year exists and year < rule.from_year
         skip if rule.region_flag exists and flags[rule.region_flag] is not true
-        "fixed":        date = (year, month, day); dow = day_of_week(date)
+        "fixed":        date = (year, rule.month, rule.day); dow = mod_floor(days_from_civil(date) + 3, 7)
                         observed = date - 1 day if dow == 5; date + 1 day if dow == 6; else date
-        "nth_weekday":  date = nth_weekday(year, month, rule.dow, rule.n); observed = date
-        "last_weekday": date = last_weekday(year, month, rule.dow);        observed = date
+        "nth_weekday":  date = nth_weekday(year, rule.month, rule.dow, rule.n); observed = date
+        "last_weekday": date = last_weekday(year, rule.month, rule.dow);        observed = date
         "inauguration": skip unless year >= 1969 and mod_floor(year - 1965, 4) == 0
-                        date = (year, 1, 20); dow = day_of_week(date)
+                        date = (year, rule.month, rule.day); dow = mod_floor(days_from_civil(date) + 3, 7)
                         observed = date + 1 day if dow == 6; null if dow == 5 (no day in lieu); else date
-    return the list sorted by (date ascending, rule order ascending)
+    return the list sorted by (date ascending, rule order ascending)       # Holiday.date and .observed are date strings
 
 holiday_on(date, flags) -> Holiday?
     Y = year of date
@@ -713,7 +716,7 @@ holiday_on(date, flags) -> Holiday?
     return the candidate with the smallest (0 if class == "major" else 1, rule order), or null
 ```
 
-`federal_holidays(Y)` lists holidays whose actual date is in `Y`; the observed date of New Year's Day can fall on 31 December of `Y - 1`, which is why `holiday_on` looks at two years. Only the observed date changes behaviour; an actual date that differs from it is a Saturday or Sunday and already uses weekend curves. Every (actual, observed) pair that differs in 2026-2029, with the region flag on:
+`federal_holidays(Y)` lists holidays whose actual date is in `Y`; the observed date of New Year's Day can fall on 31 December of `Y - 1`, which is why `holiday_on` looks at two years. `federal_holidays` works on day numbers (`days_from_civil`, `civil_from_days`, `format_date`) and never calls `parse_date`, so it accepts any year: `holiday_on("2199-12-31", ...)` asks it for the year 2200. `holiday_on` itself parses its date and fails with `invalid_date` like every function that takes one. Only the observed date changes behaviour; an actual date that differs from it is a Saturday or Sunday and already uses weekend curves. Every (actual, observed) pair that differs in 2026-2029, with the region flag on:
 
 | Year | Holiday | Actual date | Observed |
 |---|---|---|---|
@@ -1108,7 +1111,7 @@ window_orders(A, profile, terms, vectors, cal, ctx, ctx_next: DayContext?, open:
     require 0 <= open <= close <= 2880, else error "invalid_window"
     adj_total = weak = dflt = cap_total = host_orders = 0.0;  by_segment = [0.0 x16];  capped_hours = 0;  hours = [];  d = [];  c = []
     h_abs = floor_div(open, 60)
-    while h_abs * 60 < close:
+    while open < close and h_abs * 60 < close:                        # no iteration at all when open == close
         start = max(h_abs * 60, open);  end = min((h_abs + 1) * 60, close)
         fraction  = (end - start) / 60.0
         day_index = floor_div(h_abs, 24);  cx = ctx if day_index == 0 else ctx_next         # error "missing_context" if cx is null
@@ -1126,7 +1129,7 @@ window_orders(A, profile, terms, vectors, cal, ctx, ctx_next: DayContext?, open:
     (orders, spread) = interval_capped(A, d, c, evidence)             # 4.8
 ```
 
-A partial hour contributes its fraction of that hour's capped orders (equivalently, capacity is prorated): `orders.value` is the sum of `min(d[k], c[k])`, which equals the sum of `r.orders * fraction`. `minutes = close - open`, `date = ctx.date`, `demand_adj = adj_total`, `capacity_total = cap_total`, and `spread` is the record returned by `interval_capped`. `ctx_next` is the context of `add_days(date, 1)`; it may be null only when `close <= 1440`. The owner's "treat this day as" override belongs to one civil date; hours after midnight use the next date's own context.
+A partial hour contributes its fraction of that hour's capped orders (equivalently, capacity is prorated): `orders.value` is the sum of `min(d[k], c[k])`, which equals the sum of `r.orders * fraction`. `minutes = close - open`, `date = ctx.date`, `demand_adj = adj_total`, `capacity_total = cap_total`, and `spread` is the record returned by `interval_capped`. `ctx_next` is the context of `add_days(date, 1)`; it may be null only when `close <= 1440`. The owner's "treat this day as" override belongs to one civil date; hours after midnight use the next date's own context. The loop over clock hours (`start`, `end`, `fraction`, `day_index`, the context `cx`, the clock hour) is the same in `event_orders` (4.14) and in the `no_forecast` count (4.12); the reference names it `clock_hours(open, close)`. A zero-length window has no hours even when it lies inside a clock hour (`open = close = 1030`).
 
 Anchor A1 (4.4 layout, default profile, no calibration, weather factor 1):
 
@@ -1254,7 +1257,7 @@ interval_capped(A, d: [number], c: [number], ev: Evidence) -> (Estimate, spread)
     return ({ value, low: min(low, value), high: max(high, value), confidence: e.confidence }, spread)
 ```
 
-`x^2` means `x * x`. All `sd_*`, `label_*`, `count_dispersion`, `z80` come from `uncertainty.*` and `constants.z80`. `interval_capped` moves the demand of every hour by one factor (`k_low` on a weak day, `k_high` on a strong one) and applies each hour's cap again. A window with no hour near capacity therefore gets `e.low` and `e.high` (up to rounding in the last place); an hour that reaches its cap only on a strong day limits `high`; a window that is over capacity in every hour even at `k_low` gets `low = value = high`. The counting noise `v_count` is computed from the demand `D`, not from the capped orders.
+`x^2` means `(x * x)`, formed before the multiplication or division around it: `n0 * sd_day^2` is `n0 * (sd_day * sd_day)`, and `(ev.weak_share * sd_weak)^2` is that product multiplied by itself. `interval` returns its `mean` argument as `value` unchanged (0.0 when `mean <= 0`). All `sd_*`, `label_*`, `count_dispersion`, `z80` come from `uncertainty.*` and `constants.z80`. `interval_capped` moves the demand of every hour by one factor (`k_low` on a weak day, `k_high` on a strong one) and applies each hour's cap again. A window with no hour near capacity therefore gets `e.low` and `e.high` (up to rounding in the last place); an hour that reaches its cap only on a strong day limits `high`; a window that is over capacity in every hour even at `k_low` gets `low = value = high`. The counting noise `v_count` is computed from the demand `D`, not from the capped orders.
 
 | Part | What it stands for | How it shrinks |
 |---|---|---|
@@ -1550,7 +1553,7 @@ day_plan(A, profile, plan: PlanInput, ctx, ctx_next, legs, cal) -> DayResult
     warnings = the table below, in table order, stops in index order within a code
 ```
 
-"What a stop adds" is the whole day with the stop minus the whole day without it: dollars (expected, weak-day and strong-day), hours of the owner's day, dollars per added hour, and the number of orders the stop needs so that its contribution pays for the costs it adds. For a one-stop day this is the classic break-even of the day. Empty plan: empty timeline, every total zero with confidence `fixed`, no warnings.
+"What a stop adds" is the whole day with the stop minus the whole day without it: dollars (expected, weak-day and strong-day), hours of the owner's day, dollars per added hour, and the number of orders the stop needs so that its contribution pays for the costs it adds. For a one-stop day this is the classic break-even of the day. Empty plan: empty timeline, every total zero with confidence `fixed`, `unpaid_gap_alternative: null` and no warnings at all (not even `holiday`). `ctx.fuel_price_per_gal` must be a number. A typical context to which the caller has added the two fuel fields is valid input (one-stop figures for a typical week); `PlanInput.date` is only echoed into the result.
 
 The not-evaluated result is `{ model_version, seeds_revision, date: plan.date, timeline: <the empty timeline of 4.11>, stops: [], totals: <every Estimate est_fixed(0.0), every other field 0>, unpaid_gap_alternative: null, warnings }`.
 
@@ -1609,7 +1612,7 @@ The shape matches the blueprint's example: the second stop adds little per hour 
 | `weak_seed` | info | stop | spot stop with `window.evidence.weak_share >= 0.5` | `{ weak_share }` |
 | `default_host_size` | info | stop | spot stop whose host has `size_source == "default"` and `window.host_orders > 0` | `{ size }` |
 
-Values in `data`: timeline fields are those of the stop's `TimelineStop` or of the `Timeline`; `open_minute`, `close_minute` and `previous_close_minute` are the entered minutes of the stop and of the stop before it; `dow` is `ctx.dow`; `spot_fee` and `sales` are the `value` of the stop's money lines; `take_home` is `adds.take_home.value` and `take_home_low` is `adds.take_home.low`; `attendees_per_vendor` is the left side of the trigger; `capped_hours` is `window.capped_hours` for a spot and the number of event hours with `d_h > cap_h` for an event; `hours` counts the (stop, clock hour) pairs of spot and event stops in `[effective_open, close)` whose open-setting forecast is missing, each hour looked up in the context of its own civil date; `holiday_id` is `ctx.holiday.id` or null when the class comes from a "treat as holiday" override on an ordinary day; `weak_share` is `window.evidence.weak_share`; `size` is the host's `size`.
+Values in `data`: timeline fields are those of the stop's `TimelineStop` or of the `Timeline`; `open_minute`, `close_minute` and `previous_close_minute` are the entered minutes of the stop and of the stop before it; `dow` is `ctx.dow`; `spot_fee` and `sales` are the `value` of the stop's money lines; `take_home` is `adds.take_home.value` and `take_home_low` is `adds.take_home.low`; `attendees_per_vendor` is the left side of the trigger; `capped_hours` is `window.capped_hours` for a spot and the number of event hours with `d_h > cap_h` for an event; `hours` counts the (stop, clock hour) pairs of spot and event stops in `[effective_open, close)` whose open-setting forecast is missing, each hour looked up in the context of its own civil date (an hour whose own context is typical is not counted); `holiday_id` is `ctx.holiday.id` or null when the class comes from a "treat as holiday" override on an ordinary day; `weak_share` is `window.evidence.weak_share`; `size` is the host's `size`.
 
 ### 4.13 Calibration and accuracy
 
@@ -1704,6 +1707,7 @@ accuracy_report(entries: [ServiceLogEntry]) -> AccuracyReport
         coverage = (number with low <= actual <= high) / n_scored
         raw_bias, raw_mape = the same with predicted_raw in place of predicted
     report = block(all entries) + by_spot: [ block(entries of the spot) + spot_id ], spots ascending
+                                                    # entries without a spot_id (events, catering) count in the overall block only
 ```
 
 `predicted`, `low`, `high` are the calibrated figures the owner was shown when the service was planned or logged (the stored prediction snapshot); `predicted_raw` is the uncalibrated mean. Sold-out services are excluded from all three metrics (their actual is a lower bound) and counted separately. `bias > 0` means the model predicted too much. Example with `predicted = predicted_raw` and ranges from `interval` with no evidence:
@@ -1719,10 +1723,12 @@ accuracy_report(entries: [ServiceLogEntry]) -> AccuracyReport
 
 ```
 event_orders(A, profile, ev: EventTerms, cal, ctx, ctx_next, open, close) -> EventResult
+    require 0 <= open <= close <= 2880, else error "invalid_window"
     buyers = ev.attendance * seed("events.attendance_haircut") * seed("events.p_buy.<ev.event_type>")
     demand = buyers / max(1, ev.vendors) * (cal.truck_factor if cal != null else 1.0)
     minutes = close - open;  hours = [];  d = [];  c = []
-    for each clock hour overlapping [open, close), as in window_orders (start, end, fraction, day_index, context cx, hour):
+    for each clock hour overlapping [open, close), as in window_orders (start, end, fraction, day_index, context cx, hour;
+                                                    none when open == close; error "missing_context" if cx is null):
         wx    = 1.0 if cx.typical else weather_multiplier(A, cx.forecast[hour] if cx.forecast != null else null, "open").multiplier
         d_h   = demand * (end - start) / minutes * wx
         cap_h = profile.capacity_orders_per_hour * fraction
@@ -1786,7 +1792,7 @@ suggest_day(A, profile, ctx, ctx_next, spots: [SpotInput], legs, cal, options) -
     return the first (options.limit or suggest.day_results) as Suggestion with position 1, 2, ... and result = day_plan(plan)
 ```
 
-The objective is expected take-home. A candidate becomes a `StopInput` of kind `spot` whose `id` is the `spot_id` (so `legs` is keyed by spot ids and `base`), with `gap_before_unpaid = false` and no setup or teardown override. Candidates are kept per daypart first, so a long list of lunch spots cannot push every evening window out. The search is exhaustive within exact limits: at most 24 candidates, so at most 24 + 276 + 2,024 = 2,324 plan evaluations for three stops (300 for two). A spot appears at most once per day.
+The objective is expected take-home. `options` may be null, and an option that is null takes its default. A candidate becomes a `StopInput` of kind `spot` whose `id` is the `spot_id` (so `legs` is keyed by spot ids and `base`), with `gap_before_unpaid = false` and no setup or teardown override; the plan's `date` is `ctx.date`. Candidates, feasibility and ranking use `evaluate`; `day_plan` runs only for the plans that are returned, and each `Suggestion` takes `date = ctx.date`, `take_home = result.totals.take_home`, `orders = result.totals.orders` and `day_minutes = result.timeline.day_minutes` from it. When nothing is feasible the result is an empty list. Candidates are kept per daypart first, so a long list of lunch spots cannot push every evening window out. The search is exhaustive within exact limits: at most 24 candidates, so at most 24 + 276 + 2,024 = 2,324 plan evaluations for three stops (300 for two). A spot appears at most once per day.
 
 ```
 suggest_week(A, profile, week_start: date (a Monday), contexts: [DayContext x8], spots, legs, cal, options) -> WeekSuggestion
@@ -1805,7 +1811,7 @@ suggest_week(A, profile, week_start: date (a Monday), contexts: [DayContext x8],
     search(0, 0.0, [], 0, {})
 ```
 
-A strictly greater `qkey` is needed to replace the best, so among equal totals the first one found wins: earlier days prefer higher-ranked plans and working over resting. The search is exhaustive, at most `6^7 = 279,936` leaves. `total_take_home = est_sum` of the chosen days' take-home in day order. `contexts[7]` is the Monday after, needed only for windows past midnight (none in revision 1).
+A strictly greater `qkey` is needed to replace the best, so among equal totals the first one found wins: earlier days prefer higher-ranked plans and working over resting. The search is exhaustive, at most `6^7 = 279,936` leaves. The `suggest_day` calls receive the caller's `service_minutes` and `max_stops_per_day`. `days[d] = { date: add_days(week_start, d), suggestion }`, where `suggestion` is the chosen `Suggestion` of that day, with the `position` it has in that day's ranking, or null for a day off. `total_take_home = est_sum` of the chosen days' take-home in day order (`0, 0, 0`, `fixed` when every day is off). `visits` has one key per spot visited at least once, with its number of visits. `leaves_visited` is the number of complete weeks the search looked at (1 when no day has an option). `contexts[7]` is the Monday after, needed only for windows past midnight (none in revision 1).
 
 Example with two saved spots (anchor A1 as `office`, anchor A2 as `taproom`), blueprint legs, week of 2026-10-05, no forecast. Thursday's candidates: office 11:00-14:00 single-stop take-home $347.18; office 14:00-17:00 single-stop take-home -$153.87; taproom 17:00-20:00 single-stop take-home $163.31; taproom 20:00-23:00 single-stop take-home -$108.28; 6 feasible plans (office 11:00 + taproom 20:00 exceeds the 14-hour day; office 14:00 + taproom 17:00 would arrive late). Top two plans per day, Wednesday to Sunday:
 
@@ -1868,6 +1874,7 @@ strip_from_rows(A, profile, terms, vectors, rows) -> [number x168]
         out[how] = min(o, profile.capacity_orders_per_hour)
 
 scout_rank(results) = sort by (qkey(score) descending, place_id ascending); position = 1, 2, ...; keep the first scout.max_results
+                      # results holds ScoutResult records only (no nulls); scout.max_results is read from the seed file (scope fixed)
 ```
 
 The place's vectors exclude its own source point (4.4), so its visitors enter only through the host term at the place's own `size_default`, which is why scouting ranges are wide (`very_rough` whenever the default host supplies the demand). A place without a host segment or with `size_default` 0 (a farmers market, a stadium, a campus building, an office park) has no host term and is ranked on its catchment alone; `host_size` is then 0.0. The ranking key is the expected contribution of the place's best three hours in a typical week, discounted by `host_fit` (how commonly that kind of place hosts trucks), minus the cost of driving there and back. Which places are candidates (inside the drive-time limit and the licence counties, lead status) is decided by the backend before this function; a place type with `host_fit` 0 returns null. The score ranks; it is not shown as money.
@@ -2000,54 +2007,68 @@ Standing lines, always shown with an estimate: the data vintages (residents Apri
 
 ### 8.1 File
 
-`tests/fixtures/truck-planner/golden_cases.json`, written by the Python reference: `{ "model_version": "tps-0.1.0", "seeds_revision": 1, "cases": [ { "id": "g07-003", "family": "capture", "fn": "capture_at_point", "args": { ... named arguments ... }, "expect": <result> } ], "anchors": [ ... ] }`. `args` holds complete inputs (no reference to databases or files other than the seed file; `Assumptions.seeds` is implied and `overrides` and `region` are explicit). Runners compare `expect` with the result recursively using 1.4; object key order is irrelevant, array order is not. Each runtime must also assert that its copy of the seeds equals `tp_seeds.json` (parsed values, not file bytes: line endings differ between checkouts).
+`tests/fixtures/truck-planner/golden_cases.json`, written by the Python reference (`--write-golden`, see `reference/README.md`):
 
-Encoding rules, so that three ports written apart produce the same `expect`:
+```
+{ "model_version": "tps-0.1.0", "seeds_revision": 1,
+  "tolerance": { "rel": 1e-9, "abs": 1e-9 },
+  "anchors": [ ... ],
+  "cases": [ { "id": "g08-001", "family": "capture", "function": "capture_at_point",
+               "args": { ... named arguments ... }, "expected": <result> }, ... ] }
+```
 
-1. The keys of `args` are exactly the parameter names of the function's signature in section 4; `A` is `{ overrides, region }`.
-2. A tuple return is a JSON array in the written order: `[Estimate, spread]` for `interval` and `interval_capped`, `[truck_factor, spot_factor]` for `calibration_factor`, `[factor, dow, hour]` for `traffic_factor`, `[y, m, d]` for `civil_from_days`.
+`function` is the canonical name used in this document (the functions of section 4, and `round_half_away`, `qkey`, `seed`, `validate_overrides`, `est_fixed`, `est_levels`, `est_sum`, `weakest`); a runner dispatches on it and passes `args` through by name. `args` holds complete inputs (no reference to databases or files other than the seed file; `Assumptions.seeds` is implied and `overrides` and `region` are explicit), so a case that needs other seed values carries them in `args.A.overrides`. Runners compare `expected` with the result recursively using 1.4; object key order is irrelevant, array order is not. `tolerance` restates 1.4 for a runner that prefers to read it: two numbers match when `abs(a - b) <= max(abs, rel * max(abs(a), abs(b)))`, which is `1e-9 * max(1.0, abs(a), abs(b))`. `family` is the name in 8.2 and is information only. The file is byte-stable: keys sorted at every level, shortest round-trip numbers, one case per line in a fixed order, LF line endings, a trailing newline; writing it again without a change to the model or the seeds gives the same bytes. Each runtime must also assert that its copy of the seeds equals `tp_seeds.json` (parsed values, not file bytes: line endings differ between checkouts); both copies are generated by `reference/generate_seed_copies.py`.
+
+Encoding rules, so that three ports written apart produce the same `expected`:
+
+1. The keys of `args` are exactly the parameter names of the function's signature (every parameter, optional ones included: `best_windows` always carries `allowed`); `A` is `{ overrides, region }`. The one exception is `validate_overrides`, whose `seeds` parameter is not in `args`: the runner passes its own seed copy.
+2. A tuple return is a JSON array in the written order: `[Estimate, spread]` for `interval` and `interval_capped`, `[truck_factor, spot_factor]` for `calibration_factor`, `[factor, dow, hour]` for `traffic_factor`, `[y, m, d]` for `civil_from_days` and `parse_date`.
 3. `leg_minutes` returns `from_id: null`, `to_id: null`, `depart_minute: null` and `traffic_lookup_minute` = the lookup minute.
 4. `capture_at_point` returns `in_region: true`, `region_id: null`, `dataset_version: null` and `model_version: "tps-0.1.0"`.
 5. `event_orders.hours` is `[ { day_index, hour, fraction, demand, capacity, weather, orders } ]`.
 6. `catering_money.unit_margin` is `{ at_minimum: 0.0, at_percentage: 0.0 }`.
 7. A plan that is not evaluated returns `stops: []`, the empty timeline, zero totals with confidence `fixed` and `unpaid_gap_alternative: null` (4.12).
-8. `scout_estimate` with no window returns `best_window: null`, `orders` and `contribution` `{ 0.0, 0.0, 0.0, label of interval(A, 0.0, evidence_from(cal, null)) }`, `round_trip: { minutes: 0, miles: 0.0, cost: 0.0 }`, `host_size` and `kitchen` as resolved and `score: 0.0`. Every `scout_estimate` result has `position: 0`; `scout_rank` numbers them.
+8. `scout_estimate` with no window returns `best_window: null`, `orders` and `contribution` `{ 0.0, 0.0, 0.0, label of interval(A, 0.0, evidence_from(cal, null)) }`, `round_trip: { minutes: 0, miles: 0.0, cost: 0.0 }`, `host_size` and `kitchen` as resolved and `score: 0.0`. Every `scout_estimate` result has `position: 0`; `scout_rank` numbers them. A place type that does not host returns `null`.
 9. `anchors` is a top-level array `[ { id, case, path: "orders.value", min, max }, { id, case, path, greater_than_case } ]` whose entries point at ordinary `window_orders` cases (8.3).
+10. A call that must fail has `expected: { "error": "<code>" }`, the code being `invalid_date`, `invalid_window` or `missing_context`; the runner asserts that the port raises its model error with that code.
+11. A field of type `int` is written as a JSON integer and a real with a fraction or an exponent (`66.0`), but runners compare numbers as doubles (1.4), so a port need not reproduce the spelling. Arguments may spell a whole real as an integer (`"temp_f": 62`); ports cast on the way in (section 7).
 
-**Margin rule.** The reference refuses to emit a case in which a comparison between two reals that selects a branch, a flag or a warning has `abs(a - b) <= 1e-6 * max(1.0, abs(a), abs(b))`, or in which the argument of `floor` in `round_half_away`, `qkey`, `score_byte` or the millimetre key is within 1e-6 of an integer; such a case is edited until it passes. Exact ties are tested only with inputs whose sums are equal by construction (the Sunday 16:00 and 17:00 windows of 4.15). Family g01 is exempt: it calls the rounding helpers directly with literal arguments, which involves exactly rounded operations only.
+**Margin rule.** `+`, `-`, `*`, `/`, `sqrt` and `floor` give the same bits in every runtime; `exp`, `ln`, `sin`, `cos` and `asin` may differ in the last place (section 7). The reference refuses to emit a case that hangs on those last places. It runs every case again with the five functions replaced by stand-ins that return the true value moved by a relative amount of up to 1e-6: a different amount for every argument, always the same amount for the same argument, and none where the result is exact (`exp(0)`, `ln(1)`, `sin(0)`, `cos(0)`, `asin(0)`). In four such runs nothing discrete in the result may change: no string, boolean, null, integer, array length or key set, hence no branch, flag, label, warning, ranking, whole minute or colour byte. In a fifth run, with the amount limited to 1e-13, every real must also stay within the tolerance of 1.4. A case that fails is edited until it passes; the antipodes, where the haversine formula loses seven digits, are not a `haversine_m` case for this reason. Exact ties are tested only with literal inputs (`temp_f` 20 against the band bound 20) or with sums that are equal in whole millionths by construction (the Sunday 16:00 and 17:00 windows of 4.15). Family g01 is exempt: it calls the rounding helpers with literal arguments, which involves exactly rounded operations only.
 
-### 8.2 Families (310 cases)
+### 8.2 Families (683 cases)
 
 | Family | Functions | Cases | Must include |
 |---|---|---:|---|
-| g01 rounding | `round_half_away`, `qkey` | 16 | the table in 1.4; negative values; 0; decimals 0 to 6 |
-| g02 dates | `days_from_civil`, `civil_from_days`, `day_of_week`, `add_days` | 16 | 1970-01-01, 2000-02-29, 2100-02-28 to 03-01, 2199-12-31, year boundaries, negative `n` |
-| g03 holidays | `federal_holidays`, `holiday_on` | 10 | years 2025-2030 against the OPM lists; observed date in the previous year; Inauguration Day on a Saturday, a Sunday and with the flag off |
-| g04 day context | `day_context`, `typical_context` | 12 | ordinary weekday, Saturday, Sunday, major holiday, minor holiday, each `treat_as` kind, an override of `holiday_day_type` |
-| g05 curves | `hour_weights`, `expand_curves` | 8 | all 168 hours for three segments; an overridden curve; an overridden `dow_factor` |
-| g06 geometry | `haversine_m`, `walk_weight` | 10 | zero distance, the meridian points of 4.4, a pole-ward and an equatorial pair, the cutoff boundary |
-| g07 rivals | `rivals_at_origin` | 6 | every rival kind, outlet beyond the cutoff, outlet at the origin |
-| g08 capture | `capture_at_point`, `host_exclusion`, `host_link_point`, `vectors_match` | 22 | the 4.4 layout at three visibility levels; multi-segment points; both exclusion rules; exclusion larger than available; equidistant points (tie by id); empty sources; `within` in every result; `host_link_point`: the example of 4.4, a point beyond the radius, two points at the same millimetre distance (tie by id); an unlinked taproom host over a `v_nightlife` point 10 m away, which once linked must give the same vectors as the linked host; the `vectors_match` table of 4.7 |
-| g09 host | `host_capture` | 10 | captive and open modes, with and without kitchen, each visibility, size 0, null host |
-| g10 weather | `weather_multiplier` | 20 | every band boundary (19/20, 31/32, ..., 94/95), every precipitation class, priority conflicts, null fields, null record, the floor, upper-case and mixed-case text |
-| g11 hourly orders | `hourly_orders` | 16 | anchors A1 and A2 hour by hour; host plus catchment; captive host in rain (two weather tables, both weather details); calibration factors; capacity cap with segment scaling; menu fit 0; weak and default-size parts; vectors with `within` null |
-| g12 window orders | `window_orders` | 14 | whole hours, partial first and last hour, a window inside one hour, across midnight with two contexts, zero length, 24 hours, outside region; an hour that reaches capacity only at `k_high` (anchor A1); every hour over capacity |
-| g13 week and windows | `week_strip`, `best_windows` | 10 | both anchors; circular wrap; exact ties; `allowed` mask; `top_n` larger than available; all zeros |
-| g14 ranges | `interval`, `interval_capped`, `est_sum`, `est_levels` | 16 | the two tables in 4.8; each label boundary; mean 0 |
-| g15 money | `stop_money`, `unit_margins`, `break_even_orders`, `day_costs` | 16 | each fee shape; tips on; negative unit margin (null break-even, low above high before `est_levels`); zero crew; zero generator |
-| g16 driving | `fallback_leg`, `traffic_factor`, `leg_minutes` | 15 | the tables in 4.10; a `google` and a `fallback` leg at the same minute; both matrices; negative and next-day minutes; holiday `traffic_dow`; the night after a holiday (2026-11-26 at minute 1470: lookup `dow` 4); override; minimum of 1; same point |
-| g17 timeline | `build_timeline`, `required_leg_keys` | 13 | the blueprint day sheet (exact integers); one stop; three stops; late arrival; unreachable stop (second stop 840-848 after the blueprint's first: `leave` 870, `generator_minutes` 230, `day_minutes` 327); unpaid gap; start before midnight; per-stop setup override; empty plan; `required_leg_keys` for two and for three stops |
-| g18 day plan | `day_plan` | 12 | the worked day of 4.12 with every `adds` field and the unpaid-gap alternative; an event stop; a catering stop; overlapping stops (not evaluated); stale vectors; each warning code at least once across the family, with its `data` |
-| g19 calibration | `calibrate`, `calibration_factor`, `accuracy_report` | 18 | the examples of 4.13; empty log; sold-out above and below; both ratio clamps (a ratio above 4 and one above 50); `predicted_raw` below 3 and below 0.5; a sold-out service above `m_a` but below `m_a + s_a`; zero actual; future-dated service; one spot only; all sold out |
-| g20 events and catering | `event_orders`, `catering_money` | 8 | the examples of 4.14; one vendor; capacity-bound; weather; guarantee above and below per-head |
-| g21 suggestions | `suggest_day`, `suggest_week` | 9 | the example of 4.15 (candidates, ranking, the tie); `allowed` hours; three stops; visit limit; day limit; no feasible plan; 30 lunch spots and one taproom, which must return a two-stop plan |
-| g22 scouting | `scout_estimate`, `scout_rank`, `strip_from_rows` | 9 | the example of 4.16; a non-host type (`restaurant`); a place with zero vectors and size 0; a rank tie broken by id; `strip_from_rows` against `week_strip` for the three example places |
-| g23 fast path | `map_weight_rows`, `cell_scores`, `score_byte` | 12 | the cell of 4.17; both regimes; capacity clamp; byte boundaries 0 and 255; a 1,000-cell block (TypeScript additionally with `Float32Array` at the looser tolerance) |
-| g24 seeds and anchors | `seed`, `validate_overrides`, anchors | 12 | each error code of 2.2; a valid override changing an anchor; the three `window_orders` cases the `anchors` array points at (8.3) |
+| g01 rounding | `round_half_away`, `qkey` | 26 | the table in 1.4; negative values; 0; decimals 0 to 6 |
+| g02 dates | `days_from_civil`, `civil_from_days`, `day_of_week`, `add_days`, `parse_date`, `format_date`, `nth_weekday`, `last_weekday` | 60 | 1970-01-01, 2000-02-29, 2100-02-28 to 03-01, 2199-12-31, year boundaries, negative `n`; dates that must fail with `invalid_date` (not a real date, out of range, wrong shape, non-ASCII digits) |
+| g03 holidays | `federal_holidays`, `holiday_on` | 25 | years 2025-2030 against the OPM lists; observed date in the previous year; Inauguration Day on a Saturday, a Sunday (observed on the Monday that is also `mlk`) and with the flag off; a date in 2199 |
+| g04 day context | `day_context`, `typical_context` | 24 | ordinary weekday, Saturday, Sunday, major holiday, minor holiday, each `treat_as` kind, an override of `holiday_day_type`; forecast and fuel handed through; region `none` |
+| g05 curves | `hour_weights`, `expand_curves` | 9 | all 168 hours for all segments; an overridden curve; an overridden `dow_factor` |
+| g06 geometry | `haversine_m`, `walk_weight` | 21 | zero distance, the meridian points of 4.4, a pole-ward and an equatorial pair, the date line, the cutoff boundary |
+| g07 rivals | `rivals_at_origin` | 12 | every rival kind, outlet beyond the cutoff, outlet at the origin, the list in another order |
+| g08 capture | `capture_at_point`, `host_exclusion`, `host_link_point`, `vectors_match` | 40 | the 4.4 layout at three visibility levels; multi-segment points; both exclusion rules; exclusion larger than available; equidistant points (tie by id); empty sources; sources either side of the cutoff; `within` in every result; `host_link_point`: the example of 4.4, a point beyond the radius, two points at the same millimetre distance (tie by id); an unlinked taproom host over a `v_nightlife` point 10 m away, which once linked must give the same vectors as the linked host; the `vectors_match` table of 4.7 |
+| g09 host | `host_capture` | 13 | captive and open modes, with and without kitchen, each visibility, size 0, null host, each `host.*` override |
+| g10 weather | `weather_multiplier` | 80 | the table of 4.6 in both settings; every band boundary (19/20, 31/32, ..., 94/95; 19/20 and 29/30 mph), every precipitation class, priority conflicts, null fields, null record, the floor, upper-case and mixed-case text, a non-ASCII capital that must not be lower-cased, probabilities outside 0..100, overridden rows |
+| g11 hourly orders | `hourly_orders` | 24 | anchors A1 and A2 hour by hour; host plus catchment; captive host in rain (two weather tables, both weather details); calibration factors; capacity cap with segment scaling; capacity 0; menu fit 0; weak and default-size parts; vectors with `within` null; a typical context |
+| g12 window orders | `window_orders` | 34 | whole hours, partial first and last hour, a window inside one hour, across midnight with two contexts, zero length (on and off the hour), 24 hours, the last hour before 2880, outside region; an hour that reaches capacity only at `k_high` (anchor A1); every hour over capacity; a forecast; calibration; the errors `invalid_window` (three ways) and `missing_context` |
+| g13 week and windows | `week_strip`, `best_windows` | 16 | both anchors; circular wrap; exact ties; `allowed` mask; `top_n` larger than available and 0; all zeros; a total that rounds to zero millionths; `length` above and equal to the list length |
+| g14 ranges | `interval`, `interval_capped`, `est_sum`, `est_levels`, `est_fixed`, `weakest`, `evidence_from` | 52 | the two tables in 4.8; each label boundary; mean 0 and below; empty lists |
+| g15 money | `stop_money`, `stop_money_at`, `unit_margins`, `break_even_orders`, `day_costs` | 37 | each fee shape; tips on; negative unit margin (null break-even, low above high before `est_levels`); a percentage that never breaks even; zero crew; zero generator; tolls and an unpaid gap |
+| g16 driving | `fallback_leg`, `traffic_factor`, `leg_minutes` | 35 | the tables in 4.10; a `google` and a `fallback` leg at the same minute; both matrices; negative and next-day minutes; holiday `traffic_dow`; the night after a holiday (2026-11-26 at minute 1470: lookup `dow` 4); override (also of 0 minutes); minimum of 1; same point |
+| g17 timeline | `build_timeline`, `required_leg_keys` | 18 | the blueprint day sheet (exact integers); one stop; three stops on fallback legs; routed legs with tolls; late arrival; unreachable stop (second stop 840-848 after the blueprint's first: `leave` 870, `generator_minutes` 230, `day_minutes` 327); unpaid gap; start before midnight; end after midnight; per-stop setup override; empty plan; `required_leg_keys` for none, one, two and three stops |
+| g18 day plan | `day_plan` | 21 | the worked day of 4.12 with every `adds` field and the unpaid-gap alternative; lunch only; calibrated; an event stop; a catering stop; overlapping stops (not evaluated); stale vectors; an empty plan; a typical context with a fuel price; each warning code at least once across the family, with its `data` |
+| g19 calibration | `calibrate`, `calibration_factor`, `accuracy_report` | 31 | the examples of 4.13; empty log; sold-out above and below; both ratio clamps (a ratio above 4 and one above 50); `predicted_raw` below 3 and below 0.5; a sold-out service above `m_a` but below `m_a + s_a`; zero actual; future-dated service; events and catering in the log; one spot only; all sold out |
+| g20 events and catering | `event_orders`, `catering_money` | 19 | the examples of 4.14; one vendor; a vendor count of 0; capacity-bound; weather; past midnight; zero length; the truck factor; guarantee above and below per-head; the two errors |
+| g21 suggestions | `suggest_day`, `suggest_week` | 15 | the example of 4.15 day by day (candidates, ranking, the tie); `allowed` hours; three stops; one stop; visit limit; day limit; no feasible plan; no spots; 30 lunch spots and one taproom, which must return a two-stop plan |
+| g22 scouting | `scout_estimate`, `scout_rank`, `strip_from_rows` | 17 | the example of 4.16; a non-host type (`restaurant`); a place with zero vectors and size 0; a place's own `kitchen` state; fallback legs; a rank tie broken by id; more results than `scout.max_results`; `strip_from_rows` against `week_strip` for the three example places |
+| g23 fast path | `map_weight_rows`, `cell_scores`, `score_byte` | 25 | the cell of 4.17; both regimes; capacity clamp; no cells; byte boundaries 0 and 255; a 1,000-cell block (TypeScript additionally with `Float32Array` at the looser tolerance) |
+| g24 seeds and anchors | `seed`, `validate_overrides`, `window_orders` | 29 | the examples of 2.1; each error code of 2.2; several errors in one map; a valid override changing an anchor; the three `window_orders` cases the `anchors` array points at (8.3) |
+
+`make_context` and `evaluate` have no case of their own: the first is exercised through `day_context` and `typical_context`, the second through `day_plan` and `suggest_day`. The self-test of the reference (`--self-test`) fails when a function of this document, a warning code, a confidence label, a model error or an override error has no golden case. It also runs every case twice (the arguments must come back untouched and the second result must be identical), applies the margin rule, asserts the documented values of this document, and runs property checks: seed integrity (2.3), the calendar against an independent one for every day of 1970-2199, the OPM holiday lists, conservation, bounds, monotonicity and symmetry of the functions, the blueprint day sheet to the minute, the anchors, and `low <= value <= high` for every `Estimate` in every result.
 
 ### 8.3 Sanity anchors
 
-These are assertions on ranges, checked by every runtime in addition to the exact golden values; they are the `anchors` array of the golden file (8.1). If a seed change moves a result outside its range, the seed change is wrong (or the anchor is, and that is a decision for DECISIONS.md).
+These are assertions on ranges, checked by every runtime in addition to the exact golden values; they are the `anchors` array of the golden file (8.1), with the ids `A1`, `A2` and `A2-friday`. If a seed change moves a result outside its range, the seed change is wrong (or the anchor is, and that is a decision for DECISIONS.md).
 
 | Anchor | Setup | Must hold | tps-0.1.0 result |
 |---|---|---|---|
