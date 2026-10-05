@@ -1825,7 +1825,7 @@ contain a URL with a key into a response or a log line.
 | Headers to send | `User-Agent: (TruckPlanner, <contact>)` with contact = `TP_CONTACT_EMAIL`, else `MAIL_FROM`; with neither, no request is made and the forecast is missing. `Accept: application/geo+json`. No key. Never send `Feature-Flags` (it changes field shapes) |
 | Fields used | `properties.generatedAt`, `properties.periods[]`: `startTime` and `endTime` (ISO 8601 with local offset), `temperature` (integer, Fahrenheit), `temperatureUnit`, `probabilityOfPrecipitation.value` (percent, may be null: keep null and pass `HourForecast.precip_prob = null` to the model, never 0; 02_MODEL.md 4.6 then applies `weather.pop_when_missing` when the text names precipitation), `windSpeed` (text such as `2 mph` or `5 to 10 mph`: take the largest integer), `shortForecast` (text), `relativeHumidity.value`, `dewpoint.value` (Celsius), `isDaytime` |
 | Coverage | 156 hourly periods, 6.5 days from the current hour. Nothing beyond that, so later days get no weather adjustment |
-| Caching | Step 1 answers `Cache-Control: public, max-age=25457` with `Expires`: cache the grid mapping for 14 days. Step 2 answers `max-age=1708, s-maxage=3600`, `Expires` about one hour after `generatedAt`, `Last-Modified` and a weak `ETag`: cache per `gridId/gridX,gridY` until `Expires` (not less than 10 minutes) |
+| Caching | Step 1 answers `Cache-Control: public, max-age=25457` with `Expires` (on 2026-10-05: `max-age=86400, s-maxage=120`): cache the grid mapping for 14 days. Step 2 answers `max-age=1708, s-maxage=3600`, `Expires` about one hour after `generatedAt`, `Last-Modified` and a weak `ETag`: cache per `gridId/gridX,gridY` until `Expires` (not less than 10 minutes) |
 | Quota | Not published ("generous"). When limited, retry after 5 s |
 
 Failure modes [V]: no User-Agent gives 403 (HTML). More than four decimals gives 301 with a relative `Location`. A point
@@ -1837,6 +1837,13 @@ local offset of the grid point, which is the region's wall clock). If two period
 and an hour with no period stays null (02_MODEL.md 1.3 item 7). The grid is 2.5 km, so stops in different grid cells
 need separate calls. Apparent temperature is not in the hourly product. It is in the raw grid (`forecastGridData`,
 `apparentTemperature`, Celsius, ISO 8601 intervals).
+
+Seen again on 2026-10-05 through the backend client [V]: `/points/38.9072,-77.0369` answers 200 with grid cell
+`LWX 96,72`, its hourly forecast 200 with 156 periods, every `startTime` written with the offset of the place
+(`-04:00`) and `Expires` one hour after `generatedAt`. A fifth decimal that is not a zero (`38.90721`) answers 301 with
+a relative `Location`; trailing zeros are accepted. No `User-Agent` still answers 403, a point outside coverage 404
+`InvalidPoint`. That day no period of seven forecast offices carried a null `probabilityOfPrecipitation.value`, so the null case
+is not a daily one; the client keeps it null whenever it comes (04_BACKEND.md 5.5).
 
 ### 13.2 EIA API v2 - weekly retail fuel price
 
@@ -1857,23 +1864,31 @@ default with its date. The owner's own price always wins. `DEMO_KEY` is not for 
 
 ### 13.3 Google Routes API - route matrix
 
-Everything in this subsection is [M]: written from memory of Google's documentation, nothing was requested today (the
-source recon did not exercise Google routing). DECISIONS sections 0 and 9 are the binding description. Confirm field
-names, limits and prices against Google's current documentation before coding.
+This subsection was written from memory of Google's documentation and was checked against it on 2026-10-05, before
+the clients were coded: the reference of `computeRouteMatrix`, the guides "Get a route matrix" and "Calculate toll fees
+for a route matrix", the Routes usage-and-billing page, the Maps Platform SKU and price lists, and the reference and
+usage page of the Distance Matrix API (Legacy). Field names, masks, limits and prices below are as documented there
+[V]. Nothing was requested from Google (no key on the build machine), so what a refused or over-quota key really
+answers is still [M]. DECISIONS sections 0 and 9 are the binding description; the clients are specified in
+04_BACKEND.md 5.3.
 
 | | |
 |---|---|
 | Request | `POST https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix` with `Content-Type: application/json`, `X-Goog-Api-Key: <GOOGLE_API_KEY>` and `X-Goog-FieldMask: originIndex,destinationIndex,status,condition,distanceMeters,duration`. A field mask is mandatory |
 | Body | `{"origins": [{"waypoint": {"location": {"latLng": {"latitude": 38.97, "longitude": -77.39}}}, "routeModifiers": {"avoidTolls": <profile.avoid_tolls>, "avoidHighways": <profile.avoid_highways>}}], "destinations": [{"waypoint": {"location": {"latLng": {...}}}}], "travelMode": "DRIVE", "routingPreference": "TRAFFIC_UNAWARE"}`. `routeModifiers` is added to every origin only when at least one of the two routing options is true, and then holds both as JSON booleans (04_BACKEND.md 5.3) |
 | Response fields used | A JSON array with one element per pair, in any order: `originIndex`, `destinationIndex` (treat a missing `originIndex` or `destinationIndex` as 0: JSON omits zero values), `condition` (`ROUTE_EXISTS` or `ROUTE_NOT_FOUND`), `distanceMeters` (integer, may be absent when 0), `duration` (seconds as a string with an `s` suffix, such as `"160s"`), `status` (empty object when fine, else `code` and `message`) |
-| Tolls | Only when wanted: add `"extraComputations": ["TOLLS"]` to the body and `travelAdvisory.tollInfo` to the mask. `travelAdvisory.tollInfo.estimatedPrice[]` carries `currencyCode`, `units` (a string) and `nanos`. It may move the request to a dearer billing tier |
-| Limits | 625 elements (origins x destinations) per request at this routing preference. Billed per element. A per-minute element quota applies to the project |
+| Tolls | Only when wanted: add `"extraComputations": ["TOLLS"]` to the body and `travelAdvisory.tollInfo` to the mask. `travelAdvisory.tollInfo.estimatedPrice[]` carries `currencyCode`, `units` (a string) and `nanos`. `tollInfo` is absent when no toll is expected on the route, and present without `estimatedPrice` when there are tolls of unknown amount. Without toll passes in the request the amount is the cash price. Toll calculation moves the request to the dearest SKU (Enterprise) |
+| Limits | 625 elements (origins x destinations) per request at this routing preference (100 for `TRAFFIC_AWARE_OPTIMAL` and for transit); no limit on one side for coordinates. Rate limit 3,000 elements per minute |
+| Billing | Per element. Essentials 5.00 USD per 1,000 elements: every request of this client without tolls, also with `routeModifiers` (avoiding tolls or highways is not a "Pro" feature; Pro, 10.00 USD, is for traffic-aware routing and location modifiers). Enterprise 15.00 USD per 1,000: requests with `TOLLS`. The legacy Distance Matrix API is 5.00 USD per 1,000 elements without traffic information |
 | Determinism | `TRAFFIC_UNAWARE` durations do not depend on the time of the request. Time-of-day factors are ours (seed table) |
 | Caching | No cache headers. Legs go to `tp_drive_legs` per directed pair of rounded coordinates plus the two routing options (`avoid_tolls`, `avoid_highways`), with `fetched_at`, and are refreshed after 30 days at most. Google content is never kept longer. Owner corrections are the owner's data and do not expire |
 
-Failure modes [M]: errors are JSON `{"error": {"code", "message", "status"}}`. 403 `PERMISSION_DENIED` when the Routes
-API is not enabled for the key's project, 400 `INVALID_ARGUMENT` (for example a missing field mask), 429
-`RESOURCE_EXHAUSTED`. On "not enabled", DECISIONS allows one attempt at the legacy Distance Matrix API:
+Failure modes: errors are JSON `{"error": {"code", "message", "status", "details"}}` [V: Google's "Handle request
+errors" page shows 403 `PERMISSION_DENIED` for a missing key and 400 `INVALID_ARGUMENT` for a malformed request]. 403
+`PERMISSION_DENIED` when the Routes API is not enabled for the key's project (`details[].reason` `SERVICE_DISABLED`)
+or the key's restrictions exclude it (`API_KEY_SERVICE_BLOCKED`), and 429 `RESOURCE_EXHAUSTED` over quota [M: the reason
+words are Google's, the pairing with these HTTP statuses was not observed]. On "not enabled", DECISIONS allows one
+attempt at the legacy Distance Matrix API [V for what follows]:
 `GET https://maps.googleapis.com/maps/api/distancematrix/json` with `origins` and `destinations` as `lat,lng` pairs
 joined by the vertical bar, `mode=driving`, `units=metric`, `key`, and `avoid` holding only the options that are true
 (`avoid=tolls`, `avoid=highways` or `avoid=tolls|highways`; the parameter is omitted when neither is set). It answers
@@ -1885,16 +1900,34 @@ refused: the labelled straight-line estimate, and no new attempt for an hour. Ev
 
 ### 13.4 Google Places (New) Text Search - contact lookup on demand
 
-Used for one Scout candidate at a time, when the owner asks (DECISIONS 0 and 9). The request shape is the one
-`src/Services/GoogleMapsService.php` already uses: `POST https://places.googleapis.com/v1/places:searchText` with
-`X-Goog-Api-Key`, `X-Goog-FieldMask: places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri`
-and body `{"textQuery": "<place name>", "languageCode": "en", "pageSize": 1, "locationBias": {"circle": {"center":
-{"latitude": .., "longitude": ..}, "radius": 500.0}}}` (`locationBias` and `googleMapsUri` are [M]; the rest is in the
-repository's code). Data rule: the result belongs to the owner's Scout lead (place id kept, other fields for 30 days at
-most) and is **never** written to `tp_places`. `tp_places.phone` and `website` hold OpenStreetMap values only.
-Looked-up Google fields are shown only on the Scout lead they belong to (with string 12 of section 14), never in the
-day sheet, the calendar file or any export, and are deleted when their 30 days end. The free
-"Open in Google Maps" link needs no call: `https://www.google.com/maps/search/?api=1&query=<lat>%2C<lng>`.
+Used for one Scout candidate at a time, when the owner asks (DECISIONS 0 and 9). Checked on 2026-10-05 against Google's
+reference of `places.searchText`, its guides "Text Search (New)" and "Place Data Fields (New)", the Places API
+usage-and-billing page, the Google Maps Platform price list and the Places API policies page. No request was sent:
+this machine has no key. The client is specified in `04_BACKEND.md` 5.4.
+
+| | |
+|---|---|
+| Request | `POST https://places.googleapis.com/v1/places:searchText` with `Content-Type: application/json`, `X-Goog-Api-Key: <GOOGLE_API_KEY>` and `X-Goog-FieldMask: places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri`. A field mask is mandatory, and these are the fields' exact mask names |
+| Body | `{"textQuery": "<place name>", "languageCode": "en", "pageSize": 1, "locationBias": {"circle": {"center": {"latitude": .., "longitude": ..}, "radius": 500.0}}}`. `textQuery` is the only required field. `pageSize` is 1 to 20 (`maxResultCount` is its deprecated name). The radius is in metres, 0.0 to 50,000.0. A bias prefers results near the point, it does not exclude others |
+| Response fields used | Of `places[0]`: `id` (the place id), `displayName.text`, `formattedAddress`, `location.latitude` and `location.longitude`, `nationalPhoneNumber`, `websiteUri`, `googleMapsUri`. A field Google does not have is absent, and with no match `places` itself is absent (`{}`) |
+| Match check | The bias cannot exclude a namesake elsewhere, so the location is asked for: a first result more than 300 m from the candidate's point, or without a location, is no confident match and is stored as not found. The location is used for that comparison only and is never stored (DECISIONS 0) |
+| Billing | Per request, at the dearest SKU the mask touches: `id` alone is Text Search Essentials (IDs Only); `displayName`, `formattedAddress`, `location` and `googleMapsUri` are Pro fields; `nationalPhoneNumber` and `websiteUri` are Enterprise fields. Every lookup is one Text Search Enterprise request: 35.00 USD per 1,000 in the first price tier, the first 1,000 of a month free |
+| Caching | No cache headers. Google's policy: Places API content must not be pre-fetched, cached or stored beyond the listed exceptions. The place id is exempt and may be kept indefinitely (refresh one that is older than 12 months; a Place Details request for the id alone is free). Latitude and longitude may be cached for up to 30 consecutive days [M: read in a summary of the service specific terms, not on the page itself]. Name, address, phone, website and Maps link are not among the exceptions |
+
+Failure modes [M: Google's documented mapping, not observed without a key]: errors are JSON `{"error": {"code",
+"message", "status", "details"}}`. 403 `PERMISSION_DENIED` with the reason `SERVICE_DISABLED` while Places API (New) is
+not enabled for the key's project, 400 `INVALID_ARGUMENT` for a request Google cannot read (a missing field mask among
+them), 429 `RESOURCE_EXHAUSTED` for quota.
+
+Data rule: the result belongs to the owner's Scout lead (place id kept, other fields for 30 days at most) and is
+**never** written to `tp_places`. `tp_places.phone` and `website` hold OpenStreetMap values only. Looked-up Google
+fields are shown only on the Scout lead they belong to (with string 12 of section 14), never in the day sheet, the
+calendar file or any export, and are deleted when their 30 days end. Whether keeping name, address, phone, website and
+Maps link for those 30 days is covered by the account's agreement with Google is open: the policy page names the place
+id as the exception, the service specific terms the coordinates (`04_BACKEND.md` section 10, C21). The free
+"Open in Google Maps" link needs no call: `https://www.google.com/maps/search/?api=1&query=<lat>%2C<lng>`, and with a
+stored place id
+`https://www.google.com/maps/search/?api=1&query=<name>&query_place_id=<place id>`.
 
 ## 14. Terms and the strings the UI must show
 

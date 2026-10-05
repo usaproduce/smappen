@@ -21,16 +21,18 @@ Truck Planner uses **one maps platform: the Google Maps Platform that smappen al
 | The map itself, pins, the hex layer's host | Google Maps JavaScript API (existing loader, raster map, no map id) | Our hex layer is our own canvas inside a Google `OverlayView`. No Leaflet, Mapbox, MapLibre, deck.gl or other map library |
 | Address search and geocoding | Google (existing `GooglePlaceAutocomplete` widget; existing `/api/geocode`) | Unchanged |
 | **Drive times and distances** | **Google Routes API** `computeRouteMatrix` (server-side, `GOOGLE_API_KEY`), falling back to the legacy Distance Matrix API if Routes is not enabled on the key, then to a labelled straight-line estimate | **OpenRouteService is not used anywhere in Truck Planner.** Version 1 asks for traffic-unaware durations and applies our own time-of-day factors, so results are deterministic; Google's toll estimate is taken when present and the owner can overwrite it |
-| Scout: phone, website, "see it" | Whatever the place row already carries, plus a free **"Open in Google Maps"** link on every candidate, plus an on-demand **Google Places (New) Text Search** contact lookup when the owner asks for it | The Google place id is stored on the lead; looked-up details are cached for at most 30 days |
+| Scout: phone, website, "see it" | Whatever the place row already carries, plus a free **"Open in Google Maps"** link on every candidate, plus an on-demand **Google Places (New)** contact lookup when the owner asks for it | **Only the Google place id is stored** (on the lead). Phone, website, name and address from Google are shown for the session and never written to the database or a cache: Google's Places policy allows storing place ids only |
 | "Open in Maps" for a spot or a day's route | Google Maps URLs | Free deep links, no API call |
 
 Rules that follow:
 
 - **No new map or routing provider, SDK or key.** External hosts Truck Planner may call at runtime:
   `routes.googleapis.com`, `maps.googleapis.com`, `places.googleapis.com`, `api.weather.gov`, `api.eia.gov`.
-- **Google content is not kept forever.** Route durations/distances and place details fetched from Google are
-  cached for at most **30 days** (place ids may be kept indefinitely). The leg cache therefore has a
-  `fetched_at` and is refreshed lazily; the owner's own corrections are the owner's data and are permanent.
+- **Google content is not kept forever.** Route durations and distances fetched from Google are cached for at
+  most **30 days**; the leg cache therefore has a `fetched_at` and is refreshed lazily. **Places content (name,
+  address, phone, website) is not stored or cached at all** — Google's Places policy exempts only the place id
+  (kept indefinitely) — so a contact lookup is passed straight to the browser, which keeps it in memory for the
+  session. The owner's own corrections and notes are the owner's data and are permanent.
 - Every Google call is metered the way the app already does it (`api_cost_events`, a rate-limit profile), is
   never plan-gated, and never puts a URL that carries the key into an error message or a log line.
 - **The one thing Google cannot supply is the metro-wide list of every food outlet and venue** that the heat map
@@ -208,7 +210,10 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
   `043_truck_planner_core.sql`. Map cells exist only inside the pack (there is no cells table). `tp_places`
   additionally carries, for every place that could host a truck, its 50-number location vector computed by the
   loader with the place's own source point excluded (stored as one binary column), so Scout can rank thousands
-  of candidates without a query per place. Accepted details
+  of candidates without a query per place. **Scout's list is balanced by kind of place**: the ranking keeps the
+  best few of every hostable place type (taprooms and bars, offices, apartment communities, hospitals, campuses,
+  markets, event venues, hotels, shops, gyms, industrial sites, dealerships) instead of one global top list,
+  because a list of fifty office buildings is a demand map, not a list of likely hosts. Accepted details
   from the data specification: H3 ids are 64-bit integers inside the binary pack and 15-character strings
   everywhere else; fuel prices are stored in thousandths of a dollar (`price_milli`) because EIA publishes three
   decimals; a halo of out-of-region source points is kept so the kernel is correct at the region's edge.
@@ -236,10 +241,13 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
     (`tp_drive_legs.fetched_at`); owner corrections and tolls sit on top and never expire; time-of-day factors
     come from our own seed table (not `TrafficService`). Google's toll estimate, when returned, pre-fills the toll.
     **OpenRouteService and the existing `DriveTimeMatrixService` are not used.**
-  - **Google Places (New) Text Search** — on demand only, one Scout candidate at a time ("Look up phone and
-    website"): `textQuery` = the place name, a 500 m location bias around it, field mask limited to id, display
-    name, formatted address, national phone number, website URI and Google Maps URI. The place id is stored on
-    the lead; the looked-up fields are cached for 30 days. Rate-limited per user.
+  - **Google Places (New)** — on demand only, one Scout candidate at a time ("Look up phone and
+    website"). First lookup: Text Search with `textQuery` = the place name, a 500 m location bias around it and a
+    field mask of id, display name, formatted address, location, national phone number, website URI and Google
+    Maps URI; the returned location only checks the match (more than 300 m away is "no confident match").
+    Later lookups for a lead that already has a place id use Place Details by id with the same contact fields.
+    **Only the place id is stored** (on the lead, with the time of the match). Everything else is returned to the
+    browser and kept nowhere on the server: no cache row, no column, no log, no export. Rate-limited per user.
   - `api.weather.gov` hourly forecast — `User-Agent` with a contact from `TP_CONTACT_EMAIL` (falls back to
     `MAIL_FROM`); cached per grid point until it expires.
   - EIA weekly retail fuel price — optional `EIA_API_KEY`; the PADD sub-district follows the base state

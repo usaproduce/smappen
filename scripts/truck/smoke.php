@@ -84,12 +84,7 @@ foreach ($files as $file) {
 if (!$state['keep']) {
     try {
         foreach (array_keys($state['users']) as $user) {
-            $client->as((int) $user)->allow(501)->post('/api/truck/data/delete', ['confirm' => 'delete my truck data']);
-            if ($client->lastStatus() === 501) {
-                tp_out('    user ' . $user . ': truck data kept, the delete route is not built yet');
-                continue;
-            }
-            $client->status(200);
+            $client->as((int) $user)->post('/api/truck/data/delete', ['confirm' => 'delete my truck data'])->status(200);
         }
     } catch (Throwable $e) {
         fwrite(STDERR, "FAILED cleanup\n" . $e->getMessage() . "\n");

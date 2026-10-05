@@ -110,7 +110,7 @@ class SimulateService
             'allowed' => $terms['allowed'] ?? null,
         ];
         $profile = $truck['profile'];
-        $today = $this->clock->today((string) $truck['timezone']);
+        $today = $this->clock->today(Clock::zoneOf($truck));
         $cal = Registry::calibration()->state($orgId, $truck, $A, $today);
         [$truckFactor, $spotFactor] = Estimator::calibrationFactor($cal, $spotId);
 

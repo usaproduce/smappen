@@ -109,6 +109,20 @@ final class TpCacheTest extends TestCase
         self::assertSame(['x' => 4], TpCache::get('tp:suggest:org-1:abc'));
     }
 
+    public function testForgetDropsOneKeyAndLeavesTheKeysThatStartLikeIt(): void
+    {
+        TpCache::put('tp:nws:pt:39.003,-77.405', ['gridId' => 'LWX'], 600);
+        TpCache::put('tp:nws:pt:39.003,-77.4051', ['gridId' => 'LWX'], 600);
+        TpCache::forget('tp:nws:pt:39.003,-77.405');
+        self::assertNull(TpCache::get('tp:nws:pt:39.003,-77.405'));
+        self::assertSame(['gridId' => 'LWX'], TpCache::get('tp:nws:pt:39.003,-77.4051'), 'a neighbour whose key starts with the same text stays');
+        // forgetting what is not there is no error, and the key can be used again
+        TpCache::forget('tp:nws:pt:1,1');
+        self::assertNull(TpCache::get('tp:nws:pt:1,1'));
+        TpCache::put('tp:nws:pt:39.003,-77.405', ['gridId' => 'AKQ'], 600);
+        self::assertSame(['gridId' => 'AKQ'], TpCache::get('tp:nws:pt:39.003,-77.405'));
+    }
+
     public function testOnlyTruckPlannerKeysPass(): void
     {
         foreach ([

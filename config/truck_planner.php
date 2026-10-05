@@ -59,12 +59,16 @@ return [
         'refusal_ttl_s' => 3600,
         'backoff_quota_s' => 120,
         'backoff_upstream_s' => 30,
+        'max_bad_requests_per_call' => 2,
         'grid_fill_ratio' => 0.6,
         'routes_chunk_side' => 25,
         'routes_chunk_elements' => 625,
         'legacy_chunk_side' => 10,
         'cache_pairs_per_statement' => 200,
         'purge_rows_per_call' => 500,
+        // `modifiers` is never recorded by version 1: avoiding tolls or highways does not move a request to
+        // Google's Pro SKU (5.3). The name and its unit cost stay, so that the daily budget sums every Routes
+        // SKU there is and a later request that does reach Pro has its row.
         'skus' => [
             'plain' => 'tp_routes_matrix',
             'modifiers' => 'tp_routes_matrix_pro',
@@ -79,6 +83,7 @@ return [
         'contact_ttl_days' => 30,
         'force_min_age_hours' => 24,
         'bias_radius_m' => 500.0,
+        'match_radius_m' => 300.0,
         'connect_timeout_s' => 3,
         'timeout_s' => 6,
         'bucket' => 'tp_places_lookup',
@@ -99,6 +104,8 @@ return [
         'fresh_min_s' => 600,
         'fresh_default_s' => 3600,
         'stale_max_s' => 21600,
+        'pause_after_failure_s' => 60,
+        'max_periods' => 400,
         'sku_points' => 'tp_nws_points',
         'sku_hourly' => 'tp_nws_hourly',
         'source' => 'National Weather Service (weather.gov)',
@@ -134,6 +141,7 @@ return [
     // Scouting (5.9).
     'scout' => [
         'shortlist_extra' => 10,
+        'max_batches' => 3,
         'max_screen' => 15000,
         'cache_ttl_s' => 86400,
         'page_rows' => 2000,
@@ -144,6 +152,7 @@ return [
     // Suggestions (5.10).
     'suggest' => [
         'cache_ttl_s' => 600,
+        'pairs_per_call' => 2000,
     ],
 
     // api_cost_events.unit_cost_usd per SKU (5.3). Matrix SKUs are per element, the others per call.

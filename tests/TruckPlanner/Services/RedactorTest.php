@@ -37,6 +37,18 @@ final class RedactorTest extends TestCase
         self::assertSame('access_token=[redacted]', Redactor::text('access_token=abc'));
     }
 
+    public function testAnAddressInsideAMessageIsNotLogged(): void
+    {
+        self::assertSame(
+            'Routes API has not been used in project 123. Enable it by visiting [url] then retry.',
+            Redactor::text('Routes API has not been used in project 123. Enable it by visiting https://console.developers.google.com/apis/api/routes.googleapis.com/overview?project=123 then retry.')
+        );
+        self::assertSame('see [url] and [url]', Redactor::text("see http://example.org/a?key=AIzaSyD-abcdefghijklmnop\nand ftp://user:secret@example.org/x"));
+        self::assertSame('SQLSTATE[HY000]: 1:2 is a ratio, a/b a path', Redactor::text('SQLSTATE[HY000]: 1:2 is a ratio, a/b a path'), 'what is no address stays');
+        // url() is the way to log an address: it still answers scheme, host and path
+        self::assertSame('https://api.weather.gov/points/39.003,-77.405', Redactor::url('https://api.weather.gov/points/39.003,-77.405?units=us'));
+    }
+
     public function testTextMasksAGoogleKeyWhereverItStands(): void
     {
         $text = Redactor::text('X-Goog-Api-Key: AIzaSyD-abc_DEF-0123456789 was refused');

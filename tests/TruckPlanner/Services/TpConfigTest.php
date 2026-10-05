@@ -46,6 +46,7 @@ final class TpConfigTest extends TestCase
         self::assertSame(3600, TpConfig::get('routing.refusal_ttl_s'));
         self::assertSame(120, TpConfig::get('routing.backoff_quota_s'));
         self::assertSame(30, TpConfig::get('routing.backoff_upstream_s'));
+        self::assertSame(2, TpConfig::get('routing.max_bad_requests_per_call'));
         self::assertSame(625, TpConfig::get('routing.routes_chunk_side') ** 2);
         self::assertSame(100, TpConfig::get('routing.legacy_chunk_side') ** 2);
     }
@@ -54,10 +55,20 @@ final class TpConfigTest extends TestCase
     {
         self::assertSame(30, TpConfig::get('places.contact_ttl_days'));
         self::assertSame(500.0, TpConfig::get('places.bias_radius_m'));
+        self::assertSame(300.0, TpConfig::get('places.match_radius_m'));
         self::assertSame('tp_places_lookup', TpConfig::get('places.bucket'));
         self::assertSame(10, TpConfig::get('scout.shortlist_extra'));
+        self::assertSame(3, TpConfig::get('scout.max_batches'));
         self::assertSame(15000, TpConfig::get('scout.max_screen'));
         self::assertSame(86400, TpConfig::get('scout.cache_ttl_s'));
+    }
+
+    public function testWeatherAndSuggestionSettings(): void
+    {
+        self::assertSame(60, TpConfig::get('weather.pause_after_failure_s'));
+        self::assertSame(400, TpConfig::get('weather.max_periods'));
+        self::assertSame(600, TpConfig::get('suggest.cache_ttl_s'));
+        self::assertSame(2000, TpConfig::get('suggest.pairs_per_call'));
     }
 
     public function testEverySkuHasAUnitCost(): void
