@@ -1,0 +1,1465 @@
+# Truck Planner - 05 Frontend specification
+
+Binding inputs, in order of precedence: [DECISIONS.md](DECISIONS.md) (section 0 "Google Maps only" first, then sections 4, 5, 10), [04_BACKEND.md](04_BACKEND.md) for every route, request and response, [02_MODEL.md](02_MODEL.md) for model shapes and function names, [03_DATA.md](03_DATA.md) for the cell pack and the attribution strings. Where this file disagrees with one of them, that file wins and the difference is a defect here.
+
+Written 2026-10-04 against branch `truck-planner` (React 18.3, react-router-dom 6.30 with plain `<Routes>`, TanStack Query 5, Zustand 4.5, Tailwind 4 configured in CSS, Vite 5 with `base: '/app/'`, Vitest 1.6 in a Node environment, `@react-google-maps/api` 2.20 on a raster Google map with no map id). Paths are relative to `frontend/src/` unless they start with `frontend/` or `tests/`.
+
+Names. `TruckRecord`, `TruckProfileX`, `AssumptionsInfo`, `RegionInfo`, `FuelInfo`, `Located`, `OutletRow`, `HostHint`, `Spot`, `DriveLeg`, `PlanStop`, `Plan`, `ServiceLog`, `DayInfo`, `Lead` and `ScoutCandidate` are the shapes of 04_BACKEND 4.1; every other shape name is from 02_MODEL section 3. "Route 18" means row 18 of the route table in 04_BACKEND section 3. Tags: **[A]** assumption made here; **[M]** from memory, confirm before relying on it.
+
+---
+
+## 0. Ground rules
+
+### 0.1 Rules every package follows
+
+| # | Rule |
+|---|---|
+| R1 | The only map library is the Google Maps JavaScript API already loaded through `useJsApiLoader` with `GOOGLE_MAPS_LIBRARIES` from `utils/mapsLoader.ts`. No Leaflet, Mapbox, MapLibre, deck.gl or any other map, chart or geometry package. The only new dependency is `h3-js` 4.5.0 (exact pin, same version as the pipeline). |
+| R2 | No `navigator.geolocation`, `watchPosition`, `getCurrentPosition` or Permissions API in truck code or its import closure. Places come from address search, typed coordinates or a map click. |
+| R3 | No AI at runtime: no LLM or ML host, SDK, key name or first-party AI endpoint in truck code or its import closure. Copy never says "AI", "smart" or "magic". |
+| R4 | Every estimate is rendered by `RangeValue` from an `Estimate` (`value`, `low`, `high`, `confidence`), with a confidence chip and a way to open "Why this number". A bare `number` is never shown as an estimate. |
+| R5 | The app never states or implies that a spot may be used. Banned wording and the standing notice are in section 6. |
+| R6 | All truck network I/O goes through `api` from `api/client.ts` to `/api/truck/...` (plus the existing `usageApi.logMapLoad()` and the existing address widget). No `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` or `sendBeacon` in truck code. |
+| R7 | Model maths is never re-implemented in a screen. Screens call the estimator through `utils/truck/model.ts` (2.5). |
+| R8 | No `new Date`, `Date.now`, `Intl`, `toLocale*`, `toISOString`, `toFixed`, `Math.round` or `Math.random` in truck code. Exceptions: `utils/truck/clock.ts` (the one place that reads the clock and applies the truck's time zone), and `Math.round` for pixel snapping inside the map engine. Formatting is hand-rolled, fixed `en-US`. |
+| R9 | Only relative imports (tsconfig `baseUrl` has no Vite alias). Never import the `components/carafe` barrel: it reaches `api/restaurants.ts` (an AI endpoint) and would fail the closure guard. Import `components/carafe/CarafeSkeleton` by path if needed. |
+| R10 | Server data lives in TanStack Query. Zustand holds UI state only. Colours come from CSS variables; surfaces use the `bg-white` class, never inline `background: 'white'`; no Tailwind `dark:` classes. |
+| R11 | Money is dollars (decimal) in every API payload and in the model. Times of day are integer minutes from local midnight of the service date. Dates are `YYYY-MM-DD`. `how = dow * 24 + hour`, `dow` 0 = Monday. |
+
+### 0.2 What is computed where
+
+| Shown on screen | Computed by | From |
+|---|---|---|
+| Map colours | browser: `fastPath.ts` bulk scorer | cell pack + `profile.daypart_fit` + `profile.capacity_orders_per_hour` + truck factor |
+| Spot card, spot detail, compare: week strip, best windows, hour and window orders, who is here, money, break-even | browser: `weekStrip`, `bestWindows`, `windowOrders`, `hourlyOrders`, `stopMoney`, `dayPlan` | exact `LocationVectors` from `simulate` or from the `Spot` (never from the pack) |
+| Planner, Today's plan, Week's planned days, day sheet, calendar file | browser: `dayPlan` | `Plan` stops + `Spot`s + `day-context` + `drive-times` + `CalibrationState` |
+| Log: the estimate shown before a service is saved | browser: `windowOrders` | as above |
+| Suggested days and weeks | server (PHP estimator) | shown as returned: `Suggestion`, `WeekSuggestion` |
+| Scout ranks and estimates | server | shown as returned: `ScoutResult` inside `ScoutCandidate` |
+| The prediction kept with a logged service, accuracy, calibration factors | server | `ServiceLog.prediction`, `AccuracyReport`, `CalibrationState` |
+| The data export | server | route 42 |
+
+The two runtimes agree because both pass the same golden cases. The server also returns numbers the screens do not print: `simulate.estimate` and the `result` snapshot of a saved `Plan`. In development builds only they are used as a drift check: after `simulate` the local `weekStrip` is compared with `estimate.week_strip`, and after "Save day" the local `totals.take_home` with `plan.result.totals.take_home`, both with the model tolerance (relative 1e-9); a mismatch logs `console.warn('[truck] estimator drift', ...)` and never changes what the owner sees. (`adds` may differ legitimately: the server evaluates with loop legs only, the browser with the full matrix, 2.5.)
+
+### 0.3 Estimator port (given)
+
+`utils/truck/estimator/` is built by another engineer and is treated as given: `types.ts` (every JSON shape of 02_MODEL section 3 as an exported type, PascalCase type names, snake_case fields), `index.ts` (every catalogue function in camelCase: `dayContext`, `typicalContext`, `hourlyOrders`, `windowOrders`, `weekStrip`, `bestWindows`, `stopMoney`, `unitMargins`, `breakEvenOrders`, `dayPlan`, `buildTimeline`, `fallbackLeg`, `eventOrders`, `cateringMoney`, `hostExclusion`, `validateOverrides`, `seed`, `holidayOn`, `dayOfWeek`, `addDays`, `parseDate`, `roundHalfAway`, `qkey`, `estSum`, `accuracyReport`, ...), `fastPath.ts` (`mapWeightRows`, the bulk cell scorer, `scoreByte` and the week-wide colour domain) and `seeds.generated.ts`. Its tests are `utils/truck/__tests__/estimator.*.test.ts`. No package in section 9 edits that directory.
+
+---
+
+## 1. Information architecture
+
+### 1.1 Routes
+
+All under `/truck`, all inside `ProtectedRoute`. Sub-navigation order is fixed: Today, Map, Spots, Planner, Week, Log, Scout, Settings.
+
+| Path | Page (export of `TruckPages.ts`) | Tab | Wave |
+|---|---|---|:---:|
+| `/truck` | `TodayPage` | Today | 2 (starter page in 1) |
+| `/truck/map` | `MapPage` | Map | 1 |
+| `/truck/spots` | `SpotsPage` | Spots | 1 |
+| `/truck/spots/compare` | `SpotComparePage` | Spots | 1 |
+| `/truck/spots/:spotId` | `SpotDetailPage` | Spots | 1 |
+| `/truck/plan` | `PlanIndexRedirect` -> `/truck/plan/<today>` | Planner | 2 |
+| `/truck/plan/:date` | `PlannerPage` | Planner | 2 |
+| `/truck/plan/:date/sheet` | `DaySheetPage` (print-styled) | Planner | 3 |
+| `/truck/week` | `WeekIndexRedirect` -> `/truck/week/<Monday of this week>` | Week | 2 |
+| `/truck/week/:weekStart` | `WeekPage` | Week | 2 |
+| `/truck/log` | `LogPage` | Log | 2 |
+| `/truck/scout` | `ScoutPage` | Scout | 3 |
+| `/truck/settings` | `<Navigate to="/truck/settings/truck" replace />` | Settings | 1 |
+| `/truck/settings/:tab` | `SettingsPage`, `tab` = `truck`, `assumptions`, `data` | Settings | 1 (`data` in 3) |
+| `/truck/*` | `<Navigate to="/truck" replace />` | | |
+
+Param validation, done by the page before anything else: `:date` must pass `parseDate` (1970-01-01 .. 2199-12-31), else redirect to `/truck/plan/<today>`; `:weekStart` must be a Monday (`dayOfWeek(d) === 0`), else redirect to the Monday of that week (`addDays(d, -dayOfWeek(d))`); `:tab` outside the list redirects to `truck`; an unknown `:spotId` shows the not-found state of 4.4. "Today" always means the civil date in the truck's time zone (2.7). The backend identifies a plan by id and allows several per date; the Planner is addressed by date and picks the plan as described in 4.5.
+
+### 1.2 Query parameters and deep links
+
+Read with `useSearchParams`. Writes use `{ replace: true }`. Values that change continuously (camera, hour) are written at most every 300 ms and never while the week is playing.
+
+| Page | Param | Meaning | Default |
+|---|---|---|---|
+| Map | `lat`, `lng`, `z` | camera centre (6 decimals) and zoom (one decimal) | persisted camera, else base, else region centre at zoom 12 |
+| Map | `how` | hour of week 0..167 | last used, else the current hour in the truck's time zone |
+| Map | `layer` | `opportunity`, `people`, `competition` | `opportunity` |
+| Map | `pt=lat,lng` | open the spot card at this point | none |
+| Map | `spot=<id>` | open the spot card for a saved spot and centre on it | none |
+| Map | `pick=base` or `pick=spot` | pick mode: the next click sets the base or starts "Add spot"; `return=<path>` says where to go afterwards | none |
+| Map | `scout=1` | show Scout result dots (wave 3) | off |
+| Map | `tp_basemap=blank`, `tp_perf=1` | test and measurement switches (5.6, 5.9) | off |
+| Spots | `q`, `sort` (`best`, `name`), `new=1` (open "Add a spot") | list state | `sort=best` |
+| Spot compare | `ids=a,b,c` (2..4), `win` (`best` or `dow-open-close`, for example `3-660-840`) | what to compare | `win=best` |
+| Planner, day sheet | `plan=<id>` (which plan of that date), `add=<spotId>` (append that spot once, then drop the param), `open`, `close` (minutes, used with `add`), `suggest=1` | which plan, prefill | the date's plan (4.5) |
+| Log | `tab` (`services`, `accuracy`), `new=1`, `spot`, `date`, `open`, `close`, `stop` (a plan stop id) | prefill the quick entry | `tab=services` |
+| Scout | `hide` (comma list of lead states, sent to the server), and the client-side filters `type` (comma list of place types), `county` (comma list of FIPS), `kitchen` (`any`, `no`), `contact` (`any`, `has`) | filters | `hide=declined,hidden`, the rest open |
+
+Known limitation, not fixed here: `ProtectedRoute` does not remember the requested URL, so a logged-out deep link lands on `/truck` after sign-in.
+
+### 1.3 Layout and sub-navigation
+
+`components/truck/TruckLayout.tsx` is eager (it is in the main bundle so the top nav and sub-nav paint at once and `AppNav` is not remounted). Structure, top to bottom:
+
+1. Root `div`: `min-h-screen flex flex-col`, or `h-dvh flex flex-col` when the section is `map`. Background `var(--bg)`.
+2. `<AppNav />`, exactly once, no children.
+3. Sub-nav: `<nav aria-label="Truck Planner sections" className="sticky top-12 z-20 border-b bg-white scroll-x overflow-x-auto">` with border colour `var(--nav-border)`, holding `<ul className="max-w-7xl mx-auto px-2 md:px-6 py-1.5 flex items-center gap-1 whitespace-nowrap">` of `NavLink`s: `inline-flex items-center gap-1.5 h-11 md:h-9 px-3.5 md:px-3 rounded-lg text-[13px] font-semibold`, active `background: var(--nav-active-bg); color: var(--nav-active-fg)`, inactive `color: var(--nav-text)`. Icon 14 px, `aria-hidden`. On a route change the active link is scrolled into view (`scrollIntoView({ inline: 'center', block: 'nearest' })`). At 375 px the rail scrolls sideways; nothing wraps.
+4. `<main id="main-content" tabIndex={-1} className="flex-1 focus:outline-none">` (plus `relative min-h-0` for `map`), containing `<ErrorBoundary key={section} scope="Truck Planner" inline><Suspense fallback={...}><Outlet /></Suspense></ErrorBoundary>`. Every section except `map` is wrapped in `<div className="carafe-route-fade max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-6">`.
+
+| Tab | `to` | lucide icon | `end` |
+|---|---|---|:---:|
+| Today | `/truck` | `CalendarDays` | yes |
+| Map | `/truck/map` | `MapPinned` | |
+| Spots | `/truck/spots` | `Store` | |
+| Planner | `/truck/plan` | `Route` | |
+| Week | `/truck/week` | `CalendarRange` | |
+| Log | `/truck/log` | `NotebookPen` | |
+| Scout | `/truck/scout` | `Compass` | |
+| Settings | `/truck/settings` | `Settings2` | |
+
+(All eight icon names exist in the installed lucide-react 0.408.) `section = pathname.split('/')[2] || 'today'`. `document.title` is set to `Truck Planner` while the layout is mounted and restored on unmount. The Suspense fallback is built from plain `.skeleton` blocks (one 96 px card and three 72 px rows, `aria-busy="true"`); for `map` it is a centred "Loading map..." line. The existing `ErrorBoundary` class must be the boundary: it is the only code that recovers from a stale lazy chunk after a deploy.
+
+### 1.4 The gate and the first-run step
+
+`TruckGate` (lazy, a pathless layout route) wraps every page. It runs the bootstrap query (route 1) and renders:
+
+| State | Renders |
+|---|---|
+| Loading | the page-shaped skeleton |
+| Request failed | `QueryError` with the server's sentence when there is one (403: no workspace), else "Could not load Truck Planner.", and "Try again" |
+| `model_version` or `seeds_revision` in the answer differs from the estimator port's | a card: heading "This page is out of date", text "Truck Planner was updated. Reload to get the current version.", button "Reload" (`location.reload()`). No page renders, because browser and server numbers would disagree |
+| `has_truck` is false | `SetupTruck` in place of the page, on every `/truck` route |
+| Ready | `<TruckContext.Provider value={...}><Outlet /></TruckContext.Provider>` |
+
+`TruckContext` (read with `useTruck()`) is what every page builds on: `{ truck: TruckRecord, profile: TruckProfileX, A: Assumptions, cal: CalibrationState, region: RegionInfo | null, fuel: FuelInfo, timezone: string, counts, routing: { state }, limits }`, all taken from the bootstrap answer. `A` is assembled in the browser from the port's seeds plus the answer's `assumptions` (2.5). `region` is null when the truck's region is `none`; a region with `usable: false` is treated as having no map data. Any later 409 "Set up your truck first" (the truck was deleted in another tab) invalidates the bootstrap query, which brings the first-run step back.
+
+**"Set up your truck"** (`SetupTruck.tsx`). One card, max width 560 px, centred. It does not use the existing onboarding-flags mechanism.
+
+| Element | Text or behaviour |
+|---|---|
+| Heading | "Set up your truck" |
+| Intro | "Three things to start. You can change them, and everything else, in Settings." |
+| Field 1 | Label "Truck name". Text, 1..120 characters, required |
+| Field 2 | Label "Where the truck starts and ends its day". `GooglePlaceAutocomplete` with `countries={['us']}`, placeholder "Search an address". Under it a disclosure "Enter coordinates instead" with one field, placeholder "38.9696, -77.3861" (latitude, longitude). If Google is unavailable only the coordinates field shows. Helper: "This is your base: a commissary, a lot or your driveway. It is only used for drive times and weather." |
+| Region check | If the point is inside no `bbox` of the answer's `regions`: warning line "This is outside the area we have data for ({names of the regions}). You can save it, but the map and the estimates will be empty." Saving stays possible |
+| Field 3 | `MoneyField`, label "Average ticket", helper "What one order comes to on average, before tax and tips.", default from seed `profile_defaults.avg_ticket` (15.00), range 1 to 200 |
+| Button | Primary "Save and continue". Disabled until all three are valid. It sends route 3 (`PUT /api/truck/profile`) with `name`, `base: { lat, lng, address }` and `avg_ticket`; the server fills every other field from the defaults. On 201 the bootstrap query is refetched and the requested page renders. A `timezone_assumed` warning in the answer shows "We assumed Eastern time for this truck." |
+| Footnote | "Truck Planner never tracks your location. The only places it knows are the ones you enter." |
+
+### 1.5 `App.tsx`
+
+Three edits, nothing else:
+
+```tsx
+import { lazy, useEffect } from 'react';                 // was: import { useEffect } from 'react';
+import TruckLayout from './components/truck/TruckLayout';
+
+// Truck Planner: ONE import() target, so the build emits one chunk (TruckPages-<hash>.js).
+const loadTruck = () => import('./components/truck/TruckPages');
+const TruckGate        = lazy(() => loadTruck().then((m) => ({ default: m.TruckGate })));
+const TruckToday       = lazy(() => loadTruck().then((m) => ({ default: m.TodayPage })));
+const TruckMap         = lazy(() => loadTruck().then((m) => ({ default: m.MapPage })));
+const TruckSpots       = lazy(() => loadTruck().then((m) => ({ default: m.SpotsPage })));
+const TruckSpotCompare = lazy(() => loadTruck().then((m) => ({ default: m.SpotComparePage })));
+const TruckSpotDetail  = lazy(() => loadTruck().then((m) => ({ default: m.SpotDetailPage })));
+const TruckPlanIndex   = lazy(() => loadTruck().then((m) => ({ default: m.PlanIndexRedirect })));
+const TruckPlanner     = lazy(() => loadTruck().then((m) => ({ default: m.PlannerPage })));
+const TruckDaySheet    = lazy(() => loadTruck().then((m) => ({ default: m.DaySheetPage })));
+const TruckWeekIndex   = lazy(() => loadTruck().then((m) => ({ default: m.WeekIndexRedirect })));
+const TruckWeek        = lazy(() => loadTruck().then((m) => ({ default: m.WeekPage })));
+const TruckLog         = lazy(() => loadTruck().then((m) => ({ default: m.LogPage })));
+const TruckScout       = lazy(() => loadTruck().then((m) => ({ default: m.ScoutPage })));
+const TruckSettings    = lazy(() => loadTruck().then((m) => ({ default: m.SettingsPage })));
+```
+
+```tsx
+<Route path="/" element={isAuthed ? <Navigate to="/truck" replace /> : <HomePage />} />   {/* was /dashboard */}
+
+{/* Truck Planner: own layout and sub-nav; the gate and all pages load as one lazy chunk */}
+<Route path="/truck" element={<ProtectedRoute><TruckLayout /></ProtectedRoute>}>
+  <Route element={<TruckGate />}>
+    <Route index                   element={<TruckToday />} />
+    <Route path="map"              element={<TruckMap />} />
+    <Route path="spots"            element={<TruckSpots />} />
+    <Route path="spots/compare"    element={<TruckSpotCompare />} />
+    <Route path="spots/:spotId"    element={<TruckSpotDetail />} />
+    <Route path="plan"             element={<TruckPlanIndex />} />
+    <Route path="plan/:date"       element={<TruckPlanner />} />
+    <Route path="plan/:date/sheet" element={<TruckDaySheet />} />
+    <Route path="week"             element={<TruckWeekIndex />} />
+    <Route path="week/:weekStart"  element={<TruckWeek />} />
+    <Route path="log"              element={<TruckLog />} />
+    <Route path="scout"            element={<TruckScout />} />
+    <Route path="settings"         element={<Navigate to="/truck/settings/truck" replace />} />
+    <Route path="settings/:tab"    element={<TruckSettings />} />
+    <Route path="*"                element={<Navigate to="/truck" replace />} />
+  </Route>
+</Route>
+```
+
+The block goes directly after the `/` route. React Router 6 ranks by specificity, so `spots/compare` wins over `spots/:spotId` wherever it is written. No server change is needed: Apache and the root `nginx.conf` already serve `app/index.html` for any non-file path. `LoginPage` and `RegisterPage` already navigate to `/`, so they need no edit.
+
+### 1.6 `AppNav.tsx` and `CommandPalette.tsx`
+
+`AppNav.tsx`: add `Truck` to the lucide import and insert `{ to: '/truck', label: 'Truck', icon: Truck }` at index 0 of `ITEMS` (no `end`, so every `/truck/*` route keeps it lit). The four existing items stay in their order. Add one quick-create entry after "New project": `<CreateLink to="/truck/spots?new=1" icon={<Truck size={13} />} label="New spot" onPick={() => setCreateOpen(false)} />`. The brand link stays as it is.
+
+`CommandPalette.tsx`: add `Truck` to its lucide import and push this block at the very top of the `items` memo (before the restaurant loop, so the entries survive the 24-item cap). Route strings only.
+
+| Label | Sub | href | Keywords |
+|---|---|---|---|
+| Truck: Today | next stop, take-home | `/truck` | truck planner today |
+| Truck: Map | who is where, by hour | `/truck/map` | truck map hour demand |
+| Truck: Spots | saved spots | `/truck/spots` | truck spots saved |
+| Truck: Plan a day | stops, drive times, costs | `/truck/plan` | truck plan day route |
+| Truck: Week | seven days | `/truck/week` | truck week |
+| Truck: Log a service | actual orders | `/truck/log?new=1` | truck log orders |
+| Truck: Scout | places that could host a truck | `/truck/scout` | truck scout hosts |
+| Truck: Settings | truck and costs | `/truck/settings/truck` | truck settings costs |
+
+Each is `{ kind: 'nav', id: href, label, sub, icon: Truck, group: 'Truck Planner', keywords, run: () => navigate(href) }`.
+
+### 1.7 What stays out of the eager import graph
+
+The main chunk (`index-*.js`, 906 kB today) may contain exactly these truck-related things: `TruckLayout.tsx`, the `/truck` strings in `AppNav.tsx` and `CommandPalette.tsx`, and the `lazy()` wrappers in `App.tsx`.
+
+| File | May import | Must not import (statically) |
+|---|---|---|
+| `App.tsx` | `./components/truck/TruckLayout`; `import('./components/truck/TruckPages')` | anything else under `components/truck/`, `utils/truck/`, `api/truck`, `stores/truck*` |
+| `AppNav.tsx`, `CommandPalette.tsx` | nothing from truck code | all of it |
+| `TruckLayout.tsx` | `react`, `react-router-dom`, `lucide-react`, `../layout/AppNav`, `../ErrorBoundary` | `./TruckPages`, `./TruckGate`, `./pages/*`, `./ui/*`, `./map/*`, `./data/*`, `./truck.css`, `../../api/truck`, `../../stores/truck*`, `../../utils/truck/*`, `h3-js`, the `../carafe` barrel |
+
+`TruckPages.ts` is the lazy boundary: it re-exports `TruckGate` and every page, imports `./truck.css` and `./print.css` (so truck CSS ships with the chunk; both files are plain CSS with no Tailwind directives and no `@apply`), and imports `./map/authFailure` for its side effect (5.6). `h3-js`, the estimator, the seeds, the map engine, the truck stores and `api/truck.ts` are reachable only through it. Enforced by `guards.eager.test.ts` and by `frontend/scripts/check-truck-chunks.mjs` (8.4). One thing does land in the main stylesheet and is expected: the Tailwind utility classes used by truck components, because Tailwind scans every source file.
+
+---
+
+## 2. State and data
+
+### 2.1 `api/truck.ts`
+
+One module, house style: `export const truckApi = { async x() { const { data } = await api.get(...); return data.data... } }`, plus `truckKeys` (2.2) and TypeScript types for the shapes of 04_BACKEND 4.1 (snake_case fields, exactly as returned; model shapes are imported with `import type` from `utils/truck/estimator/types`). Request bodies, validation rules and status codes are those of 04_BACKEND section 4 and are not repeated here. This module and `utils/truck/assemble.ts` are the only files that change if a payload changes.
+
+| Client function | Route | What the screens use from the answer |
+|---|:---:|---|
+| `bootstrap()` | 1 | `has_truck`, `truck`, `assumptions`, `region`, `regions`, `calibration`, `fuel`, `timezone`, `today`, `now_minute`, `counts`, `routing.state`, `limits`, `model_version`, `seeds_revision` |
+| `saveProfile(patch)` | 3 | `truck`, `region`, `warnings`. An upsert: the first call creates the truck. Later calls send only changed keys of `TruckProfileX` |
+| `saveOverrides(changes)`, `resetOverrides(paths?)` | 5, 6 | `assumptions`. `changes` is `{ <seed path>: value \| null }`, merged on the server (null removes a path). A 422 carries `details: [{ path, error }]` with the codes of 02_MODEL 2.2 |
+| `fetchPack(url)` -> `ArrayBuffer` | 8 | the binary of 03_DATA section 11; `url` is `region.pack.url`; `responseType: 'arraybuffer'`; not the JSON envelope |
+| `simulate(body)` | 9 | `located`, `vectors` (one `LocationVectors` per requested visibility, host exclusion applied), `outlets: [OutletRow]`, `outlets_total`, `hosts_nearby: [HostHint]`, `dataset_version`. `estimate` is read only by the drift check of 0.2 |
+| `listSpots({ archived })`, `getSpot(id)`, `createSpot(body)`, `updateSpot(id, patch)`, `archiveSpot(id)`, `refreshStaleSpots()` | 10, 13, 11, 14, 15, 12 | `Spot`: `terms: SpotTerms`, `host_details`, one `vectors` set (for the spot's own visibility), `vectors_state`, `maps_url`, `archived`. `getSpot` also returns `google_contact` |
+| `dayContext(from, days)` | 17 | `fuel`, `forecast: { state, generated_at }`, `days: [DayInfo]`. The forecast is for the truck's base point |
+| `driveTimes({ points, mode, pairs? })` | 18 | `legs: [DriveLeg]` (each with `leg_input: LegInput`, `source`, `fallback_reason`, `toll_state`, `google_toll`, `override`), `routing.state` |
+| `saveLegOverride({ from, to, minutes, toll })`, `deleteLegOverride(id)` | 20, 21 | `override` |
+| `listPlans(from, to)`, `getPlan(id)`, `createPlan(body)`, `updatePlan(id, body)`, `deletePlan(id)` | 22, 25, 23, 26, 27 | list rows `{ id, date, name, state, stop_count, result_state, updated_at }`; `Plan` with `stops: [PlanStop]`, `treat_as`, `state`, `maps_route_url`, and `result` for the drift check |
+| `suggestDay(body)`, `suggestWeek(body)` | 29, 30 | `suggestions: [Suggestion]`, `week: WeekSuggestion`, `fallback_pairs` |
+| `listServices({ from, to, spot_id })`, `createService(body)`, `updateService(id, patch)`, `deleteService(id)` | 31, 32, 34, 35 | `ServiceLog` with its `prediction`; every write also returns the new `calibration` |
+| `accuracy({ from, to })` | 37 | `accuracy: AccuracyReport`, `entries: [ServiceLogEntry]`, `unscored_without_prediction` |
+| `scout({ hide, refresh })`, `saveLead(placeKey, { state, notes })`, `lookupContact(placeKey, force?)`, `saveLeadAsSpot(placeKey, body)` | 38, 39, 40, 41 | `candidates: [ScoutCandidate]`, `screened`, `truncated`, `limit_minutes`, `licence_counties`, `attribution`; `lead`, `lookup`; `spot` |
+| `exportAll()` -> `Blob` | 42 | one JSON document (`responseType: 'blob'`), file name from `Content-Disposition` |
+| `deleteAllData()` | 43 | sends `{ confirm: 'delete my truck data' }`; `deleted` counts |
+| `sources()` | 44 | `dataset`, `fuel`, `region`, `attribution: [{ id, text, url }]` |
+
+Routes 2, 4, 7 and 36 are covered by `bootstrap`; 16, 19, 24, 28 and 33 are not called by any screen.
+
+### 2.2 Query keys and stale times
+
+```ts
+export const truckKeys = {
+  all:         ['truck'] as const,
+  bootstrap:   () => ['truck', 'bootstrap'] as const,
+  pack:        (url: string) => ['truck', 'pack', url] as const,
+  simulate:    (version: string, lat6: string, lng6: string, hostKey: string, visKey: string) => ['truck', 'simulate', version, lat6, lng6, hostKey, visKey] as const,
+  spots:       (archived: boolean) => ['truck', 'spots', 'list', archived] as const,
+  spot:        (id: string) => ['truck', 'spots', 'one', id] as const,
+  dayContext:  (from: string, days: number) => ['truck', 'day-context', from, days] as const,
+  driveTimes:  (pointsKey: string) => ['truck', 'drive-times', pointsKey] as const,
+  plans:       (from: string, to: string) => ['truck', 'plans', 'list', from, to] as const,
+  plan:        (id: string) => ['truck', 'plans', 'one', id] as const,
+  suggestDay:  (date: string, optionsKey: string) => ['truck', 'suggest', 'day', date, optionsKey] as const,
+  suggestWeek: (weekStart: string, optionsKey: string) => ['truck', 'suggest', 'week', weekStart, optionsKey] as const,
+  services:    (from: string, to: string, spotId: string) => ['truck', 'services', from, to, spotId] as const,
+  accuracy:    () => ['truck', 'accuracy'] as const,
+  scout:       (hideKey: string) => ['truck', 'scout', hideKey] as const,
+  sources:     () => ['truck', 'sources'] as const,
+};
+```
+
+`lat6` and `lng6` are coordinates written with six fixed decimals through `roundHalfAway`. `hostKey` is `'-'` without a host, else the host's `place_key`, segment and, for worker and resident segments, its size, joined with `|` (the things that change the vectors the server computes). `visKey` is the sorted visibility list. `pointsKey` is the sorted list of `<id>@<lat6>,<lng6>` joined with `|`. Option keys are `JSON.stringify` of an object with sorted keys. The app defaults stay (`staleTime` 30 s, `retry` 1, refetch on window focus); overrides:
+
+| Query | staleTime | gcTime | Focus refetch | Notes |
+|---|---|---|:---:|---|
+| `bootstrap` | 5 min | default | yes | structural sharing keeps `TruckContext` stable when nothing changed |
+| `pack` | Infinity | 10 min | no | immutable by URL; `retry: 2`; data is the decoded `CellPack` (about 12 MB) |
+| `simulate` | 10 min | 10 min | no | `enabled` only when a point is selected; `placeholderData: keepPreviousData` only when the point is unchanged and the host changed |
+| `spots`, `spot` | 60 s | default | yes | |
+| `dayContext` | 10 min if the range touches today .. today + 6, else 12 h | 30 min | yes | forecasts change hourly; beyond the horizon there is none |
+| `driveTimes` | 24 h | 24 h | no | the server keeps Google legs up to 30 days; corrections update the cache directly. Route 18 is rate-limited (120 an hour, shared with plan saves), so nothing calls it per keystroke or per map click |
+| `plans`, `plan` | 30 s | default | yes | |
+| `suggestDay`, `suggestWeek` | 5 min | 10 min | no | `enabled` only while the panel is open (30 requests an hour) |
+| `services`, `accuracy` | 60 s | default | yes | |
+| `scout` | 10 min | 10 min | no | never refetched by a timer (60 requests an hour); "Refresh" sends `refresh=1` |
+| `sources` | 1 h | default | no | |
+
+### 2.3 Mutations
+
+Hooks live in `components/truck/data/mutations.ts`. Every mutation has `onError: (e) => { rollback(); const m = apiErrorMessage(e, '<fallback>'); if (m) toast.error(m); }` (2.6). Success toasts are one or two words.
+
+| Hook | Optimistic | On success | Toast | Fallback error text |
+|---|---|---|---|---|
+| `useSaveProfile` (also creates the truck) | yes when a truck exists: patch `bootstrap` | write `truck` and `region` into `bootstrap`; invalidate `['truck','suggest']`, `['truck','scout']`; if the base moved also `['truck','drive-times']`, `['truck','day-context']` | "Saved" | "Could not save your settings." |
+| `useSaveOverrides`, `useResetOverrides` | yes: patch `bootstrap` | write `assumptions` into `bootstrap`; invalidate `['truck','suggest']`, `['truck','scout']`, `['truck','plans']` | "Saved" | "Could not save the assumptions." |
+| `useCreateSpot` | no (needs the id and vectors) | set `spot(id)`; invalidate `['truck','spots','list']`, `bootstrap` (counts) | "Spot saved" | "Could not save the spot." |
+| `useUpdateSpot` | yes for fields that do not change vectors (name, address, notes, `host_details`, fees, `allowed`, `only_food`, size of a visitor host). No for point, visibility, host link, host segment, or size of a worker or resident host: wait for the stored vectors | set `spot(id)`; invalidate the lists and `['truck','suggest']` | "Saved" | "Could not save the spot." |
+| `useArchiveSpot` | no; confirm first | invalidate the lists, `['truck','suggest']`, `bootstrap` | "Spot deleted" | "Could not delete the spot." |
+| `useRefreshStaleSpots` | no | invalidate the lists; run again while `remaining > 0` (at most ten rounds) | none | none (silent; stale spots keep their tag) |
+| `useSavePlan` (create or update) | yes: set `plan(id)` from the draft when the id exists | `markSaved` in the draft store with the returned `Plan` (new stop ids); invalidate `['truck','plans','list']` | "Day saved" | "Could not save the day." |
+| `useDeletePlan` | no; confirm first | remove `plan(id)`; invalidate the lists | "Day cleared" | "Could not clear the day." |
+| `useSaveLegOverride`, `useDeleteLegOverride` | yes: patch that directed pair in every cached `drive-times` result | invalidate `['truck','suggest']` | none | "Could not save the drive time." |
+| `useSaveService`, `useDeleteService` | create: insert at the top with a temporary id | write the returned `calibration` into `bootstrap`; invalidate `['truck','services']`, `accuracy`, `['truck','suggest']`, `['truck','scout']`, `['truck','plans']` | "Logged" | "Could not save the service." |
+| `useSaveLead` | yes: patch the candidate's `lead` in every cached `scout` result | nothing | none | "Could not update the lead." |
+| `useLookupContact` | no | write the returned `lead` into the cached candidate | none | "The lookup did not work. Try again later." |
+| `useSaveLeadAsSpot` | no | invalidate the spot lists; patch the candidate's `lead` | "Spot saved" with a link "Open spot" | "Could not save the spot." |
+| `useDeleteAllData` | no; typed confirmation | `qc.removeQueries({ queryKey: truckKeys.all })`, reset the three stores, refetch `bootstrap` | "Deleted" | "Could not delete the data." |
+
+### 2.4 Stores
+
+Three small Zustand stores, selectors only (`useStore((s) => s.field)`), no server data.
+
+```ts
+// stores/truckUiStore.ts - persist, name 'smappen-truck-ui'
+interface TruckUiState {
+  mapLayer: 'opportunity' | 'people' | 'competition';   // default 'opportunity'
+  mapCamera: { lat: number; lng: number; zoom: number } | null;
+  lastHow: number | null;
+  playSpeedMs: 1200 | 600 | 300;                         // default 600
+  showSpotPins: boolean;                                 // default true
+  showScoutDots: boolean;                                // default false
+  windowHours: 2 | 3 | 4;                                // spot card window length, default 3
+  compareIds: string[];                                  // at most 4 spot ids
+  mapsAuthFailed: boolean;                               // NOT persisted
+  patch(p: Partial<Omit<TruckUiState, 'patch'>>): void;
+}
+// partialize allow-list: mapLayer, mapCamera, lastHow, playSpeedMs, showSpotPins, showScoutDots, windowHours, compareIds
+
+// stores/truckHourStore.ts - not persisted
+interface TruckHourState {
+  how: number;                  // integer 0..167
+  playing: boolean;
+  date: string | null;          // null = typical week; a date = the map uses that date's context (wave 2)
+  setHow(how: number): void;    // wraps mod 168; no-op when unchanged
+  step(delta: number): void;
+  setPlaying(on: boolean): void;
+  setDate(date: string | null): void;   // also moves how to dayOfWeek(date) * 24 + hour
+}
+
+// stores/truckPlanDraftStore.ts - not persisted
+interface PlanDraftState {
+  drafts: Record<string, PlanDraft>;                         // key = date (PlanDraft is defined in 4.5)
+  load(date: string, saved: Plan | null): void;              // ignored while a dirty draft for that date exists
+  patch(date: string, fn: (d: PlanDraft) => PlanDraft): void; // sets dirty
+  markSaved(date: string, saved: Plan): void;
+  discard(date: string): void;
+}
+```
+
+Rules for the hour store:
+
+1. The map layer subscribes imperatively: `useTruckHourStore.subscribe((s, prev) => { if (s.how !== prev.how || s.date !== prev.date) layer.setHour(s.how, s.date); })`. No React render happens between a slider tick and the pixels.
+2. React components that select `how` must be leaves that only print or move something small: the hour label, the week-strip cursor, the legend marker. Anything that computes (the spot card's "This hour", "Who is here") reads `useSettledHow(150)`: `how` once it has been unchanged for 150 ms, or at once when playback is off.
+3. `how` is never put in `truckUiStore`, in the URL per tick, or in the component that renders `<GoogleMap>`. `lastHow` and `?how=` are written when playback stops and 300 ms after the last manual change.
+4. New draft stops get temporary ids from a module counter (`n1`, `n2`, ...), never from randomness and never the literal `base`. They are left out of the save body; the server assigns the real ids.
+
+### 2.5 Feeding the estimator
+
+`utils/truck/model.ts` is the single import point for model code: it re-exports the port's functions and types and exposes `SEEDS`, `MODEL_VERSION` (`tps-0.1.0`) and `SEEDS_REVISION` under those names. If the port names an export differently, only this file changes. `utils/truck/assemble.ts` (pure, tested) turns API payloads into model inputs:
+
+| Function | Result | Rule |
+|---|---|---|
+| `buildAssumptions(info: AssumptionsInfo)` | `Assumptions` | `{ ...info, seeds: SEEDS }`; throws `VersionMismatch` when `model_version` or `seeds_revision` differs from the port's (the gate turns that into the reload card) |
+| `buildContext(A, day: DayInfo, treatAs)` | `DayContext` | `dayContext(A, day.date, treatAs, day.context.forecast, day.context.fuel_price_per_gal, day.context.fuel_price_source)`. Always rebuilt in the browser, so "Treat this day as" is instant; with `treatAs` null it must equal `day.context` (asserted in development builds). The forecast passes through untouched (a null `precip_prob` stays null) |
+| `degradedContext(A, date, treatAs, fuel: FuelInfo)` | `DayContext` | the same with `forecast: null` and the fuel price of the bootstrap answer; used when `day-context` cannot be loaded |
+| `typicalWithFuel(A, dow, fuel: FuelInfo)` | `DayContext` | `{ ...typicalContext(A, dow), fuel_price_per_gal: fuel.price_per_gal, fuel_price_source: fuel.source }`, for one-stop-day figures on a typical week. `dayPlan` only needs a fuel price in its context, so a typical context with one added is valid input (**[A]**, pinned by `assemble.test.ts`); the `PlanInput.date` passed with it is `nextDateWithDow(today, dow)`, which the model only echoes |
+| `toStopInput(stop, spotsById)` | `StopInput` | `spot` stops: `point`, `terms` (with `spot_id`) and `vectors` of the `Spot` (archived spots included). `event` stops: `terms = { spot_id: null, visibility: 'normal', host: null, fee_flat, fee_pct, fee_min, allowed: null }` and `event`. `catering` stops: `catering`. `id` = the stop's id (a temporary id for an unsaved stop) |
+| `toLegs(legs: DriveLeg[])` | `{ "<from_id>><to_id>": LegInput }` | `leg.leg_input` under the key `from_id + '>' + to_id`. A pair that is absent stays absent: the model fills it with `fallbackLeg` and raises `fallback_drive_time` |
+| `toPlanInput(date, stops)` | `PlanInput` | stops in the owner's order |
+| `hostKey(host)`, `pointsKey(points)` | string | the cache keys of 2.2 |
+
+Hooks in `components/truck/data/` wrap queries plus assembly and are the only way screens get model results:
+
+| Hook | Returns |
+|---|---|
+| `useTruck()` | the `TruckContext` value (1.4) |
+| `useNow()` | `{ date, minute, dow, how }` in the truck's time zone; re-renders on the minute (2.7) |
+| `useSpots({ archived })` | the spot list; when any spot has `vectors_state` other than `fresh` it fires `useRefreshStaleSpots` once per page visit |
+| `useDayContexts(from, days, treatAsByDate)` | `{ status: 'pending' \| 'ready' \| 'degraded', contexts: Record<date, DayContext>, forecast: { state, generated_at }, fuel, refetch }` |
+| `useDriveTimes(points, pairs?)` | `{ status, legs: DriveLeg[], legInputs, routingState, refetch }`. Points are `{ id, lat, lng }` with id `base` for the truck's base and the stop id for a stop. Without `pairs` it asks for `mode: 'matrix'`: every ordered pair, because `dayPlan` needs the leg that skips a stop to work out what that stop adds (a day with four stops is 20 pairs); the same answer serves Planner, Week, Today and the day sheet. With `pairs` it asks for `mode: 'pairs'` (spot detail and compare: base to spot and back) |
+| `useSpotEstimate({ point \| spot, terms })` | `{ status: 'pending' \| 'ready' \| 'error' \| 'outside', vectors, located, outlets, hostsNearby, week: number[168], best: Window[], hour(how), windowOn(dow, open, close), oneStopDay(dow, open, close) }`. A saved spot whose vector-relevant terms are unchanged uses `spot.vectors` and makes no request; a clicked point or an edited spot uses `simulate` |
+| `usePlanForDate(date, preferredId?)` | `{ status, plan: Plan \| null, others: { id, name }[] }`: the list of that date, the choice by `planForDate` (rule 1 of 4.5), then that `Plan` |
+| `usePlanEvaluation(date, stops, treatAs)` | `{ status, result: DayResult \| null, legs: DriveLeg[], notes: { driveFallback, contextDegraded }, refetch }`; needs the contexts of `date` and `addDays(date, 1)`, the spots (archived included), the drive matrix and calibration. `stops` are `PlanStop`s or draft stops |
+
+Rules: (1) derived results are `useMemo`-ed on the identities of their inputs; a week strip is 168 `hourlyOrders` calls and a day plan is a handful of evaluations, both far under a frame. (2) A screen never holds a rounded model value and feeds it back; rounding happens in formatters only. (3) Typical-week figures use `typicalContext`; dated figures use `buildContext`. A window that closes after midnight passes the next day's context as `ctx_next`, built with `treat_as` null. (4) When a profile or assumption draft is being edited, the preview is computed from the draft, the rest of the app from the saved value. (5) A spot with `vectors_state: 'stale'` is still evaluated from its stored vectors and tagged "Updating" until the refresh returns; `none` shows "No estimate yet".
+
+### 2.6 Error handling
+
+| Situation | Behaviour |
+|---|---|
+| Any 401 | already handled globally (logout, redirect). Truck code does nothing. The truck API never answers 401 for anything else |
+| No response (offline) | the interceptor already toasts "Connection lost. Please check your network.". `apiErrorMessage(e, fallback)` returns null for these so call sites do not toast twice |
+| Query pending | layout-shaped skeleton with `aria-busy="true"`; never the text "Loading..." for a whole page |
+| Query failed | `QueryError` in place of the content: one sentence, "Try again" calls `refetch()`. Never `if (isLoading \|\| !data) return ...` (it hangs on errors) |
+| 404 for a spot or plan | not-found state with a link back to the list |
+| 409 "Set up your truck first" | invalidate `bootstrap` (1.4). Other 409s are business conflicts ("You can keep at most 500 spots", "A service is already logged for this spot and time", "This place is already saved as a spot"): show the server's sentence |
+| 422 on save | the server's sentence (it names the field) in the toast; for overrides the `details` list is mapped onto the fields. Forms validate first with the same ranges, so a 422 is the exception. Invalid values are rejected, never clamped |
+| 429 | "Too many requests right now. Try again in a minute." unless the server sent its own sentence |
+| `day-context` failed | estimates still render (`degraded`), with a warning strip: "Could not load the forecast. Showing no weather adjustment." and "Try again" |
+| `drive-times` failed, or legs came back as straight lines | the plan still evaluates; strip: "Google drive times are unavailable. Drive times are straight-line estimates." (the reason wording is in 6.7) |
+| Pack failed, wrong version, or WebGL trouble | the map shows without colours (5.8); clicking still opens the spot card |
+| `simulate` answered `located.in_region: false` | the "outside" state of the spot card (4.3) |
+| Component crash | the keyed `ErrorBoundary` in the layout; independent regions on dense pages (map, spot card, planner summary) get their own `<ErrorBoundary scope="..." inline>` |
+
+`apiErrorMessage(e, fallback)`: `e?.response?.data?.error` if it is a non-empty string, else `fallback`; null when `e.response` is missing. Server sentences are shown as they are; the backend guarantees they never contain a URL or a key.
+
+### 2.7 Clock
+
+The model never reads a clock; the UI has to know "today" and "now" in the truck's time zone. `utils/truck/clock.ts` is the only file that may use `Date` and `Intl`:
+
+```ts
+export function nowEpochMs(): number;                                        // Date.now()
+export function regionNow(timeZone: string, epochMs: number): { date: string; minute: number };
+export function zonedToUtcStamp(timeZone: string, date: string, minute: number): string;   // 'YYYYMMDDTHHMMSSZ'
+export function utcStamp(epochMs: number): string;                            // 'YYYYMMDDTHHMMSSZ'
+```
+
+`regionNow` formats `new Date(epochMs)` with `new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(...)` and reads the parts by type. It never uses the device's time zone, `toISOString` or `getDay`. The server stays the authority: each bootstrap answer carries `timezone`, `today` and `now_minute`. At the moment an answer arrives (inside the query function, so a cached answer is never re-measured) the client computes `skew = (daysFromCivil(today) * 1440 + now_minute) - (the same from regionNow(timezone, nowEpochMs()))`, treats a skew of one minute or less as zero and keeps it with the cached data. `useNow` reports `regionNow(timezone, nowEpochMs() + skew * 60000)`. A device with a wrong clock therefore still shows the server's day.
+
+`zonedToUtcStamp` finds the instant whose wall-clock reading in `timeZone` is `date` plus `minute` (minutes below 0 or from 1440 are first moved to the neighbouring date with `addDays`): start from the reading taken as UTC, correct by the difference `regionNow` reports, repeat once; a wall time that occurs twice takes the earlier instant. Check values: `regionNow('America/New_York', Date.UTC(2026, 9, 8, 3, 30))` = `{ date: '2026-10-07', minute: 1410 }`; `regionNow('America/New_York', Date.UTC(2026, 0, 15, 17, 0))` = `{ date: '2026-01-15', minute: 720 }`; `zonedToUtcStamp('America/New_York', '2026-10-08', 660)` = `20261008T150000Z`; `zonedToUtcStamp('America/New_York', '2026-12-10', 660)` = `20261210T160000Z`.
+
+---
+
+## 3. Shared UI kit
+
+Built once by the foundation package under `components/truck/ui/` (components, exported through `ui/index.ts`) and `utils/truck/` (pure helpers). Screens do not re-implement any of it.
+
+### 3.1 Formatters (`utils/truck/format.ts`)
+
+Pure functions, no `Intl`, no `Date`, no locale. Every rounding goes through `roundHalfAway` from the model; digits are grouped by hand with commas. `null` or `undefined` gives the em dash (the house convention in `utils/format.ts`). All are prefixed `fmt` so they cannot be confused with the model's own `formatDate`. Ranges always use the word "to", never a dash, because lows can be negative.
+
+| Function | Rule | Examples (also the test vectors) |
+|---|---|---|
+| `fmtMoney(x)` | whole dollars; minus sign before `$`; never `-$0` | `1564.2` -> `$1,564`; `-34.82` -> `-$35`; `-0.4` -> `$0`; `1234567.5` -> `$1,234,568` |
+| `fmtMoneyCents(x)` | two decimals | `4.54` -> `$4.54`; `9.541` -> `$9.54`; `1500` -> `$1,500.00` |
+| `fmtFuel(x)` | three decimals, per gallon | `4.195` -> `$4.195/gal` |
+| `fmtCount(x)` | whole number | `60.49` -> `60`; `1244215.2` -> `1,244,215`; `0.3` -> `0` |
+| `fmtCount1(x)` | one decimal (per-hour table cells under 10) | `5.25` -> `5.3`; `29.436` -> `29.4` |
+| `fmtCeil(x)` | round up, for break-even orders: `ceil(x - 1e-9)` | `25.232` -> `26`; `24` -> `24` |
+| `fmtRange(e, unit)` | `unit` = `orders`, `money` or `money_per_hour` | `28 to 102`; `$37 to $739`; `-$35 to $1,137` |
+| `fmtEstimate(e, unit)` | value, unit word, range in brackets; no range when `confidence` is `fixed` or `low = high` | `60 orders (28 to 102)`; `1 order (0 to 3)`; `$482 (-$35 to $1,137)`; `80 orders` (fixed); `$43 an hour (-$3 to $101)` |
+| `fmtPerHour(x)` | | `42.74` -> `$43 an hour` |
+| `fmtAbout(x)` | for counts of people, which carry no range: a whole number below 100, two significant digits from 100 | `437.11` -> `440`; `1244` -> `1,200`; `74.4` -> `74`; `8.2` -> `8` |
+| `fmtPercent(f, decimals = 0)` | input is a fraction of 1 | `0.3` -> `30%`; `fmtPercent(0.026, 1)` -> `2.6%` |
+| `fmtMiles(mi)` | one decimal under 100, whole from 100, floor text under 0.05 | `9.7` -> `9.7 mi`; `123.4` -> `123 mi`; `0.02` -> `under 0.1 mi` |
+| `fmtDuration(min)` | integer minutes | `45` -> `45 min`; `65` -> `1 h 5 min`; `120` -> `2 h`; `677` -> `11 h 17 min` |
+| `fmtHours(h)` | one decimal, for "more hours" sentences | `5.8333` -> `5.8 hours`; `1` -> `1 hour` |
+| `fmtClock(min)` | 12-hour; `day = floorDiv(min, 1440)`; day 1 adds " (next day)", day -1 adds " (day before)" | `574` -> `9:34 AM`; `720` -> `12:00 PM`; `0` -> `12:00 AM`; `1251` -> `8:51 PM`; `1470` -> `12:30 AM (next day)`; `-30` -> `11:30 PM (day before)` |
+| `fmtClockShort(min)` | drops `:00` | `660` -> `11 AM`; `870` -> `2:30 PM` |
+| `fmtWindow(open, close)` | short clocks joined by "to" | `660, 840` -> `11 AM to 2 PM`; `1290, 1500` -> `9:30 PM to 1 AM (next day)` |
+| `fmtHourTick(h)` | chart axis only | `0` -> `12a`; `13` -> `1p` |
+| `fmtHow(how)`, `fmtHowLong(how)` | | `84` -> `Thu 12 PM`; `Thursday, 12 PM to 1 PM` |
+| `fmtDay(date, style)` | `long`, `medium`, `short`; weekday from `dayOfWeek`, month from the string | `2026-10-08` -> `Thu, Oct 8, 2026`; `Thu, Oct 8`; `Oct 8` |
+| `fmtWeekday(dow, style)` | index 0 = Monday | `3` -> `Thursday`, `Thu` |
+| `fmtTemp(f)` | | `62` -> `62°F` |
+| `fmtPhone(s)` | `+1` and ten digits only; anything else unchanged | `+13017428261` -> `(301) 742-8261` |
+| `fmtCoord(lat, lng)` | four decimals | `38.9600, -77.3600` |
+
+Parsers in the same file: `parseNumber(text)` (strips `$`, commas, spaces and a trailing `%`; returns null for anything that is not a finite number), `parseCoords(text)` (two decimal numbers separated by a comma or spaces, latitude -90..90, longitude -180..180), `parseClock(text, opts)` (3.6). Other pure helpers: `utils/truck/time.ts` (`howOf(dow, hour)`, `howParts(how)`, `mondayOf(date)`, `weekDates(weekStart)`, `nextDateWithDow(today, dow)`), `utils/truck/links.ts` (3.14), `utils/truck/wording.ts` (every fixed string of section 6), `utils/truck/warnings.ts` (6.5), `utils/truck/breakdown.ts` (3.4), `utils/truck/timelineView.ts` (3.10), `utils/truck/palette.ts` (5.5), `utils/truck/logView.ts` (the unlogged-stop list and the verdict words of 4.7).
+
+### 3.2 `RangeValue`
+
+```ts
+interface RangeValueProps {
+  estimate: Estimate;                                   // the only way to show an estimate
+  unit: 'orders' | 'money' | 'money_per_hour';
+  size?: 'sm' | 'md' | 'lg' | 'xl';                     // value at 14 / 18 / 24 / 30 px; default 'md'
+  layout?: 'stack' | 'inline';                          // stack: value, range line, chip. inline: "60 orders (28 to 102)" + chip
+  label?: string;                                       // uppercase caption above (stack only)
+  chip?: boolean;                                       // default true
+  onWhy?: () => void;                                   // adds the "Why this number" button
+  note?: string;                                        // one line under the range, for example "Limited by how fast the truck can serve."
+  dim?: boolean;                                        // inputs are refreshing: 55 % opacity, aria-busy
+}
+```
+
+- Behaviour: value, low and high are each rounded by the formatter for the unit. `fixed` shows the value and the chip "Fixed", no range. `low = high = value = 0` shows `0 orders` and the chip, no range. A negative money value keeps the minus sign and takes `--money-negative`; nothing is coloured green.
+- Accessibility: the wrapper carries `aria-label` built by `fmtEstimate` plus the label sentence, for example "60 orders, likely between 28 and 102. Rough: not yet checked against your own sales." The visual parts are `aria-hidden`.
+- Visual: value `font-extrabold tabular-nums` in `--ink`; unit word `text-sm font-bold` in `--body`; range line `text-[13px] font-semibold tabular-nums` in `--body`, written `28 to 102`; never `--slate` or lighter for any part of the number.
+
+### 3.3 `ConfidenceChip`
+
+`{ confidence: Estimate['confidence']; size?: 'sm' | 'md'; hint?: boolean }`. Labels and sentences are fixed (6.2). The chip is neutral on purpose: background `--bg-panel`, text `--ink` at weight 700, 11 px, height 24 px (`md`) or 20 px (`sm`), radius full. It does not use the freshness or money colours, which mean something else. Each label has its own lucide glyph so it never depends on colour: `Signal` variants for Very rough (`SignalLow`), Rough (`SignalMedium`), Fair (`SignalHigh`), Good (`Signal`), and `Lock` for Fixed. With `hint`, hover, focus or tap opens a 240 px popover with the sentence; `role="status"`, `aria-label` = label plus sentence.
+
+### 3.4 `WhyDrawer` ("Why this number")
+
+```ts
+type WhySubject =
+  | { kind: 'window'; title: string; window: WindowResult; vectors: LocationVectors; terms: SpotTerms; ctx: DayContext; money?: StopMoney }
+  | { kind: 'event';  title: string; stop: DayStop; event: EventTerms; ctx: DayContext }
+  | { kind: 'day';    title: string; result: DayResult; stopNames: string[]; ctx: DayContext };
+interface WhyDrawerProps { open: boolean; onClose: () => void; subject: WhySubject | null }
+```
+
+A `Sheet` (3.7), 560 px wide on desktop, full screen under 768 px, heading "Why this number". The content comes from `whySteps(subject, A, profile, cal)` in `utils/truck/breakdown.ts`, which returns the thirteen steps of 02_MODEL section 5 in their fixed order, each `{ n, title, rows: { label, value, note? }[], seedPaths: string[] }`. Steps may be collapsed, never reordered, merged or dropped; a step with nothing to say for this subject prints one line saying so (for example step 5 "No host at this spot.").
+
+| n | Title (exact) | n | Title (exact) |
+|---|---|---|---|
+| 1 | Who is within walking distance | 8 | Your own results |
+| 2 | How many of them buy a meal this hour | 9 | Capacity |
+| 3 | What share the truck wins | 10 | Window |
+| 4 | Menu fit | 11 | Range and label |
+| 5 | Host | 12 | Money |
+| 6 | Subtotal before adjustments | 13 | Where the assumptions come from |
+| 7 | Weather | | |
+
+- For a window, an hour picker at the top (the window's hours as chips) selects which `HourResult` steps 1 to 9 describe; steps 10 to 13 are for the whole window. Step 1 lists only segments holding at least 1 % of the hour's demand, with "Show all 16". For worker segments it shows jobs nearby and the on-site share as separate figures.
+- Step 7 prints "No forecast for this hour: no weather adjustment." when `weather_state` is `missing` and "Typical week: no weather adjustment." when `typical`. Step 8 prints "No logged services yet." when there is no calibration.
+- Step 13 lists each seed used: its path, value, unit, `SeedTag`, source note, and "Your value" when overridden, with a link to Settings > Assumptions. Seeds tagged `tuned` read "Placeholder until you log services".
+- Under the steps, always: the standing lines of 6.3.
+- Accessibility: steps are `<section>`s with `<h3>` and a disclosure button (`aria-expanded`, `aria-controls`); figures sit in two-column description lists; focus moves to the heading on open and returns to the opener on close.
+
+### 3.5 `NumberField`, `MoneyField`
+
+```ts
+interface NumberFieldProps {
+  id: string; label: string; value: number | null; onCommit: (v: number | null) => void;
+  min?: number; max?: number; step?: number; decimals?: number;        // decimals shown after commit
+  format?: 'number' | 'percent';                                        // percent: value is a fraction, the field shows 30 for 0.30
+  prefix?: string; suffix?: string;                                     // "$", "mi", "orders an hour", "min", "%"
+  help?: string; error?: string; required?: boolean; disabled?: boolean; integer?: boolean;
+}
+// MoneyField = NumberField with prefix "$", decimals 2, min 0 unless given
+```
+
+- Behaviour: `<input type="text" inputMode="decimal">` (not `type="number"`: no wheel changes, no locale parsing). It keeps a draft string while focused and commits on blur or Enter through `parseNumber`. Empty commits null (error "Required" when `required`). Out of range does not commit and shows "Enter a number from {min} to {max}."; values are never clamped. Arrow Up and Down change by `step`; Escape restores the last committed value.
+- Accessibility: `<label htmlFor>`; help and error linked with `aria-describedby`; `aria-invalid` on error; the unit is real text inside the label for screen readers.
+- Visual: `.input h-11 md:h-9 text-sm tabular-nums text-right`, prefix and suffix as inner adornments in `--body` at weight 600; label is `.label`; error text 12 px weight 600 in `--money-negative` with a `TriangleAlert` icon.
+
+### 3.6 `TimeField`
+
+`{ id; label; value: number | null; onCommit; min?: number; max?: number; after?: number; allowNextDay?: boolean; step?: 5 | 15; help?; error? }`. The value is minutes from midnight (0..2880). Display is `fmtClock`. A text input with a minus and a plus button (44 px on touch) that move by `step` (default 15). `parseClock(text, { after, allowNextDay })`:
+
+1. Trim, ASCII lower-case, remove spaces and dots. `noon` -> 720, `midnight` -> 0.
+2. Match `^(\d{1,2})(?::?(\d{2}))?(a|am|p|pm)?$`; minutes above 59 fail.
+3. With a suffix the hour must be 1..12: `12am` -> 0, `12pm` -> 720, otherwise add 720 for pm.
+4. Without a suffix: 13..23 is 24-hour time; 0 is midnight; `24` with minutes 0 is 1440; 1..12 takes the reading (AM or PM) that is later than `after` when `after` is given, else 7..11 are AM and 12, 1..6 are PM.
+5. If `allowNextDay` and the result is not later than `after`, add 1440.
+6. Outside `min`..`max`: no commit, error "Enter a time from {min} to {max}."
+
+Examples: `11` -> 660; `2` -> 840; `930` -> 570; `14:15` -> 855; `12a` -> 0; `1am` with `after: 1320, allowNextDay` -> 1500. Accessibility: labelled input, `aria-describedby` for help ("Type a time, like 11 or 2:30 pm."), buttons labelled "15 minutes earlier" and "15 minutes later".
+
+### 3.7 `Modal`, `Sheet`
+
+```ts
+interface ModalProps { open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; size?: 'sm' | 'md' | 'lg'; dismissible?: boolean }
+interface SheetProps { open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; side?: 'right' | 'bottom'; width?: 420 | 560; modal?: boolean }
+```
+
+- Both render through a portal into `document.body`. The scrim is the class `.tp-scrim` from `truck.css` (`position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); z-index: 50`), not the Tailwind classes `fixed inset-0`: that keeps the global rule `.fixed.inset-0 > div[class*="rounded"]` (which leaves a transform on the panel) and the orphan-overlay sweeper in `App.tsx` away from it. No blur.
+- Modal: centred, max width 400 / 520 / 720 px, radius 12 px, `.shadow-float`; under 640 px it becomes a bottom panel (full width, top corners 12 px, max height `90dvh`, scrolls inside). Escape and scrim click close when `dismissible` (default true). Focus is trapped, moves to the first field or the heading on open and returns to the opener on close. `role="dialog" aria-modal="true" aria-labelledby`.
+- Sheet: `side="right"` is a panel of `width` px, full height under the sub-nav on desktop and full screen under 768 px; `side="bottom"` rests at 45 % of the height and expands to 92 % with a labelled button ("Show more" / "Show less"), no drag gesture. With `modal={false}` (the spot card on the map) there is no scrim and no focus trap, the rest of the page stays usable, and the panel is a `<aside aria-label>` with a 44 px close button. Entry animation is the existing `.panel-slide-right` or `.panel-slide-up` (220 ms, off under reduced motion).
+
+### 3.8 `Tabs`, `Toggle`, `Field`, `DateStepper`
+
+- `Tabs`: `{ tabs: { id: string; label: string; count?: number }[]; value: string; onChange: (id: string) => void; variant: 'underline' | 'segmented'; ariaLabel: string }`. `role="tablist"`, roving tab index, Left and Right arrows move, Home and End jump, `aria-selected`, `aria-controls`. Segmented: track `--bg-panel`, selected pill `bg-white` with `--ink` text, others `--slate`, all weight 700, 36 px tall (44 px under `md`). Underline: 2 px `--brand` under the selected label.
+- `Toggle`: `{ id; label; checked; onChange; help? }`, `role="switch"`, 44 x 24 px track, the label is clickable, on = `--brand`.
+- `Field`: label, help and error wrapper used by every control that is not one of the fields above (selects, text inputs, textareas).
+- `DateStepper`: `{ date: string; onChange: (d: string) => void; min?: string; max?: string }`. Previous and next buttons ("Previous day", "Next day"), the date printed with `fmtDay(date, 'medium')`, a "Today" button, and a native `<input type="date">` behind a calendar icon for jumps. Only `YYYY-MM-DD` strings cross its boundary.
+
+### 3.9 `DataTable`
+
+```ts
+interface Column<T> { key: string; header: string; align?: 'left' | 'right'; width?: string; render: (row: T) => ReactNode; sortValue?: (row: T) => number | string }
+interface DataTableProps<T> { caption: string; columns: Column<T>[]; rows: T[]; rowKey: (row: T) => string; sort?: { key: string; dir: 'asc' | 'desc' }; onSort?: (key: string) => void;
+  onRowClick?: (row: T) => void; mobileCard?: (row: T) => ReactNode; empty?: ReactNode; dense?: boolean }
+```
+
+A real `<table>` in `overflow-x-auto bg-white border rounded-xl` (border `--line-soft`), `<caption className="sr-only">`, header row `text-[11px] font-bold uppercase tracking-wider` in `--slate` on `--bg-panel`, body rows `border-t` with 12 px padding (8 px when `dense`), text cells weight 600 in `--ink`, number cells `text-right tabular-nums` weight 700. Sortable headers are buttons with `aria-sort`. Strings sort byte-wise, numbers numerically, ties by `rowKey`. Under 640 px, when `mobileCard` is given, the table is replaced by a list of cards; otherwise it scrolls sideways. Clickable rows are also reachable by keyboard (Enter) and carry a visible chevron.
+
+### 3.10 `HourBars`, `WeekStrip`, `Timeline`
+
+Hand-rolled SVG with a fixed `viewBox`, `width="100%"`, `role="img"`, an `aria-label` that states the point in words, colours from CSS variables, axis text 10 px weight 700 in `--slate`, gridlines `--line-soft`. Each takes an `ariaSummary` string and the screen prints the same sentence above the chart.
+
+- `HourBars`: `{ values: number[] /* 24 */; yMax: number; capacity?: number; cursorHour?: number; window?: { startHour: number; endHour: number }; onPickHour?: (h: number) => void; height?: number; ariaSummary: string }`. Twenty-four bars in `--accent-brand`, the selected window at full strength and the rest at 45 %, a dashed capacity line labelled "Truck limit", ticks at `12a 6a 12p 6p`. `yMax` is given by the caller (normally the truck's orders per hour) so bars are comparable between spots.
+- `WeekStrip`: `{ values: number[] /* 168 */; yMax: number; windows?: { how: number; hours: number; label: string }[]; cursorHow?: number; onPickHow?: (how: number) => void; compact?: boolean; ariaSummary: string }`. Seven rows (Mon to Sun) by 24 columns. A cell's colour is the opportunity ramp of 5.5 at `scoreByte(value, yMax)`; callers pass `yMax` = seed `map.opportunity_hi`, so a colour means the same number here and on the map; zero is `--bg-panel`. Best windows are outlined in `--ink` (2 px) and numbered; the cursor is a 2 px ring. Row labels `Mon`..`Sun` at the left, hour ticks on top. With `onPickHow`, cells are a roving-focus grid: arrows move, Enter picks, each cell has a title such as "Thu 12 PM". At 375 px a cell is about 13 px wide; `compact` drops the hour ticks.
+- `Timeline`: `{ timeline: Timeline; stopNames: string[]; orientation?: 'auto' | 'list' | 'bar' }`. Driven by `timelineSegments(timeline)` in `utils/truck/timelineView.ts`, which turns the model's events into segments `{ kind: 'prep' | 'drive' | 'wait' | 'setup' | 'service' | 'teardown' | 'closeout'; from: number; to: number; stopIndex: number | null; unpaid: boolean }`. For the blueprint day sheet it yields prep 574-619, drive 619-630, setup 630-660, service 660-840, teardown 840-860, drive 860-870, wait 870-990, setup 990-1020, service 1020-1200, teardown 1200-1220, drive 1220-1221, closeout 1221-1251. `bar` (default from 1024 px): one horizontal bar with segments in proportion and clock labels at the stop boundaries. `list` (default below 1024 px, and always on the day sheet): one row per event, time at the left in `tabular-nums` weight 700. Event labels: "Start prep", "Leave base", "Arrive at {stop}", "Start setting up" (only when there is a wait), "Open", "Close", "Leave {stop}", "Back at base", "Done". Segment colours are identity tokens from `truck.css` (7.1); a wait is hatched and labelled "Waiting, paid" or "Break, unpaid" so the difference never rests on colour.
+
+### 3.11 `StatRow`, `EmptyState`, `QueryError`, `Skeletons`
+
+- `StatRow`: `{ label: string; value: ReactNode; sub?: ReactNode; strong?: boolean; negative?: boolean }`: label left in `--body` weight 600, value right in `--ink` `tabular-nums` weight 700 (800 when `strong`), optional second line 12 px in `--body`. Rows sit in a `<dl>`. Used for cost lines, drive lines and settings summaries, never for an estimate (that is `RangeValue`).
+- `EmptyState`: `{ icon: LucideIcon; title: string; body: string; action?: { label: string; onClick?: () => void; to?: string }; secondary?: {...} }`. A dashed 2 px `--brand-light` card, `bg-white`, radius 12 px, a 56 px icon tile (`--brand-light` background, `--brand` icon), title 18 px weight 800 in `--ink`, body 14 px in `--body`, one primary action 44 px tall.
+- `QueryError`: `{ message: string; onRetry?: () => void }`, `role="alert"`, a bordered white card with the sentence in `--ink` weight 700 and a secondary button "Try again".
+- `Skeletons`: `SkeletonCard`, `SkeletonRows`, `SkeletonChart` built on the existing `.skeleton` class, wrapped by the caller in `aria-busy="true"`.
+
+### 3.12 `PermissionNotice`, `SourceLine`, `SeedTag`
+
+- `PermissionNotice`: `{ variant: 'line' | 'block' }`, the standing notice of 6.3. `line` is one sentence at 12 px weight 600 in `--body` with an `Info` icon. `block` is a bordered panel on `--bg-panel` with the two-sentence version. It has no close button and no "do not show again".
+- `SourceLine`: `{ kinds: ('map' | 'osm' | 'osm_sentence' | 'vintages' | 'drive')[]; vintages?: RegionInfo['vintages'] }` prints the attribution strings of 6.4, with the OpenStreetMap text linked to `https://www.openstreetmap.org/copyright` (new tab, `rel="noopener noreferrer"`).
+- `SeedTag`: `{ tag: 'measured' | 'derived' | 'assumed' | 'tuned' }` -> "Measured", "Derived", "Assumed", "Placeholder", a neutral chip like `ConfidenceChip`, with a hint (6.6).
+
+### 3.13 `WeatherChip`, `HolidayChip`, `WarningList`
+
+- `WeatherChip`: `{ forecast: (HourForecast | null)[] | null; fromHour: number; toHour: number }`. Over the hours given: the temperature range (`55 to 62°F`, or one figure), then the worst precipitation class among those hours as the model classifies it (`weatherMultiplier(...).precip_class`) with the highest probability: "Rain 40%", "Storms 60%", "Snow 70%", "Dry". Icon by class (`Sun`, `CloudRain`, `Wind`, `Thermometer`). No usable forecast: "No forecast yet" with helper "Forecasts cover about six days." The forecast is the one for the truck's base (the server fetches no other), so the chip's title reads "Forecast for the area around your base"; with `forecast.state` `stale` it adds "from {fmtClock}, may be out of date".
+- `HolidayChip`: `{ context: DayContext }`: the holiday name with a `Flag` icon; "Treated as a Saturday" (and so on) when `treat_as` is a day; "Holiday ignored" when `treat_as` is `normal`; nothing on an ordinary day.
+- `WarningList`: `{ result: DayResult; stopNames: string[]; context: DayContext }` prints the model's warnings in their given order with the sentences of 6.5. Level `error`: `TriangleAlert` in `--money-negative`, prefix "Problem:"; `warn`: `TriangleAlert` in `--fresh-aging`, prefix "Check:"; `info`: `Info` in `--slate`, prefix "Note:". The prefix is visible text.
+
+### 3.14 `OpenInMaps` and `utils/truck/links.ts`
+
+Free Google Maps URLs, no API call. The server already supplies `Spot.maps_url`, `Plan.maps_route_url` and `ScoutCandidate.maps_url`; those are used as they are. `links.ts` builds the same shapes for things the server has not seen (a clicked point, an unsaved day, one leg). Coordinates are written with exactly six decimals through `roundHalfAway` (`38.960000`), as the server writes them.
+
+| Function | URL |
+|---|---|
+| `mapsSearchUrl({ lat, lng })` | `https://www.google.com/maps/search/?api=1&query=<lat>%2C<lng>` |
+| `mapsDirUrl({ origin, destination, waypoints })` | `https://www.google.com/maps/dir/?api=1&origin=<lat>%2C<lng>&destination=<lat>%2C<lng>&waypoints=<lat>%2C<lng>%7C<lat>%2C<lng>&travelmode=driving`; `waypoints` is omitted when empty |
+
+`OpenInMaps`: `{ href: string }` or `{ point: { lat; lng } }` or `{ route: { origin; destination; waypoints } }`, plus `label?` and `variant?: 'link' | 'button'`. An `<a target="_blank" rel="noopener noreferrer">` with an `ExternalLink` icon. Default labels: "Open in Google Maps" and "Open route in Google Maps". A day's route is base -> stops in order -> base. The origin is always given explicitly, so the link never asks Google for the device's position. Google documents a cap of nine waypoints, three in mobile browsers **[M]**; with more than three stops the Planner also shows a per-leg link on every leg row.
+
+---
+
+## 4. Screens
+
+Conventions for this section. "Desktop" is 1024 px and wider, "tablet" 768 to 1023 px, "phone" 375 px (everything must also hold at 360 px). Quoted text is the exact wording. `{...}` marks a value filled by the formatter named in section 3. Every list of saved things stays visible on its page; nothing primary hides behind a tab or a modal. Each page has one `<h1>` (`text-2xl font-extrabold` in `--ink`, a 22 px lucide icon in `--brand` before it) and at most one primary button.
+
+### 4.1 Today (`/truck`, package FE-5, wave 2)
+
+Purpose: where am I going, what will I clear, what is the weather, what is left to log. No map on this page.
+
+Needs: `useNow()`; `listPlans(today - 7, today + 6)`; today's `Plan` (chosen by rule 1 of 4.5) and its evaluation; `useDayContexts(today, 2)`; `listServices` for the last 7 days; the spot list (archived included).
+
+| Width | Layout |
+|---|---|
+| Desktop | two columns, 8 + 4 of 12: left = Next, Today's plan; right = Log what happened, Weather, This week, Fuel |
+| Tablet, phone | one column in this order: Next, Today's plan, Log what happened, Weather, This week, Fuel |
+
+| Block | Content |
+|---|---|
+| Header | `<h1>` "Today", then `{fmtDay(today, 'medium')}`, `HolidayChip`, `WeatherChip` for the plan's hours (11 to 20 when nothing is planned) |
+| Next (only with a plan that has a timeline) | Caption "NEXT". One sentence in `text-3xl font-extrabold`, chosen by `nextAction(timeline, minute)` from the first timeline event later than now: `start_prep` "Start prep at {t}"; `leave_base` "Leave base by {t}"; `arrive` "Arrive at {stop} by {t}"; `setup_start` "Start setting up at {t}"; `open` "Open at {t}"; `close` "Serving until {t}"; `leave` "Pack up and leave by {t}"; `back_at_base` "Back at base about {t}"; `done` "Finish close-out by {t}"; none left "Done for today." with the button "Log your orders". Under it, 12 px: "From your plan and the clock. Truck Planner does not know where the truck is." |
+| Today's plan | Title "Today's plan". One row per stop: name, `{fmtWindow}`, `RangeValue` (orders, inline, sm). Then `RangeValue` (money, lg, label "TAKE-HOME", `onWhy`), a line "{fmtDuration(day_minutes)}, prep to done", and "{n} things to check" linking to the planner when there are warnings. Buttons: `OpenInMaps` with `plan.maps_route_url` (primary until the day is done), "Edit plan", "Day sheet" |
+| Log what happened | Title "Log what happened". Up to five unlogged stops from the last seven days (`unloggedStops` in `logView.ts`: stops of plans that are not cancelled, whose closing time has passed, with no `ServiceLog` carrying their `plan_stop_id`): "{fmtDay} · {stop} · {fmtWindow}" with the button "Log it" (to `/truck/log?new=1&stop=..&spot=..&date=..&open=..&close=..`). Then the latest logged service: "{spot}, {weekday}: {actual} orders." and, when it has a `prediction`, "The estimate was {predicted} ({low} to {high})." with a verdict tag (4.7) |
+| Weather | One `WeatherChip` per stop for its own hours, then "Forecast for the area around your base. National Weather Service (weather.gov)." |
+| This week | "{n} of 7 days planned" and the link "Open week" |
+| Fuel | `StatRow` "Regular gasoline" (`product` `EPMR`) or "Diesel" (`EPD2D`), value `{fmtFuel(price_per_gal)}`, second line by `FuelInfo.source`: `eia` "EIA weekly average, week of {fmtDay(period, 'short')}"; `owner` "Your price"; `seed` "Default price, no current figure". Link "Change" to Settings |
+
+States: each block has its own skeleton and its own `QueryError`; one failed request never blanks the page. Empty states: no spots (`counts.spots` is 0): `EmptyState` (icon `MapPinned`) "Start with the map" / "Open the map, click where you might park, and save the spots worth a closer look." / button "Open the map". Spots but no plan today: `EmptyState` (icon `Route`) "Nothing planned for today" / "Pick a saved spot and a time window to see drive times, costs and take-home." / button "Plan today". Nothing to log and nothing logged yet: "After a service, log your orders here. About ten logged services make the dollar figures worth trusting."
+
+Starter page (ships with the foundation, replaced by FE-5): `<h1>` "Today" and three link cards: "Open the map" / "See where people are, hour by hour."; "Spots" / "{counts.spots} saved"; "Truck and costs" / "Ticket, crew, fuel and fees."
+
+### 4.2 Map (`/truck/map`, package FE-2 on the engine of FE-1, wave 1)
+
+Needs: `region` from the context (its `pack.url`, `pack.gz_bytes`, `vintages`, `center`, `bbox`); the decoded pack; the spot list; `profile.base`, `daypart_fit`, `capacity_orders_per_hour`; `cal.truck_factor`; the hour store and the UI store. Clicking needs `simulate` (through the spot card). Scout dots need the cached `scout` answer (wave 3).
+
+| Width | Layout |
+|---|---|
+| Desktop | `TruckMap` fills the area above the hour bar. Floating, top left, 280 px: the layer switch card and the legend card. Floating, top right: the tools card. The spot card is a non-modal right `Sheet` (420 px) and the tools card moves left of it. The hour bar is docked under the map, full width, 76 px, not floating |
+| Tablet | the same; the legend starts collapsed to a button "Legend"; the spot card is a bottom `Sheet` in portrait and the right panel in landscape |
+| Phone | layer switch as a full-width segmented control over the map; legend button; tools in one menu button ("Map options"); spot card as a bottom `Sheet`; hour bar in two rows (104 px) |
+
+Floating cards are `bg-white rounded-xl border shadow-float`, 12 px from the edges, and never cover the bottom 28 px of the map: Google's logo and terms stay visible at every width. The hour bar is a flex child below the map for the same reason.
+
+| Control | Content and behaviour |
+|---|---|
+| Layer switch | `Tabs` segmented, `ariaLabel="Map layer"`: "Opportunity", "People nearby", "Competition". Writes `truckUiStore.mapLayer` and `?layer=` |
+| Legend | Title by layer: "Expected orders per hour", "People nearby", "Food competition". A gradient bar built from the layer's colour table with ticks at the values of 5.5, a marker at the hovered cell's value, the line "No colour: under {floor}", a caption, and the source line. Captions: Opportunity "Your truck parked at each hexagon in a typical week. No host, no weather."; People nearby "People present within walking distance. Nearer people count more."; Competition "Pull of food outlets around each hexagon. 1 equals one quick-service outlet at the same spot." Source line, exact: "People: US Census 2020, LEHD 2023 · Venues: © OpenStreetMap contributors" (years from `region.vintages`, the OpenStreetMap part linked) |
+| Hour bar | Left to right: play button (`Play` / `Pause`, 44 px, `aria-label` "Play the week" / "Pause"); day picker (seven buttons "Mon" to "Sun" as a radio group; a `<select>` on phones); the hour slider (`<input type="range" min="0" max="23" step="1" aria-label="Hour of day">`, `aria-valuetext` = `fmtHowLong(how)`) with the hour strip above it; the label `{fmtHowLong(how)}` in weight 800; "Now" (jumps to the current hour in the truck's time zone); speed `<select aria-label="Playback speed">` "Slow", "Normal", "Fast" (1200, 600, 300 ms per hour). From wave 2 a mode switch "Typical week" / "Pick a date" with a `DateStepper` limited to today .. today + 6; a picked date uses that date's holiday pattern and never weather |
+| Hour strip | 24 thin bars over the slider: the mean colour value of the cells in view for each hour of the selected day, relative heights only, no numbers, `aria-hidden`. Recomputed on map `idle` and on day or layer change, in an idle callback |
+| Hover hint (fine pointers only) | A small fixed card near the pointer, moved imperatively. Line 1 is the legend band of the hovered cell, never a single number: "Orders an hour: {band}", "People nearby: {band}", "Competition: {band}" (bands in 5.5; an uncoloured cell reads the lowest band). Line 2: "Click for an estimate at this point". A 2 px `--ink` outline marks the hovered hexagon |
+| Tools | Toggles "Saved spots" and, from wave 3, "Scout results"; a button "Estimate at the centre of the map" (opens the spot card for the map centre, for keyboard and screen-reader use); "Go to base" |
+| Pins | Saved spots (not archived): a 28 px `--brand` teardrop with a white dot, as a `<button aria-label="Open spot {name}">`; the name shows in a white pill from zoom 13 and on hover or focus. Base: a 28 px `--ink` rounded square with the `Home` glyph, label "Base". Selected point: a 20 px white ring with an `--ink` border. Scout results: 12 px `--accent-revenue` dots with a white border, label "{position}. {name}" on hover or focus. Pins are DOM elements above the canvas (5.7); a click on a pin never also simulates the point under it |
+| Status chip (top centre, `role="status"`) | By layer state (5.8): "Loading map data ({gz_bytes as MB, one decimal} MB, first time only)..."; "Zoom in to see the colours."; "Map colours are unavailable right now. You can still click the map for an estimate."; "The map data is from a different version. Reload the page."; "No map data for this area yet."; "The Google map could not load, so the background map is hidden. Estimates and saved spots still work." |
+| Pick banner (`?pick=`) | "Click the map to set your base." or "Click the map where the spot is.", with "Cancel". The cursor is a crosshair. A click opens a `Modal`: "Set your base here?" with `{fmtCoord}` and the button "Set base" (route 3 with `base`), or the spot form of 4.4 with the point filled in |
+
+Interactions:
+
+1. Click or tap on the map (not on a pin): open the spot card for the exact clicked coordinates (the hexagon is only a highlight), set `?pt=`, drop the selected-point ring. The card opens at once with its skeleton.
+2. Click a saved-spot pin: open the card for that spot, set `?spot=`.
+3. Escape, the card's close button, or a click on the ring closes the card and clears the param.
+4. Keyboard while focus is on the page body or inside the hour bar, and never while typing or while focus is inside the Google map (its own arrow keys pan): Space plays or pauses; Left and Right move one hour; Up and Down move one day; Home is "Now".
+5. Playback runs from `requestAnimationFrame` with an elapsed-time accumulator (no `setInterval`, no React state), steps hour by hour without blending, wraps from Sunday 11 PM to Monday 12 AM, and stops when the tab is hidden, when the slider or a day is touched, and on unmount.
+6. Camera changes are written to `truckUiStore.mapCamera` and the URL on map `idle`.
+7. The canvas is `aria-hidden`. The map region has `aria-label="Map of {layer title}. Use Spots and Scout for the same information as lists."`.
+
+### 4.3 Spot card (`components/truck/spot/`, package FE-2, wave 1)
+
+One component, `SpotAnalysis`, renders the sections below; `SpotCard` wraps it in the map's `Sheet`, and the spot detail page embeds it. Input: a point or a `Spot`, plus terms. Everything shown is computed by `useSpotEstimate` from exact vectors.
+
+| # | Section title | Content |
+|---|---|---|
+| | Header | Title: the spot's name, or "This point". Under it `{fmtCoord}` and the county name (`located.county_fips` looked up in `region.counties`). `OpenInMaps` (`spot.maps_url`, or the point). Close button (`aria-label="Close"`) |
+| A | "This hour" | `RangeValue` (orders, lg) for the one-hour window at the settled hour, label `{fmtHowLong(how)}`, note "Limited by how fast the truck can serve." when that hour is capped. Line: "About {fmtAbout(people)} people within walking distance at this hour." (the sum of `nearby_present` over the segments) |
+| B | "Best windows" | `Tabs` segmented "2 hours", "3 hours", "4 hours" (stored in `windowHours`). The top three non-overlapping windows of the typical week (`bestWindows(week, hours, 3, true)`), each a row: rank, `{fmtWeekday} {fmtWindow}`, `RangeValue` (orders, inline, sm). Selecting a row moves the hour store to its first hour and makes it the window for section F. Saved spots get "Plan this" per row (to `/truck/plan/{nextDateWithDow(today, dow)}?add={spotId}&open=..&close=..`). No window: "No hour of the week reaches one order here." |
+| C | "Week at a glance" | `WeekStrip` with `yMax` = seed `map.opportunity_hi`, the three windows outlined, the cursor at the current hour; picking a cell sets the hour. Caption: "Expected orders per hour in a typical week, capped at your truck's {capacity} an hour. Same colours as the map." |
+| D | "Who is here" | For the settled hour: the host first when there is one ("Host: {name or segment label}", people present), then segments with at least 1 % of the hour's orders, largest first, at most six, with "Show all". Each row: the seed's segment label, "about {fmtAbout(nearby_present)} people", a bar in the group colour (7.1) proportional to orders, and `{fmtCount1(orders)}`. Footnote: "Workers are counted from jobs at nearby addresses and the share usually on site at this hour." Nobody: "Almost nobody is within walking distance at this hour." |
+| E | "Competition" | `StatRow` "Pull of nearby food outlets" = `{fmtCount1(rivals[regime])}`, second line "day weights" or "evening weights" by the hour's regime. Helper: "1 equals one quick-service outlet at this exact point. Higher means more of the people here buy elsewhere." Then "Food outlets within walking distance": the nearest eight `OutletRow`s (name or "Unnamed", kind label, `{fmtMiles(distance_m / 1609.344)}`), "Show all" for the rest of the list, "and {outlets_total - shown} more" when the server cut it at 60, and `SourceLine` (`osm`). Kind labels by `rival_kind`: `quick` "Quick service", `full` "Sit-down restaurant", `cafe` "Cafe or bakery", `bar` "Bar", `convenience` "Convenience or grocery". None: "No food outlets within walking distance in our data." |
+| F | "Money" | For the selected window (default: best window 1; the heading repeats it). A three-column table "Expected / Weak day / Strong day" (`value`, `low`, `high` of each `StopMoney` line): "Sales", "Food cost", "Packaging", "Card fees", "Spot fee", "Tips" (only when tips are counted). Then `RangeValue` (money, md, label "LEFT AFTER FOOD AND FEES") for `contribution`. `StatRow` "Each order leaves" `{fmtMoneyCents(unit margin)}`. Then the one-stop day (`oneStopDay`): `RangeValue` (money, md, label "TAKE-HOME FOR A ONE-STOP DAY"), sub-line "Includes prep, the drive from your base, wages and fuel."; `StatRow` "Break-even" `{fmtCeil(break_even_orders)} orders`, or "This spot cannot break even at your ticket and costs." when null; `StatRow` "Drive from base" `{fmtDuration} each way, {fmtMiles}` with the source label of 6.7. For a clicked point the drive is always the straight-line estimate (no request is spent on a click); a saved spot uses `useDriveTimes` |
+| G | | Secondary button, full width: "Why this number" (opens `WhyDrawer` for the selected window) |
+| H | Footer | `PermissionNotice` (`line`), `SourceLine` (`vintages`). Primary button: "Save as spot" for a point; "Open spot" for a saved spot, with a secondary "Plan a day here" |
+
+States: pending: skeleton blocks in the shape of sections A to F. Failed: `QueryError` "Could not estimate this point." Outside (`located.in_region` false): heading "Outside the loaded area", text "This point is outside {region.name}. There is no local data here, so nothing can be estimated." and "Save as spot" stays available with the note "Only a host you describe will count." While vectors are being re-requested after a host edit, numbers stay on screen dimmed (`RangeValue dim`). Section F uses the fuel price of the context (`TruckContext.fuel`), so it never waits for a request.
+
+"Save as spot" opens the spot form (4.4) with the point filled in. If `hosts_nearby` holds a place within 60 m, the form starts with the question "Is this at {name} ({place type label}, {distance} away)?" and the buttons "Yes, link it" and "No".
+
+### 4.4 Spots (`/truck/spots`, `/truck/spots/:spotId`, `/truck/spots/compare`, package FE-3, wave 1)
+
+**List.** Needs `useSpots({ archived: false })`, profile, assumptions, calibration. `spotSummaries(spots, A, profile, cal, hours)` in `utils/truck/spotSummary.ts` computes, per spot, the best window of the typical week, its orders and its contribution in one pass from `spot.vectors`.
+
+| Element | Content |
+|---|---|
+| Header | `<h1>` "Spots", the count, primary button "Add spot", secondary "Compare ({n})" (enabled with 2 to 4 rows ticked), a search field (placeholder "Search spots"), sort `<select>` "Best window first", "Name" |
+| Table (`DataTable`, caption "Saved spots") | Columns: tick box; "Spot" (name, host name or segment label, address); "Best window (typical week)" (`{fmtWeekday} {fmtWindow}`); "Orders" (`RangeValue` inline sm); "Left after food and fees" (`RangeValue` inline sm); "Fee" ("No fee", "$75 flat", "10% of sales, $75 minimum", ...). A spot with `vectors_state` `stale` carries the tag "Updating"; with `none` its estimate cells read "No estimate yet". Row click opens the spot. Phones use cards with the same facts |
+| Empty | `EmptyState` (icon `Store`): "No spots yet" / "Open the map, click a point and save it. Or add one by address." / button "Open the map", secondary "Add by address" |
+
+**Spot form** (`SpotForm`, in a `Modal` (lg) for a new spot, inline on the detail page). Explicit "Save spot" / "Cancel"; nothing saves on blur. It maps to the body of routes 11 and 14: `name`, `point`, `address`, `notes`, `terms.visibility`, `terms.fee_flat`, `terms.fee_pct`, `terms.fee_min`, `terms.allowed`, `terms.host` (or null), `host_details`.
+
+| Group | Fields (label -> body field) |
+|---|---|
+| Place | "Address or place" (`GooglePlaceAutocomplete`; under it "Enter coordinates instead"; "Pick on the map" goes to `/truck/map?pick=spot`) -> `point`, `address`; "Name" (required, 1..120) -> `name`; "Notes" (up to 4,000) -> `notes` |
+| Host | "Is there a host?" Radio group. (1) "No host (street or lot)" -> `terms.host: null`. (2) "A place nearby": the `hosts_nearby` list (name, place type label, distance) -> `terms.host.place_key`; the server derives the segment, a default size and whether it has a kitchen. (3) "I will describe it": `<select>` "Who the host's people are" with the sixteen segment labels of the seed file -> `terms.host.segment`. Then, for (2) and (3): "Host size" -> `terms.host.size`, with the label following the segment's group: visitors "People there in its busiest hour"; workers "People who work there"; residents "People who live there"; range 1 to 200,000; placeholder = the linked type's default size with the helper "Typical for this kind of place: {n}. Enter the real figure if you know it." (`size_source` is `default` until a size is typed, then `owner`; required when there is no default). `Toggle` "Your truck is the only food here" -> `terms.host.only_food`, helper "Turn this off if the host sells its own food." "Host name", "Contact name", "Phone", "Website" -> `host_details.name`, `.contact`, `.phone`, `.website` |
+| Visibility | Label "How easy is the truck to see?" Radio group -> `terms.visibility`: "Hidden" - "Tucked away from where people walk."; "Normal"; "Prominent" - "On the main path, signposted or announced by the host." |
+| Fee | `MoneyField` "Flat fee" -> `fee_flat`; `NumberField` percent "Share of sales" -> `fee_pct`; `MoneyField` "Minimum fee" -> `fee_min`. Helper: "You pay the flat fee plus the share of sales, or the minimum if that is more." |
+| Days and hours | `Toggle` "Only on certain days or hours". When on: seven day tick boxes and `TimeField`s "From" and "Until" -> `terms.allowed`. Helper: "The planner warns when a stop falls outside these." |
+
+While the form is open its preview comes from `simulate` with all three visibilities and the draft host, so switching visibility is instant; changing the point, the linked place, the segment, or the size of a worker or resident host re-requests it (debounced 400 ms); every other field recomputes in the browser. On save the server recomputes and stores the vectors. The 409 "You can keep at most 500 spots" is shown as it is.
+
+**Detail.** Desktop: two columns, 5 + 7. Left: "Terms" (the form), "Getting there" (`StatRow` "Drive from base" with the source label, `OpenInMaps` route from the base), "Your results here" (a table of this spot's `ServiceLog`s from `listServices({ spot_id, from: today - 730 })`: "Date", "Hours", "Orders", "Estimate", "Result"; and, from `cal.spots[id]`, the line "Here you sell {fmtPercent(factor)} of what the model expects for your truck ({n} services)." or "No services logged here yet."). When `google_contact` is present, the host block also shows "From Google, looked up {fmtDay(fetched_on)}: {phone}, {website}"; those values are never copied into the form. Right: `SpotAnalysis` and `PermissionNotice` (`block`). Tablet and phone: one column, analysis first, then "Terms" (a closed disclosure on phones), "Getting there", "Your results here". Header: link "All spots", `<h1>` = name, the address, `OpenInMaps`, primary "Plan a day here" (to `/truck/plan/{today}?add={id}`), secondary "Log a service", "Compare", and "Delete spot" in an overflow menu. Delete asks in a `Modal`: "Delete {name}?" / "It leaves your list. Days already planned there and its logged services are kept." / "Delete spot" (danger), "Keep it" (route 15 archives the spot). Unknown id: "This spot no longer exists." with the link "All spots". An archived spot opened by a direct link shows the tag "Deleted" and no actions.
+
+**Compare.** `<h1>` "Compare spots". Controls: chips for the chosen spots (each removable), "Add spot" `<select>` (up to four), and "Compare on": "Each spot's best window" or "The same window" (a weekday `<select>` and two `TimeField`s). One column per spot, one row per fact:
+
+| Row label | Value |
+|---|---|
+| "Window" | `{fmtWeekday} {fmtWindow}` |
+| "Orders" | `RangeValue` (orders, md) |
+| "Left after food and fees" | `RangeValue` (money, sm) |
+| "Take-home for a one-stop day" | `RangeValue` (money, md); the column with the largest `qkey(value)` carries the tag "Highest expected" (ties: smallest id) |
+| "Break-even" | `{fmtCeil} orders` |
+| "Drive from base" | `{fmtDuration}, {fmtMiles}` and the source label (one `useDriveTimes` request with the pairs base to each spot and back) |
+| "Fee", "Host", "Only food here", "Visibility", "Services the model uses" (`cal.spots[id].n`, else 0) | plain text |
+| "Week" | `WeekStrip` compact |
+
+Phones: columns are 260 px wide in a scroll-snap row and each cell repeats its row label as a caption. Fewer than two spots: "Pick at least two spots to compare." and a tick list of spots. `PermissionNotice` (`line`) under the table.
+
+### 4.5 Planner (`/truck/plan/:date`, package FE-4, wave 2)
+
+Needs: `listPlans(date, date)` and the chosen `Plan`; the draft from `truckPlanDraftStore`; the spots (archived included); `useDayContexts(date, 2, { [date]: draft.treat_as })`; `useDriveTimes([base, ...stops])`; calibration. `usePlanEvaluation` returns the `DayResult` on every edit.
+
+```ts
+// exported from stores/truckPlanDraftStore.ts (foundation), because the seams of 9.2 use them
+interface DraftStop { id: string;                       // a PlanStop id, or a temporary id n1, n2, ... for an unsaved stop
+  kind: 'spot' | 'event' | 'catering'; spot_id: string | null; label: string; point: { lat: number; lng: number } | null; address: string;
+  open_minute: number; close_minute: number; gap_before_unpaid: boolean; setup_minutes: number | null; teardown_minutes: number | null;
+  fee_flat: number; fee_pct: number; fee_min: number; event: EventTerms | null; catering: CateringTerms | null }
+interface PlanDraft { planId: string | null; date: string; treat_as: DayContext['treat_as']; notes: string; stops: DraftStop[]; dirty: boolean }
+```
+
+| Width | Layout |
+|---|---|
+| Desktop | header row; then two columns, 7 + 5: left = stops with drive rows between them, "Add stop", the timeline; right = the summary card, sticky under the sub-nav |
+| Tablet | one column: header, summary card, stops, timeline |
+| Phone | one column: header, stops, "Add stop", timeline (list), costs, things to check, actions. A bar fixed to the bottom shows `RangeValue` (money, inline, sm) and "Save day" (44 px); the page has bottom padding so nothing hides under it |
+
+| Block | Content |
+|---|---|
+| Header | `<h1>` "Planner"; `DateStepper`; `HolidayChip`; `WeatherChip` for first opening to last closing (10 to 20 with no stops); a labelled `<select>` "Treat this day as": "Automatic", "A normal day (ignore the holiday)", "A holiday", "A Monday" ... "A Sunday" (values null, `normal`, `holiday`, `mon` .. `sun`), helper "For school breaks, local holidays and the days around Thanksgiving."; the save state: "Not saved yet", "Unsaved changes" or "All changes saved". A past date adds the strip "This day is in the past." When `routing.state` is not `ok`: the strip of 2.6 |
+| Drive row (before the first stop, between stops, after the last) | "Drive from base: {fmtDuration}, {fmtMiles}" / "Drive: ..." / "Drive back to base: ...", then the source label (6.7), then "Leave base by {t}" on the first row and "Back at base about {t}, done by {t}" on the last. Tolls: "Toll {fmtMoneyCents}, your figure" (override toll), "Toll {fmtMoneyCents}, Google's estimate" (`toll_state` `estimate`), "Tolls on this route, amount unknown" (`unknown`); nothing otherwise. Button "Edit" opens the leg editor; a per-leg `OpenInMaps` link "Check this drive in Google Maps" |
+| Leg editor (`Modal` sm) | Heading "Drive from {A} to {B}". Line: "Google: {fmtDuration(duration_s / 60)}, {fmtMiles}, before the time-of-day adjustment." or "Straight-line estimate: ...". `NumberField` (integer, 1..600, suffix "min") "It takes me", helper "Your own time replaces the estimate at every hour."; `MoneyField` (0..500) "Toll", helper "Google's estimate is used when you leave this empty."; buttons "Save" (route 20 with the two points), "Use the estimate" (route 21 with the correction's id), "Cancel" |
+| Stop card | Position badge; a `<select>` of saved spots (a name field for events and catering); kind tag "Spot", "Event" or "Catering"; `OpenInMaps` (the spot's `maps_url`, or the stop's point); buttons "Move earlier", "Move later", "Remove stop"; a drag handle (`GripVertical`) on desktop. `TimeField` "Open"; `TimeField` "Close" (`after` = open, next day allowed, at most 2880). Line "Arrive {t}, set up from {t}" from the timeline. `RangeValue` (orders, md, label "ORDERS", `onWhy`); `RangeValue` (money, sm, label "LEFT AFTER FOOD AND FEES"). For stops after the first with a wait: `Toggle` "The {fmtDuration(gap)} wait before this stop is an unpaid break". Disclosure "Setup and pack-up times": `NumberField`s "Setup" and "Pack-up" (0..240 minutes, placeholder "Truck default: {n}"). A stop whose spot is archived carries the tag "Deleted spot" and still evaluates |
+| What this stop adds (on every stop card) | Caption "WHAT THIS STOP ADDS". `RangeValue` (money, inline, sm) of `adds.take_home`, then "for {fmtHours(adds.hours)} more, about {fmtPerHour(adds.per_hour)}." (the last part is left out when `per_hour` is null). Next line: "Needs {fmtCeil(break_even_orders)} orders to pay for itself." or "It cannot pay for itself at these terms." when null. With `uses_fallback_leg`: "Uses a straight-line drive estimate." |
+| "Add stop" | A menu: "Saved spot" (a searchable list), "Event", "Catering job" (the last two are filled by FE-7). A new spot stop gets the spot's best three-hour window on that date that does not overlap the other stops (from `bestWindows` over that date's hours 6 to 24), else 11 AM to 2 PM. At `limits.max_stops_per_plan` (8) the button is disabled with "A day holds at most 8 stops." |
+| Timeline | Card titled "The day, start to finish" with `Timeline` |
+| Summary card | `RangeValue` (money, xl, label "TAKE-HOME", `onWhy` opens the day breakdown). `RangeValue` (money per hour, md, label "PER HOUR OF YOUR DAY"), sub-line "{fmtHours(work_hours)} worked". The three-column table "Expected / Weak day / Strong day" for "Orders", "Sales", "Food cost", "Packaging", "Card fees", "Spot fees", "Tips". `StatRow`s for the day's own costs: "Labour" `{fmtMoney}` with "{paid hours} paid hours x {crew} crew x {wage} + {burden}"; "Fuel" `{fmtMoneyCents}` with "{gal} gal driving + {gal} gal generator at {fmtFuel} ({fuel source})"; "Tolls"; "Fixed cost for the day". Facts: "Day length" `{fmtDuration(day_minutes)}`; "Driving" `{fmtDuration}, {fmtMiles}`; "Unpaid break" when there is one |
+| Unpaid-break card (when `unpaid_gap_alternative` is not null) | Title "If the wait were an unpaid break". `RangeValue` (money, md). Line "{fmtPerHour}; saves {fmtMoney(labour_saved)} in wages." Button "Mark the wait as unpaid" (sets the flag on every stop that has a wait) |
+| Things to check | `WarningList`, titled "Things to check", hidden when empty |
+| Actions | Primary "Save day" (disabled when nothing changed, and while an `invalid_window` warning exists, with the hint "Fix the times first."); "Print day sheet"; `CalendarButton`; `OpenInMaps` route (`plan.maps_route_url` when saved and unchanged, else built by `links.ts`); text button "Clear day" (asks first; route 27). `PermissionNotice` (`line`) |
+
+States and rules:
+
+1. Which plan. The backend allows several plans on one date. The Planner, Today, Week and the day sheet use the same rule (`planForDate(rows, preferredId)` in `utils/truck/plans.ts`, through the hook `usePlanForDate`): the plan named by `?plan=` if it belongs to the date; else the first with `state` `planned`; else the most recently updated one that is not `cancelled`; else none. When the date has more than one plan that is not cancelled, the header shows a `<select aria-label="Plan">` listing them by `name`, or "Plan 1", "Plan 2" when unnamed. With none, the page starts an empty draft and the first save creates the plan. The draft store holds one draft per date, so choosing another plan in the picker while the draft is dirty first asks "Discard your changes to this plan?" with "Discard" / "Keep editing".
+2. Saving sends route 23 (new) or route 26 (existing) with `date`, `treat_as`, `notes`, `state: 'planned'` and `stops` in order; stops with a temporary id are sent without `id`. The answer's `Plan` replaces the draft (`markSaved`), which gives new stops their real ids. Stops are never reordered by the app. Reordering is by the two buttons (always present, keyboard and touch) or by drag and drop on desktop; a polite live region says "Moved {name} to position {i} of {n}."
+3. Every edit patches the draft and re-evaluates locally. Leaving the page keeps the draft in memory; closing the tab with a dirty draft triggers the browser's leave warning. "Print day sheet" and the calendar file with a dirty draft first ask "Save the day first?" with "Save and continue" / "Cancel".
+4. No saved spots: `EmptyState` (icon `MapPinned`) "Save a spot first" / "The planner works from your saved spots." / "Open the map". No stops: `EmptyState` (icon `Route`) "Nothing planned for {fmtDay(date, 'medium')}" / "Add a stop to see drive times, costs and take-home." / "Add a stop" (FE-7 adds the secondary "Suggest a day"). A date beyond the forecast shows "No forecast yet" in the weather chip and the `no_forecast` note.
+5. Event and catering stops (forms by FE-7). An event has "Name" (`label`), "Address or place" (`point`, `address`), "Expected attendance during your stop" (`event.attendance`, 1 to 2,000,000), "Food vendors, counting you" (`event.vendors`, 1 to 500), "Kind of event" (`event.event_type`: `general` "General (fair, market, sports)", `food_focused` "Food is the draw", `evening_show` "Evening show", `incidental` "Food is incidental"), and the three fee fields, prefilled with the seeds `events.suggested_fee_pct` and `events.suggested_fee_min` and marked "Typical terms, change to yours". Its estimate always reads "Very rough". A catering job has "Name", "Address or place", "Headcount" (`catering.headcount`), "Price per head", "Guaranteed minimum" (one of the two is required), "Food cost for this job (optional)"; its lines read "Fixed" and carry no range.
+6. "Suggest a day" (panel by FE-7, `?suggest=1`): route 29 with the date and its `treat_as`. Up to three `Suggestion`s, each with its stops (spot names and windows), `RangeValue` (money, md) of `take_home`, `RangeValue` (orders, sm) and "{fmtDuration(day_minutes)}", and the button "Use this plan" (replaces the draft's stops after a confirmation when the draft is not empty; the local evaluation then takes over). With `fallback_pairs` above 0: "Some drive times behind these suggestions are straight-line estimates." Caption: "Worked out from your saved spots, costs and this date's forecast. A suggestion, not a booking."
+
+### 4.6 Week (`/truck/week/:weekStart`, package FE-5, wave 2)
+
+Needs: `listPlans(weekStart, weekStart + 6)`; for each date the plan chosen by rule 1 of 4.5 and its `Plan`; `useDayContexts(weekStart, 8)`; one `usePlanEvaluation` per planned day; `listServices` for that week.
+
+| Width | Layout |
+|---|---|
+| Desktop | header, totals strip, then a 4-column grid: the seven day cards and, as the eighth cell, the best-week panel |
+| Tablet | 2 columns |
+| Phone | one column of compact rows: date and chips left, `RangeValue` (sm) right |
+
+| Block | Content |
+|---|---|
+| Header | `<h1>` "Week of {fmtDay(weekStart, 'short')}"; buttons "Previous week", "Next week", "This week" |
+| Totals strip | `RangeValue` (money, lg, label "PLANNED TAKE-HOME THIS WEEK") = `estSum` of the planned days in date order; "{n} of 7 days planned"; helper "Each day's low and high are added up, so the week's range is wide on purpose." |
+| Day card | "{fmtWeekday} {fmtDay(date, 'short')}", a "Today" tag, `HolidayChip`, `WeatherChip` (the stops' hours, else 11 to 20). Planned: each stop as "{name}, {fmtWindow}", `RangeValue` (money, md), "{n} things to check", link "Open"; a plan in state `draft` carries the tag "Draft". Not planned: "Nothing planned" and the button "Plan this day". Past days with logged services add "Logged: {n} orders" |
+| Best week (panel by FE-7) | Button "Suggest a week" (route 30). Result: per day either a suggestion (stops, windows, `RangeValue`) or "Day off"; `RangeValue` (money, lg, label "SUGGESTED WEEK") of `total_take_home`; caption "At most {max_days} days out and {max_visits} visits to a spot. Days off are part of the suggestion."; button "Use for the empty days" (creates a plan in state `draft` through route 23 for each date that has no plan; planned days are never replaced) |
+
+States: skeleton cards; a failed day evaluation shows `QueryError` inside that card only. No spots: the Today empty state "Start with the map".
+
+### 4.7 Log and Accuracy (`/truck/log`, package FE-6, wave 2)
+
+`<h1>` "Log". `Tabs` underline: "Services", "Accuracy".
+
+**Services.** Needs `listServices` (default: the last 90 days), the spots, plans of the last seven days, and for the estimate line the inputs of a one-stop evaluation on that date.
+
+| Block | Content |
+|---|---|
+| "Log a service" (first on every width; left column on desktop, 5 of 12) | `<select>` "Spot" (saved spots, then "An event" and "A catering job", which set `kind`); `DateStepper` "Date" (not after today); `TimeField` "Opened"; `TimeField` "Closed"; `NumberField` integer "Orders served" (required, 0 to 5,000) -> `actual`; `MoneyField` "Sales (optional)"; `Toggle` "Sold out or at capacity" -> `sold_out`, helper "Turn this on if you ran out of food or could not serve everyone. Your count is then treated as a minimum."; "Notes" (2,000 characters). Coming from a planned stop, `plan_stop_id` is sent too (the server then takes the plan's `treat_as` and, when the window matches, the estimate the plan showed). Line "The estimate for this service" with `RangeValue` (orders, inline), or "No estimate for this spot and time." Primary "Save service" (route 32) |
+| After saving | A result card from the answer: "Logged {actual} orders at {spot}." and, with a `prediction`, "The estimate was {predicted} ({low} to {high}): {verdict}." Then, from the returned `calibration`: "Your results now adjust estimates: truck x{truck_factor}, this spot x{factor}." |
+| "Not logged yet" | `unloggedStops` of the last seven days, each "{fmtDay} · {stop} · {fmtWindow}" with "Log it" (fills the form) |
+| History (`DataTable`, caption "Logged services") | "Date", "Spot", "Hours", "Orders", "Estimate" (`RangeValue` inline sm built from `prediction.predicted`, `.low`, `.high`, `.confidence`; the em dash without one), "Result", "Sold out". Filters: spot, from, to (at most 730 days). Row menu: "Edit" (route 34), "Delete" (asks "Delete this service? Estimates will stop using it."; route 35) |
+
+Verdict words (`verdictOf` in `logView.ts`, used here and on Today): actual within low..high "inside the range"; above high "above the range"; below low "below the range"; sold out "sold out, counted as a minimum". The "Result" cell adds the signed difference from the estimate, for example "+5, inside the range". The server refuses a second service for the same spot and time (409); its sentence is shown under the form. Empty: `EmptyState` (icon `NotebookPen`) "No services logged yet" / "After each service, enter how many orders you served. About ten logged services make the dollar figures worth trusting." / "Log a service".
+
+**Accuracy.** Needs `accuracy()` and the calibration of the context.
+
+| Block | Content |
+|---|---|
+| Heading | "How the estimates are doing" |
+| Four tiles | "Services logged": `{n_total}`, "{n_scored} scored, {n_sold_out} sold out". "Bias": "Estimates ran {p}% high" (bias above 0.02), "Estimates ran {p}% low" (below -0.02), else "Estimates were on target"; second line "Before your results were used: {p}% high / low". "Typical miss": `{fmtPercent(mape)}`, "average gap between estimate and actual". "Inside the range": "{k} of {n_scored}", "About 8 in 10 is what the ranges aim for." With `n_scored` 0 the tiles show the em dash and "Needs a service that did not sell out." |
+| Note | With `unscored_without_prediction` above 0: "{n} logged services have no estimate and are not scored." |
+| Chart "Estimates against actuals" | Hand-rolled SVG over the last 30 `entries` in date order: a vertical bar from low to high in `--line`, a tick at the estimate in `--ink`, a dot at the actual in `--accent-brand` (a hollow ring when sold out), date ticks. Summary sentence above it and as `aria-label`: "{k} of {n} scored services landed inside the estimated range." |
+| "By spot" (`DataTable`) | "Spot", "Services", "Sold out", "Bias", "Typical miss", "Inside the range", "Spot factor" |
+| "Your results in the model" | "Truck factor x{truck_factor} from {truck_n} services." with the helper "Above 1 means you sell more than the generic model expects."; one line per spot "x{factor} from {n} services" |
+
+Empty: `EmptyState` "Nothing to score yet" / "Log a few services and this page shows how close the estimates were."
+
+### 4.8 Scout (`/truck/scout`, package FE-7, wave 3)
+
+Needs `scout({ hide })` (route 38): at most 50 `ScoutCandidate`s in rank order, each `{ result: ScoutResult, place, lead, maps_url, leg_sources }`, plus `screened`, `truncated`, `limit_minutes`, `licence_counties`, `attribution`. The rank comes from the server; the score itself is never shown. The drive limit and the counties are profile settings; the other filters narrow the returned list in the browser.
+
+| Width | Layout |
+|---|---|
+| Desktop | filters in a left rail (260 px), results as a list of cards |
+| Tablet, phone | a button "Filters ({n})" opens a `Sheet`; cards stack |
+
+| Block | Content |
+|---|---|
+| Header | `<h1>` "Scout". Intro: "Places within {limit_minutes} minutes of your base that could host a truck, ranked by what their best three hours of a typical week might be worth after the drive." Count "{n} places shown, {screened} looked at". Button "Refresh" (`refresh=1`). With `truncated`: "Only the nearest places were looked at." With an empty `licence_counties`: strip "No counties chosen, so every county within reach is listed. Choose the counties you hold a licence for in Settings." |
+| Filters | "Status": tick list of the six lead states; unticked states go into `hide` (default hides "Declined" and "Hidden"), so hidden places leave the ranking and make room for others. In the browser: "Kind of place" (tick list of the place types present); "County"; "Kitchen" ("Any", "No kitchen of its own"); "Contact" ("Any", "Has a phone or website") |
+| Result card | "{result.position}. {place.name}" as `<h2>`, the place type label, `place.city` and the county name. "Best window in a typical week: {fmtWeekday} {fmtWindow}" (or "No hour of the week reaches one order." when `best_window` is null). `RangeValue` (orders, inline, sm) and `RangeValue` (money, inline, sm, label "LEFT AFTER FOOD AND FEES") of `contribution`. "Drive: {fmtDuration(round_trip.minutes)} round trip, {fmtMiles}, about {fmtMoney(cost)}", plus "(straight-line estimate)" when either of `leg_sources` is `straight_line`. "{Often / Sometimes / Rarely} hosts trucks, going by the kind of place" (`host_fit` from 0.7 / from 0.4 / below). Kitchen from `place.kitchen`: `no` "No kitchen of its own"; `yes` "Has its own kitchen"; `unknown` "Kitchen unknown: assumed {yes / no} for this kind of place" (from `result.kitchen`). "Size assumed: {host_size} {unit phrase} (typical for a {place type label})." Contact: `place.phone` as a `tel:` link through `fmtPhone` and `place.website` as a link showing its host name, tagged "OpenStreetMap"; `lead.google` values tagged "Google, looked up {fmtDay(fetched_on)}" with the line "Google matched: {name}, {address}" so the owner can see it is the same place |
+| Card actions | `OpenInMaps` with `maps_url`; "Look up phone and website" (route 40; secondary; shows a spinner; afterwards the Google values, or "Google found no phone or website." for `not_found`; first use shows "Looks this place up on Google. Results are kept for 30 days."; a 503 shows the server's sentence); "Show on map" (to `/truck/map?pt=..&scout=1`); "Save as spot" (below), or "Open spot" when `lead.spot_id` is set; `<select>` "Status": "New", "Shortlisted", "Contacted", "Booked", "Declined", "Hidden" (route 39); "Notes" (saved on blur) |
+| Save as spot (`Modal` sm, route 41) | "Name" (prefilled), "Host size" (required for office parks, apartment communities and industrial sites, which have no typical size; otherwise optional with the typical figure as placeholder), `Toggle` "Your truck is the only food here", the visibility radio group of 4.4. On 201: toast "Spot saved" with "Open spot". The 409 "This place is already saved as a spot" is shown as it is |
+| Footer | `SourceLine` (`osm_sentence`, `drive`); "Phone numbers and websites come from OpenStreetMap unless marked Google. About one place in three has either."; "Sizes are typical figures for the kind of place, so these ranges are wide. Save a place as a spot and enter its real size to tighten them."; `PermissionNotice` (`block`) |
+
+Empty states: the 409 "Scouting needs a loaded region": `EmptyState` (icon `Compass`) "No data for your area yet" / "Scout needs a loaded region around your base." No candidates: "No places match" / "Widen the longest drive in Settings, or show more statuses." Failed request: `QueryError` "Could not load Scout."
+
+### 4.9 Settings (`/truck/settings/:tab`, package FE-3; the `data` tab is FE-8)
+
+`<h1>` "Settings". `Tabs` underline: "Truck and costs", "Assumptions", "Data and export". Each of the first two tabs edits a draft and has a save bar that appears when the draft differs: "Unsaved changes", "Discard", primary "Save changes". Valid ranges come from the seed metadata (`profile_defaults.<field>.min` and `.max`, and the inherited `min` and `max` of each overridable seed), never from literals in the page; they are the ranges the server enforces.
+
+**Truck and costs** (route 3, only changed keys are sent). Desktop: cards in the left 8 columns, the "What these settings mean" card sticky in the right 4. Tablet and phone: one column, that card last.
+
+| Card | Fields (label -> `TruckProfileX` field, control) |
+|---|---|
+| "Truck" | "Truck name" -> `name`. "Base" -> `base`: the address, "Change" (search, coordinates, or "Pick on the map" to `/truck/map?pick=base&return=/truck/settings/truck`). "Region": read-only name |
+| "Sales" | "Average ticket" -> `avg_ticket` (money). "Orders per hour at full speed" -> `capacity_orders_per_hour`, helper "The most you can serve in an hour. Estimates never go above this." "How well your menu fits each part of the day" -> `daypart_fit`, four percent fields "Breakfast (5 to 11 AM)", "Lunch (11 AM to 4 PM)", "Dinner (4 to 10 PM)", "Late (10 PM to 5 AM)", helper "100% is a full fit. 30% means about a third of the people buying then would consider your menu." |
+| "Crew" | "Paid crew" -> `paid_crew`, helper "Do not count yourself." "Wage per hour" -> `wage_per_hour`. "Payroll taxes and extras" -> `payroll_burden_pct` (percent) |
+| "Food and fees" | "Food cost" -> `food_cost_pct` (percent), helper "The share of sales that goes on ingredients." "Packaging per order" -> `packaging_per_order`, helper "Set to $0 if your food cost already includes packaging." "Card fee" -> `card_fee_pct` (percent, one decimal) and "plus, per card order" -> `card_fee_fixed`. "Share of sales paid by card" -> `card_share`. `Toggle` "Count tips as take-home" -> `tips_include`; when on, "Tips as a share of card sales" -> `tips_pct_of_card_sales` |
+| "Vehicle and fuel" | "Miles per gallon" -> `mpg`. "Fuel" -> `fuel_type` ("Gasoline", "Diesel"). "Generator fuel per hour" -> `generator_gal_per_hour` (gal), helper "Set to 0 on shore power." "Drives take this much longer than in a car" -> `truck_time_factor`, shown as a percent (`1.10` is 10). `Toggle`s "Avoid toll roads" -> `avoid_tolls` and "Avoid highways" -> `avoid_highways`. "Fuel price": the current price `{fmtFuel}` with its source line (as on Today), and `MoneyField` (three decimals, 0.50 to 20) "Use my own price" -> `fuel_price_override`, helper "Leave empty to follow the weekly average." `routing_profile` is not shown (it changes nothing in this version) |
+| "Day routine" | "Prep before leaving" -> `prep_minutes`. "Setup at a stop" -> `setup_minutes`. "Pack-up at a stop" -> `teardown_minutes`. "Close-out back at base" -> `closeout_minutes`. "Fixed cost per service day" -> `fixed_cost_per_service_day`, helper "Commissary, insurance or anything else you pay on each day you go out." |
+| "Where you trade" | "Counties you hold a licence for" -> `licence_counties`: tick boxes for `region.counties` grouped by state, with "Select all in {state}". Helper: "Scout only lists places in these counties. Leave all unticked to see every county within reach. Where your licence applies is yours to know." "Longest drive for Scout" -> `scout_drive_minutes_limit` (5 to 60 minutes) |
+| "What these settings mean" (from the draft) | `StatRow`s: "Left per order after food, packaging and card fees" `{fmtMoneyCents(unitMargins.at_minimum)}`; "Crew cost per paid hour" `{fmtMoneyCents}`; "Fuel per mile" `{fmtMoneyCents}`; "Generator per hour" `{fmtMoneyCents}`. Link "See the starting values and where they come from" opens a `Modal` listing each `profile_defaults` seed with its value, `SeedTag` and source note |
+
+**Assumptions.** Intro: "These are the model's starting assumptions. None is measured from food truck sales. Change one only if you know better for your truck. Your logged services correct the totals either way." Accordion groups, each row = plain-language label (from `wording.ts`, keyed by seed path), editor, unit, `SeedTag`, a "Source" disclosure with the seed's source note, "Range: {min} to {max}", and, when overridden, a "Your value" tag and "Reset".
+
+| Group | Seed paths | Editor |
+|---|---|---|
+| "Hosts" | `host.captive_share`, `host.shared_kitchen_share`, `host.onsite_kitchen_weight` | percent, percent, number |
+| "Weather" | `weather.floor`, `weather.pop_when_missing`, `weather.<table>.rows.<id>.open` and `.captive` for the temperature, precipitation and wind tables | a table per group with two percent columns "Open-air spots" and "Inside a venue" |
+| "Events" | `events.attendance_haircut`, `events.p_buy.<type>` | percent |
+| "People by hour" (one sub-group per segment, labelled by the seed's segment label) | `segments.<s>.presence.<day_type>`, `segments.<s>.intent.<day_type>`, `segments.<s>.dow_factor`, `segments.<s>.holiday_day_type.major` and `.minor` | `CurveEditor` (24 fields in a 6 by 4 grid labelled `12a` .. `11p`, with an `HourBars` preview and "Reset curve"); five number fields "Mon" .. "Fri"; two `<select>`s "Weekday", "Saturday", "Sunday" |
+
+Saving sends route 5 with only the changed paths (a reset row sends `null` for its path). The merged draft is first checked with `validateOverrides`; messages by code, also used for the `details` of a 422: `out_of_bounds` "Enter a number from {min} to {max}."; `wrong_shape` "Enter all 24 values."; `not_allowed` "Choose one of the listed options."; any other code "This value cannot be changed." "Reset all assumptions" (text button) asks "Reset all {n} changed assumptions?" and sends route 6 with an empty body. A closed section "Fixed in this version" lists the remaining seeds read-only with tag and source; seeds tagged `tuned` read "Placeholder until you log services".
+
+**Data and export** (FE-8). "Where the data comes from": the `attribution` list of `sources()` in id order, ids 3 to 9 (each `text`, linked when it has a `url`), then "Data version {dataset_version} · pipeline {pipeline_version} · model {model_version}" and "{residents} residents, {jobs} jobs, {places} places, {cells} map cells" from `dataset.totals` and `dataset.counts`. "Export": one button "Download my data (JSON)" (route 42 as a blob, saved under the file name the server sends), with the note "Everything you entered: truck, spots, plans, logged services, drive-time corrections and Scout notes. Place names carry the OpenStreetMap credit." "Delete": heading "Delete all Truck Planner data", text "This deletes your truck, spots, plans, logged services, drive-time corrections and Scout notes. It cannot be undone. Your smappen account stays.", danger button "Delete everything", which opens a `Modal` asking to type `delete my truck data` before its own "Delete everything" button is enabled (route 43).
+
+### 4.10 Day sheet and calendar file (package FE-8, wave 3)
+
+**Day sheet** (`/truck/plan/:date/sheet`, optional `?plan=`). It shows the saved `Plan` chosen by rule 1 of 4.5, evaluated in the browser like the Planner. A toolbar that does not print: link "Back to the planner", primary "Print" (`window.print()`), `CalendarButton`, `OpenInMaps` with `plan.maps_route_url`. With a dirty draft: strip "This sheet shows the saved day. You have unsaved changes." No saved plan: `EmptyState` "Nothing saved for this day" / "Save the day in the planner first." / "Open the planner". It must read well at 375 px and on Letter paper.
+
+| # | Section | Content |
+|---|---|---|
+| 1 | Title | "Day sheet", `{fmtDay(date, 'long')}`, the truck's name, the holiday name if any, one weather line per stop |
+| 2 | "Times" | A table "Time", "What", "Where": one row per timeline event with the labels of 3.10, and drive rows "Drive {fmtDuration}, {fmtMiles} ({source label})" |
+| 3 | One block per stop | Name, address, host name, contact and phone (`host_details`), `{fmtWindow}`, "Estimate: {fmtEstimate(orders)}, {label in lower case}", the fee as a sentence, notes; on screen only, `OpenInMaps` for the stop |
+| 4 | "The day in numbers" | "Orders", "Sales", "Left after food and fees", "Labour", "Fuel", "Tolls", "Fixed cost", "Take-home", "Take-home per hour", each through `fmtEstimate` (fixed amounts print as one figure) |
+| 5 | "Things to check" | `WarningList` |
+| 6 | Footer | `PermissionNotice` (`line`); `SourceLine` (`osm_sentence`) when any stop's spot has a `host_details.place_key`; the drive-time line of 6.4; "Estimates from model {MODEL_VERSION}. Printed {fmtDay} {fmtClock}." |
+
+**Calendar file.** `buildDayIcs(input)` in `utils/truck/ics.ts` is pure: `{ date, timeZone, timeline, stops: { id, name, address, point, orders: Estimate }[], truckName, host, dtstamp }` -> a string. `CalendarButton` wraps it in a `Blob` (`text/calendar;charset=utf-8`) and downloads `truck-day-<date>.ics`.
+
+1. `BEGIN:VCALENDAR`, `VERSION:2.0`, `PRODID:-//smappen//Truck Planner//EN`, `CALSCALE:GREGORIAN`, `METHOD:PUBLISH`.
+2. One `VEVENT` for the whole day: `SUMMARY:Truck day: {stop names joined by ", "}`, from `start_prep` to `done`, `DESCRIPTION` = the timeline as lines "{fmtClock} {label}".
+3. One `VEVENT` per stop: `SUMMARY:{name}`, from `effective_open` to `close`, `LOCATION` = the address or `{fmtCoord}`, `GEO:<lat>;<lng>`, `DESCRIPTION` = "Leave by {t}. Arrive {t}. Open {t}. Close {t}. Leave {t}." then "Estimate: {fmtEstimate(orders)}, {label}." then the standing notice (short form).
+4. `UID:tp-<date>-<stop id or "day">@<host>`; `DTSTAMP` = the `dtstamp` argument (`utcStamp(nowEpochMs())` at the call site); `DTSTART` and `DTEND` are UTC instants from `zonedToUtcStamp` with the truck's time zone, so no time-zone block is needed.
+5. Text values escape `\`, `;`, `,` and newlines (`\n`); lines end in CRLF and are folded at 75 octets with CRLF plus one space. The same input always gives the same bytes.
+
+---
+
+## 5. Map layer
+
+Our own canvas inside a plain `google.maps.OverlayView` on the existing raster map (no map id, style arrays kept). One static mesh of true H3 cell outlines, one byte per cell recomputed per hour tick, one draw call. A 2D-canvas renderer sits behind the same interface. A second host draws the same layer over a blank grid when Google is unavailable and in tests.
+
+### 5.1 Modules
+
+| File | Runs in | Responsibility |
+|---|---|---|
+| `utils/truck/map/mercator.ts` | Node and browser | `worldX(lng) = 256 * (lng + 180) / 360`; `worldY(lat)`: `s = clamp(sin(lat * PI / 180), -0.9999, 0.9999)`, `256 * (0.5 - ln((1 + s) / (1 - s)) / (4 * PI))`; the inverses `lngOf`, `latOf` |
+| `utils/truck/map/pack.ts` | both | `decodePack(buf): CellPack` (5.2), `PackError` |
+| `utils/truck/map/mesh.ts` | both | `buildMesh(ids, boundaryOf, bounds, onYield?): Promise<HexMesh>` (5.3) |
+| `utils/truck/map/frames.ts` | both | `createFrameSource(pack, inputs): FrameSource` (5.4); the only file that calls the bulk scorer of `fastPath.ts` |
+| `utils/truck/map/pick.ts` | both | `buildCellIndex(ids): Map<string, number>`; `cellAt(index, lat, lng, latLngToCell, res)` |
+| `utils/truck/map/viewport.ts` | both | `Viewport` maths: `zoomOf(scale) = log2(scale)`, `alphaForScale`, the world rectangle in view, pin projection for the blank host |
+| `utils/truck/palette.ts` (foundation) | both | ramps, `buildLut`, legend ticks, bands, floors (5.5) |
+| `components/truck/map/types.ts` | browser | the interfaces below |
+| `components/truck/map/renderers/webgl2.ts`, `renderers/canvas2d.ts` | browser | the two `Renderer`s (5.7) |
+| `components/truck/map/hosts/googleOverlayHost.ts`, `hosts/blankBasemapHost.ts` | browser | the two `MapHost`s (5.6) |
+| `components/truck/map/HexLayer.ts` | browser | owns mesh, frames and renderer; reacts to pack, inputs, layer, hour, theme; never throws (5.8) |
+| `components/truck/map/TruckMap.tsx`, `MapPin.tsx` | browser | the React surface: loads Google through the shared loader, picks the host, mounts the layer, forwards hover, click and camera, renders pins |
+| `components/truck/map/useCellPack.ts` | browser | the `pack` query (route 8) plus `decodePack` |
+| `components/truck/map/authFailure.ts` | browser | installs `window.gm_authFailure` once (5.6) |
+| `components/truck/map/PerfHud.tsx` | browser | the measurement overlay behind `?tp_perf=1` (5.9) |
+
+```ts
+export type MapLayerId = 'opportunity' | 'people' | 'competition';
+export interface Viewport { width: number; height: number; dpr: number;   // CSS px; dpr = min(devicePixelRatio, 2)
+  scale: number;                                                        // CSS px per world unit (256-unit world)
+  originX: number; originY: number }                                    // canvas position, CSS px, of the mesh origin
+export interface Renderer { readonly kind: 'webgl2' | 'canvas2d';
+  setMesh(mesh: HexMesh): void; setLut(lut: Uint8Array): void; setValues(values: Uint8Array): void;   // values: one byte per cell
+  setOpacity(alpha: number): void; resize(width: number, height: number, dpr: number): void;
+  render(vp: Viewport): void; dispose(): void }
+export interface MapHost { readonly kind: 'google' | 'blank';
+  attach(canvas: HTMLCanvasElement, pinLayer: HTMLElement, onViewport: (vp: Viewport) => void): void;
+  project(lat: number, lng: number): { x: number; y: number } | null;   // position inside pinLayer
+  on(event: 'move' | 'click' | 'leave', cb: (e: { lat: number; lng: number; clientX: number; clientY: number }) => void): () => void;
+  getCamera(): { lat: number; lng: number; zoom: number }; setCamera(c: { lat: number; lng: number; zoom?: number }): void;
+  detach(): void }
+export type LayerStatus = 'no-region' | 'loading' | 'building' | 'ready' | 'ready-2d' | 'zoomed-out' | 'failed' | 'version-mismatch';
+export interface HexLayer {
+  setPack(pack: CellPack | null, state: 'idle' | 'loading' | 'error' | 'ready'): void;
+  setInputs(i: { A: Assumptions; profile: TruckProfile; cal: CalibrationState | null }): void;
+  setLayer(id: MapLayerId): void; setHour(how: number, date: string | null): void; setTheme(t: 'light' | 'dark'): void;
+  cellAt(lat: number, lng: number): { index: number; id: string; byte: number } | null;
+  hourStrip(dow: number, done: (bytes: Uint8Array) => void): void;       // 24 mean bytes of the cells in view, computed when idle
+  onStatus(cb: (s: LayerStatus) => void): () => void; destroy(): void }
+```
+
+`TruckMap` props: `region: RegionInfo | null`, `initialCamera`, `layer`, `pack`, `packState`, `inputs`, `forceBlank?`, `cursor?: 'default' | 'crosshair'`, `onHover?(hit | null)` with `hit = { id, byte, clientX, clientY }`, `onClick?({ lat, lng })`, `onCamera?(camera)` (on idle), `onStatus?(status)`, `children` (`MapPin` elements). Its imperative handle has `flyTo(camera)`, `getCenter()` and `hourStrip(dow, done)`. It subscribes the layer to `truckHourStore` itself (rule 1 of 2.4). The component that renders `<GoogleMap>` holds no per-tick state; its `options` object is memoised and its `center` is a stable reference, otherwise every render would call `map.setOptions` and recentre.
+
+Map options: `styles` = `SMAPPEN_MAP_STYLE_MONO` (light) or `SMAPPEN_MAP_STYLE_DARK` (when `<html data-theme="dark">`, watched with a `MutationObserver`), `mapTypeControl: false`, `streetViewControl: false`, `fullscreenControl: false`, `clickableIcons: false`, `disableDoubleClickZoom: true`, `gestureHandling: 'greedy'`, `minZoom: 8`, `maxZoom: 19`. `usageApi.logMapLoad()` is called once per page session when the Google map first mounts. The map is unmounted with the page; returning to the tab reuses the cached pack and mesh, so no keep-alive is needed.
+
+### 5.2 Pack download and decode
+
+1. `useCellPack(region)` runs `truckApi.fetchPack(region.pack.url)` when the region is usable (axios, `responseType: 'arraybuffer'`; the browser has already removed the gzip encoding and caches the response by URL: `Cache-Control: private, max-age=31536000, immutable`). No `fetch`, no Cache API, no IndexedDB.
+2. `decodePack(buf)` follows 03_DATA 11.2 exactly: magic `TPCP` (`0x54504350` big-endian read), format version 1, header length `H` at byte 8, JSON header at 12, data offset `D = 12 + H + ((8 - ((12 + H) % 8)) % 8)`, `N = header.cell_count`, `K = header.columns.length`, total length `D + 8N + 2NK`. Ids: two little-endian `u32` per cell joined as `hi.toString(16) + lo.toString(16).padStart(8, '0')` (15 characters). Features: column-major `u16` codes decoded to a row-major `Float32Array(N * K)` with `value = scale[j] * (code / 65535)^2`. All reads through `DataView` with explicit little-endian.
+3. It throws `PackError` with a code: `bad_magic`, `bad_version`, `bad_header`, `bad_length`, `bad_columns` (unless `K` is 50 and `columns` equals `c_day_<seg>` x 16, `c_eve_<seg>` x 16, `n_<seg>` x 16, `r_day`, `r_eve` in the shared segment order, which is the feature row the fast path expects).
+4. `HexLayer.setPack` refuses a pack whose `model_version` differs from `MODEL_VERSION` or whose `dataset_version` differs from `region.active_version` (status `version-mismatch`).
+5. `CellPack = { header, n, k, ids: string[], features: Float32Array }`. The pack feeds colours only. No number printed anywhere comes from it (0.2).
+
+### 5.3 Mesh
+
+`buildMesh(ids, boundaryOf, bounds, onYield)`; `boundaryOf = (id) => cellToBoundary(id)` from `h3-js`, which returns `[lat, lng]` pairs (the rest of the repository is `[lng, lat]`).
+
+1. Origin = the world coordinates of the centre of `bounds`. Positions are stored relative to it (`Float32Array`, 12 numbers per cell: six vertices, `x` then `y`). Absolute world coordinates would jitter from zoom 18 in float32.
+2. Every cell uses its own six vertices. A cell with five (a pentagon) repeats its last vertex. One shared hexagon shape is not allowed: it is more than a pixel off at street zoom.
+3. Indices: `Uint32Array`, 12 per cell, a fan over the six vertices: `(0,1,2) (0,2,3) (0,3,4) (0,4,5)` plus `6 * cell`.
+4. Also kept per cell: the centre in the same relative coordinates and the half-width and half-height of its bounding box (for culling and for the 2D renderer).
+5. The loop yields to the event loop every 8,192 cells (`await onYield()`), so no task exceeds 50 ms. The result is memoised in a `WeakMap<CellPack, HexMesh>`.
+
+### 5.4 Scoring per tick
+
+`createFrameSource(pack, { A, profile, cal })` prepares the week's weight rows with `mapWeightRows(A, profile, cal)` (recomputed only when `A`, `profile.daypart_fit` or the truck factor changes) and reuses its buffers.
+
+```
+fill(layer, how, date, out: Uint8Array /* N */):
+    rows   = week rows when date is null, else the 24 rows of that date
+    regime = regime_of_hour[how mod 24]
+    scores = bulk scorer of fastPath.ts over pack.features for the active layer only
+             (opportunity is capped at profile.capacity_orders_per_hour inside the scorer)
+    for each cell c: b = scoreByte(scores[c], hi[layer]);  out[c] = 0 if b < minByte[layer] else b
+```
+
+The 24 rows of a date follow 02_MODEL 4.17: `w_opp[h][s] = presence[s][h] * intent[s][h] * daypart_fit[daypart_of_hour[h]] * truck_factor` and `w_people[h][s] = presence[s][h]`, with `presence` and `intent` from `hourWeights(A, dayContext(A, date, null, null, null, null))`. No request is needed for a date: the model works out the holiday itself, and forecast and fuel play no part in the map. A test asserts that for `typicalContext(A, dow)` these equal rows `dow * 24 .. dow * 24 + 23` of `mapWeightRows`. The map never applies weather, hosts or spot factors.
+
+Per tick the layer does: `fill` -> `renderer.setValues` -> one coalesced `requestAnimationFrame` render. The competition layer has only two distinct frames (day and evening) and caches both. Hover reads `out[index]`.
+
+### 5.5 One colour scale for the whole week
+
+The domain is fixed and comes from the fast path: `byte = scoreByte(x, hi) = floor(255 * sqrt(clamp(x / hi, 0, 1)) + 0.5)` with `hi` = seeds `map.opportunity_hi` (45), `map.people_hi` (20000), `map.competition_hi` (100). It is the same for every hour, region and truck, so a colour always means the same number and dragging the hour shows real change. Nothing is rescaled per viewport or per hour.
+
+| Layer | Stops, low to high (light theme) | Ticks on the legend | Bands for the hover hint | Floor ("No colour: under ...") |
+|---|---|---|---|---|
+| `opportunity` | `#fde725 #7ad151 #44bf70 #22a884 #21918c #2a788e #355f8d #414487 #482475 #440154` (Viridis, light end low) | 1, 5, 15, 30, 45 | "under 1", "1 to 5", "5 to 15", "15 to 30", "30 or more" | 0.1 orders an hour |
+| `people` | `#d0e1f2 #b0d2e8 #89bedc #60a7d2 #3e8ec4 #2172b6 #0a549e #08306b` | 100, 1,000, 5,000, 10,000, 20,000 | "under 100", "100 to 1,000", "1,000 to 5,000", "5,000 to 10,000", "10,000 or more" | 50 people |
+| `competition` | `#fee6ce #fdd0a2 #fdae6b #fd8d3c #f16913 #d94801 #a63603 #7f2704` | 1, 5, 25, 50, 100 | "under 1", "1 to 5", "5 to 25", "25 to 50", "50 or more" | 0.25 |
+
+Rules: each ramp gets darker as the value rises (strictly falling relative luminance, checked by a test), which is what keeps it readable for colour-blind viewers and on the light grey `mono` base; one hue family per layer so the active layer is recognisable at a glance. `buildLut(layer, theme)` returns 256 RGBA entries: entry 0 is transparent, entries 1 to 255 interpolate the stops linearly in sRGB. On the dark base the stop order is reversed so high values are light. A tick or band edge at value `v` sits at `sqrt(v / hi)` along the bar and at byte `scoreByte(v, hi)`; `minByte = scoreByte(floor, hi)` (12, 13, 13). The layer is drawn at opacity 0.68 so roads and labels of the base map stay readable under it. `WeekStrip` uses the `opportunity` table.
+
+### 5.6 Hosts
+
+**Google host.** The overlay class is created after the API has loaded (`class extends google.maps.OverlayView` cannot be evaluated at module load). `onAdd`: put the canvas (`pointer-events: none`) in `getPanes().mapPane`, so Google's own shapes and its attribution stay above it; put the pin layer in `getPanes().overlayMouseTarget` and call `google.maps.OverlayView.preventMapHitsFrom(pinLayer)`. On every `draw()`:
+
+```ts
+const p  = this.getProjection();
+const nw = p.fromContainerPixelToLatLng(new google.maps.Point(0, 0));
+const d  = p.fromLatLngToDivPixel(nw);
+const lx = Math.round(d.x), ly = Math.round(d.y);
+canvas.style.left = lx + 'px'; canvas.style.top = ly + 'px';
+const scale = p.getWorldWidth() / 256;                 // never map.getZoom(): it jumps to the target during an animated zoom
+const o = p.fromLatLngToDivPixel(originLatLng);
+onViewport({ width, height, dpr, scale, originX: o.x - lx, originY: o.y - ly });
+```
+
+`draw()` is called on every frame of a drag, wheel zoom, `panBy` and `fitBounds` on a raster map (measured on Maps 3.66); because that is observed rather than documented, the host also redraws on `bounds_changed`, `zoom_changed`, `idle` and from a `ResizeObserver` on the map container. Pointer events come from the map, not the canvas: `map.addListener('mousemove' | 'click' | 'mouseout')`, with hover picks throttled to one per animation frame. `project` is `fromLatLngToDivPixel`; pins are repositioned inside `draw()` by setting `transform` directly, with no React render.
+
+**Blank host.** A `div` with a neutral grid (a 2D canvas: background `--bg-panel`, lines every 64 px in `--line-soft`), the hex canvas above it and the pin layer on top. It keeps its own camera (centre in world coordinates, fractional zoom 8 to 19) and implements drag to pan (pointer capture), wheel and two-finger pinch to zoom about the pointer, arrow keys and `+` / `-`, and "Zoom in" / "Zoom out" buttons. It emits the same `move`, `click` (pointer up within 4 px of pointer down) and `leave` events and the same `Viewport`. It is used when `?tp_basemap=blank` is set, when the loader reports `loadError`, and after an authentication failure.
+
+**Authentication failure.** With an invalid key Google replaces the map, removes our overlay and stops calling `draw()`, while `isLoaded` stays true and `loadError` stays empty. `authFailure.ts` therefore installs `window.gm_authFailure` once (keeping any earlier handler) and sets `truckUiStore.mapsAuthFailed`; `TruckMap` then switches to the blank host with the last camera and shows the status text of 4.2. As a second line of defence, 1.5 s after the Google map mounts it checks the container for Google's error element (`.gm-err-container` **[M]**). With no key at all Google runs in development mode and everything works; in development builds only, its "Do you own this website?" dialog is dismissed by clicking `.dismissButton` once. Address search needs a working key, which is why every address field also accepts coordinates and a map click.
+
+### 5.7 Renderers, pins, picking
+
+**WebGL2.** Context: `canvas.getContext('webgl2', { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false })`; null means use the 2D renderer. Buffers: positions (`FLOAT` x 2, static), indices (`UNSIGNED_INT`), and one value per vertex (`UNSIGNED_BYTE`, normalised, dynamic): each tick the N cell bytes are expanded to 6N and uploaded with `bufferSubData`. The colour table is a 256 x 1 RGBA texture with nearest filtering. Blending `ONE, ONE_MINUS_SRC_ALPHA`. One `drawElements(TRIANGLES, 12 * N, UNSIGNED_INT, 0)` per frame.
+
+```glsl
+#version 300 es
+// vertex shader
+in vec2 a_pos; in float a_val;                 // a_val: the cell byte, normalised to 0..1
+uniform vec2 u_scale, u_offset; out float v_val;
+void main() { v_val = a_val; gl_Position = vec4(a_pos * u_scale + u_offset, 0.0, 1.0); }
+
+#version 300 es
+// fragment shader
+precision mediump float;
+in float v_val; uniform sampler2D u_lut; uniform float u_alpha; out vec4 o;
+void main() {
+  if (v_val <= 0.0) discard;
+  vec4 c = texture(u_lut, vec2(v_val * (255.0 / 256.0) + 0.5 / 256.0, 0.5));
+  o = vec4(c.rgb * c.a * u_alpha, c.a * u_alpha);
+}
+```
+
+with `u_scale = (2 * scale / width, -2 * scale / height)` and `u_offset = (2 * originX / width - 1, 1 - 2 * originY / height)`. The backing store is `width * dpr` by `height * dpr`. On unmount the context is released (`WEBGL_lose_context`); creation and disposal are idempotent because `React.StrictMode` mounts effects twice in development.
+
+**2D canvas.** `getContext('2d', { willReadFrequently: true })` at 1x backing resolution. Each frame: cull cells by centre against the world rectangle in view, then one `fill()` per cell in its table colour (256 precomputed CSS strings). With more than 4,000 cells in view it draws each cell's bounding box with `fillRect` instead. Ticks are coalesced to animation frames. Many hexagons are never merged into one path (measured slower).
+
+**Zoom.** `alphaForScale`: opacity 0 below zoom 9.0, rising linearly to 1 at zoom 10.0 (cells are under a pixel there); status `zoomed-out` below 9.5.
+
+**Pins.** `MapPin` renders its children through a portal into the host's pin layer and positions them with `host.project` on every viewport callback, so the same pins work on both hosts. Pins are real buttons; z-order: scout dots, saved spots, selected point, base.
+
+**Picking.** `cellAt(lat, lng)` = `index.get(latLngToCell(lat, lng, header.h3_res))` (under a microsecond; exact H3 membership, unlike nearest-centre). The hovered cell's outline is one SVG polygon in the pin layer (`pointer-events: none`, 2 px `--ink` stroke, no fill) whose six points are projected with `host.project` on every viewport callback. It is not a Google polygon and not a GL line (GL lines are one pixel wide), so it looks the same on both hosts.
+
+### 5.8 Status, context loss, never throwing
+
+| Status | When | What the page shows (4.2) |
+|---|---|---|
+| `no-region` | `region` is null, or `usable` is false, or it has no `pack` | "No map data for this area yet." |
+| `loading`, `building` | pack in flight; decoding or building the mesh | "Loading map data ({size} MB, first time only)..." |
+| `ready`, `ready-2d` | drawing with WebGL2 or with the 2D renderer | nothing |
+| `zoomed-out` | zoom under 9.5 | "Zoom in to see the colours." |
+| `version-mismatch` | pack refused (5.2) | "The map data is from a different version. Reload the page." |
+| `failed` | pack request failed, `PackError`, or the layer caught an exception | "Map colours are unavailable right now. You can still click the map for an estimate." |
+
+- Every public method of `HexLayer` and every host callback runs inside `try`/`catch`. A caught error is logged once (`console.warn('[truck-map]', e)`), the layer clears its canvas and reports `failed`. Clicking the map, pins and the spot card keep working, because they do not depend on the layer.
+- `webglcontextlost`: call `preventDefault()`, stop drawing. `webglcontextrestored`: rebuild the program, buffers and texture from the typed arrays the layer still holds, then draw. If the context does not come back within 3 s, or setup fails twice, switch to the 2D renderer (`ready-2d`).
+- `TruckMap` sits in its own `<ErrorBoundary scope="Map" inline>` as a last resort.
+
+### 5.9 Budgets and how to measure them
+
+Reference machine: the laptop used for the reconnaissance measurements (integrated graphics, Chrome, 1600 x 900), region `dc` at about 58,600 cells.
+
+| Budget | Target | Measured by |
+|---|---|---|
+| Pack transfer | at most 4 MB compressed, once per data version | network panel |
+| Decode | at most 150 ms | `performance.measure('tp:pack-decode')` |
+| Mesh build | at most 200 ms in total, no task over 50 ms | `tp:mesh` |
+| First coloured frame, warm HTTP cache | at most 1.0 s after the page mounts | `tp:first-frame` |
+| Hour tick: score, bytes, upload | at most 2 ms of main-thread time at the 95th percentile | `tp:tick` |
+| Tick to pixels | the next animation frame; 95th-percentile frame at most 17 ms while playing at "Fast" | frame deltas in `PerfHud` |
+| Camera frame | at most 1 ms of script per `draw()` | `tp:draw` |
+| Hover pick | at most 0.2 ms | sampled in `PerfHud` |
+| 2D renderer | at least 30 frames a second with up to 4,000 cells in view; never a task over 50 ms | `PerfHud` |
+| Spot card | numbers on screen within 150 ms of the `simulate` answer | `tp:spot-compute` |
+| Memory for one region | at most 40 MB (features 11.7 MB, mesh 5.6 MB, ids and index about 6 MB) | memory panel |
+| Bundle | `TruckPages-*.js` at most 260 kB gzip (`h3-js` is about 63 kB of it); `index-*.js` grows by at most 8 kB gzip | `check-truck-chunks.mjs` |
+
+`?tp_perf=1` mounts `PerfHud`: renderer kind, cells, cells in view, the last and 95th-percentile tick and frame times over the last 120 frames, decode and mesh times; the `P` key prints them with `console.table`. Node tests hold loose machine-independent bounds (8.2). The layer has only been measured in headless Chrome; the browser pass of 8.5 must repeat the playback check in Safari and Firefox before wave 1 is called done.
+
+---
+
+## 6. Wording
+
+All fixed strings live in `utils/truck/wording.ts`. Tone: plain, direct, second person ("your truck"), sentence case, numbers first, no exclamation marks, no emoji, no hype. Never "AI", "smart", "magic", "insights", "powered by", or sparkle icons: every figure is ordinary arithmetic on public data and the owner's settings.
+
+### 6.1 How an estimate is phrased
+
+| Rule | Example |
+|---|---|
+| Value first, then the range in brackets with "to", then the chip | "60 orders (28 to 102)" + "Rough" |
+| In a sentence: "about" for the value, "likely between" for the range | "About 60 orders, likely between 28 and 102." |
+| Verbs: "estimate", "about", "might", "could". Never "will", "expect to make", "guaranteed", "forecasted earnings" | "This stop could add $135." |
+| A loss is said in words where there is room | "On a weak day this stop loses money." |
+| Money in estimates is whole dollars; unit prices show cents; fuel shows three decimals | "$482", "$9.54 an order", "$4.195/gal" |
+| Model placeholders are never presented as findings | "Placeholder until you log services" |
+| The label is always shown with the number; the sentence is one tap away | chip + hint |
+
+### 6.2 Confidence labels (fixed)
+
+| `confidence` | Label | Sentence |
+|---|---|---|
+| `very_rough` | "Very rough" | "A guess from generic assumptions. Treat it as a ranking only." |
+| `rough` | "Rough" | "Not yet checked against your own sales." |
+| `fair` | "Fair" | "Adjusted with your logged services." |
+| `good` | "Good" | "Backed by your results at this spot." |
+| `fixed` | "Fixed" | "Set by your terms, not estimated." |
+
+### 6.3 The standing notice and the standing lines
+
+| Use | Text (exact) |
+|---|---|
+| `PermissionNotice` `line` (spot card, spot detail, compare, planner, day sheet, calendar file) | "Permission to trade here and local rules are yours to check." |
+| `PermissionNotice` `block` (Scout, spot detail) | "Truck Planner estimates demand. It does not know who owns this land or what the local rules say. Permission to trade here and local rules are yours to check." |
+| Under every breakdown | "Estimates rank places and times. Before you log services they are poor at predicting dollars." |
+| Data vintages (`SourceLine` `vintages`, from `region.vintages`) | "Residents: April 2020. Jobs: {lodes_year}. Places: OpenStreetMap, {fmtDay(osm_snapshot_date, 'long')}." |
+| Deleting a spot | "It leaves your list. Days already planned there and its logged services are kept." |
+| Deleting everything | "This deletes your truck, spots, plans, logged services, drive-time corrections and Scout notes. It cannot be undone. Your smappen account stays." The phrase to type is `delete my truck data` |
+
+### 6.4 Attribution strings
+
+Ids 1 to 9 are the nine strings of 03_DATA section 14 with that document's numbering, which is also the `id` in the `attribution` list of `sources()` (route 44, placeholders already filled). The Data page prints what the server sends. `wording.ts` holds strings 1, 2, 6 and 9 for the places that have no server list at hand, and the two rows marked L and D, which exist only in the browser. OpenStreetMap text links to `https://www.openstreetmap.org/copyright`; the jobs line links to `https://lehd.ces.census.gov/data/`.
+
+| Id | Where | Text |
+|---|---|---|
+| L | Map legend source line (DECISIONS 8) | "People: US Census 2020, LEHD 2023 · Venues: © OpenStreetMap contributors" |
+| 1 | Wherever OpenStreetMap places are listed: the spot card's outlet list, Scout, the day sheet (`SourceLine` `osm`) | "© OpenStreetMap contributors" |
+| 2 | Scout footer, day sheet footer (`osm_sentence`) | "Place data © OpenStreetMap contributors, available under the Open Database License (ODbL)." |
+| 3 | Data page, residents | "Residents: U.S. Census Bureau, 2020 Census Redistricting Data (Public Law 94-171). Counts as of April 1, 2020, not adjusted for growth." |
+| 4 | Data page, jobs | "Jobs: U.S. Census Bureau, LEHD Origin-Destination Employment Statistics (LODES), version 8.4, 2023, all jobs. Job counts are jobs of record with statistical noise added by the Census Bureau, not people present." |
+| 5 | Data page, places | "Places: OpenStreetMap snapshot of {osm_snapshot_date} (Geofabrik extracts). © OpenStreetMap contributors, ODbL 1.0. The places table is a database derived from OpenStreetMap and is available under the ODbL on request: {contact}." |
+| 6 | Data page, weather; Today | "Forecast: National Weather Service (weather.gov)." |
+| 7 | Data page, fuel | "Fuel price: U.S. Energy Information Administration, weekly retail prices, week of {period}." |
+| 8 | Data page, boundaries | "County boundaries: U.S. Census Bureau, TIGERweb." |
+| 9 | Data page, Scout footer (`SourceLine` `drive`) | "Drive times and distances: Google Maps Platform. Kept for at most 30 days." |
+| D | Day sheet drive line | "Drive times: Google Maps Platform, adjusted for the time of day." or, when any leg is a straight line, "Some drive times are straight-line estimates, not Google drive times." |
+
+### 6.5 Planner warnings
+
+`warningText(w, result, stopNames, ctx)` in `utils/truck/warnings.ts`. Numbers are read from the `DayResult` (the fields named below) and the holiday name from the `DayContext`, not from `Warning.data`, whose keys 02_MODEL does not list. `{stop}` is the stop's name.
+
+| Code | Level | Text |
+|---|---|---|
+| `invalid_window` | error | "{stop}: the closing time must be after the opening time." |
+| `stops_overlap` | error | "{stop} opens before the stop before it closes." |
+| `stop_unreachable` | error | "{stop}: you cannot arrive and set up before it closes." |
+| `late_arrival` | warn | "{stop}: you would open {late_minutes} min late, at {fmtClock(effective_open)}." |
+| `outside_region` | warn | "{stop} is outside the loaded area, so only its host is counted." |
+| `outside_allowed_hours` | warn | "{stop} falls outside the days or hours you set for this spot." |
+| `fallback_drive_time` | warn | "Some drive times are straight-line estimates, not Google drive times." |
+| `long_gap` | warn | "{fmtDuration(gap_before_minutes)} of paid waiting before {stop}." |
+| `long_day` | warn | "This is a {fmtDuration(day_minutes)} day, prep to done." |
+| `fee_high` | warn | "{stop}: the fee is {fmtPercent(spot_fee / sales)} of expected sales." |
+| `below_break_even` | warn | "{stop} is expected to lose money once its added costs are counted." |
+| `event_thin_crowd` | warn | "{stop}: a thin crowd for the number of food vendors." |
+| `weak_day_loss` | info | "{stop} loses money on a weak day." |
+| `capacity_bound` | info | "{stop}: demand is above what the truck can serve for part of the time." |
+| `early_start` | info | "Prep starts at {fmtClock(start_prep)}." |
+| `ends_after_midnight` | info | "The day ends after midnight, at {fmtClock(done)}." |
+| `no_forecast` | info | "No forecast for some of these hours, so no weather adjustment there." |
+| `holiday` | info | "{holiday name} is a federal holiday. Patterns follow the holiday settings." |
+| `weak_seed` | info | "{stop}: most of this estimate rests on hospital, campus or transit figures, the weakest in the model." |
+| `default_host_size` | info | "{stop}: the host size is a typical figure for this kind of place. Enter the real size to tighten the range." |
+
+An unknown code prints "Check this stop." and logs the code once, so a new model warning never crashes the page.
+
+### 6.6 Seed tags
+
+| `tag` | Chip | Hint |
+|---|---|---|
+| `measured` | "Measured" | "Published by a source we opened." |
+| `derived` | "Derived" | "Worked out from measured figures." |
+| `assumed` | "Assumed" | "Our judgement. Not measured." |
+| `tuned` | "Placeholder" | "Placeholder until you log services." |
+
+### 6.7 Drive-time source labels
+
+The label of a leg comes from the model's `Leg.source` and, for its wording, from the `DriveLeg` the server sent.
+
+| Case | Label |
+|---|---|
+| `Leg.source` `override` | "Your time" |
+| `Leg.source` `google`, `DriveLeg.source` `google_routes` or `google_distance_matrix` | "Google drive time, adjusted for {fmtClockShort(depart_minute)} traffic" |
+| `DriveLeg.source` `same_point` | "Same place" |
+| `Leg.source` `fallback` (`DriveLeg.source` `straight_line`, or no leg at all) | "Straight-line estimate" with a `TriangleAlert` icon, then the reason by `fallback_reason`: `no_key`, `refused` "Google drive times are not switched on for this server."; `quota`, `budget`, `rate` "The Google drive-time allowance is used up for now."; `timeout`, `upstream` "Google did not answer in time."; `route_not_found` "Google found no route."; `cache_only` or missing: no reason |
+
+The page-level strip of 2.6 appears when any leg of the day is a straight line or when `routing.state` is `no_key`, `refused` or `backoff`.
+
+### 6.8 Place type and segment labels
+
+Segment labels come from the seed file (`segments.<s>.label`). Place type labels: `taproom` "Brewery or taproom"; `bar` "Bar or pub"; `restaurant` "Restaurant"; `fast_food` "Fast food"; `cafe` "Cafe"; `convenience` "Convenience or grocery store"; `gym` "Gym or sports centre"; `park` "Park"; `shopping_centre` "Shopping centre"; `big_box` "Big-box store"; `campus` "College campus"; `hospital` "Hospital"; `transit_station` "Transit station"; `events_venue` "Events venue"; `stadium` "Stadium"; `hotel` "Hotel"; `attraction` "Museum or attraction"; `farmers_market` "Farmers market"; `office_park` "Office park"; `apartment_community` "Apartment community"; `industrial_site` "Industrial site"; `car_dealership` "Car dealership". Unit phrases for a host size, by the segment's group: visitors "people in its busiest hour"; workers "people working there"; residents "people living there".
+
+### 6.9 Banned wording
+
+No truck string, label, tooltip, toast, printed line or file may match any of these (case-insensitive): `\b(il)?legal(ly|ity)?\b`, `\bpermit\w*` (this does not match "permission"), `allowed to (park|trade|sell|vend|operate)`, `\bapproved\b`, `\bauthori[sz]ed\b`, `\bcompliant\b`, `\blawful(ly)?\b`, `\bzoned\b`, `\bok to park\b`. "Permission" appears only inside the standing notice. "Licence" appears only in the Settings strings about counties and in the Scout strings that repeat them. The app has no field, badge, colour or filter that expresses whether a spot may be used, and the model has none either.
+
+---
+
+## 7. Visual rules
+
+Page patterns follow the Carafe screens (the newest design pass), not the older map screens. Light theme is the launch target; dark mode keeps working because every colour is a variable, and it is not polished further.
+
+### 7.1 Tokens
+
+| Use | Token or class |
+|---|---|
+| Headings, numbers, table text | `--ink` |
+| Sentences, helper text, range lines | `--body` |
+| Uppercase captions, table headers, axis text | `--slate` at weight 700 |
+| Placeholders only | `--muted` |
+| Borders | `--line-soft` on cards, `--line` on inputs and secondary buttons |
+| Page background, panel background | `--bg`, `--bg-panel` |
+| Primary action, selection, active tab | `--brand`, `--brand-light`, the nav tokens |
+| A loss, an error | `--money-negative` with a minus sign or the word, never colour alone |
+| A saving ("saves $79 in wages") | `--money-positive` on the figure only |
+| A caution icon | `--fresh-aging` |
+| Card | `bg-white rounded-xl border p-4 sm:p-5`, border `--line-soft`, no shadow |
+| Floating over the map | the same plus `.shadow-float` |
+
+New identity tokens, declared in `components/truck/truck.css` under `:root` and repeated under `:root[data-theme="dark"]`. They say which thing a mark is, never whether it is good or bad:
+
+```css
+:root {
+  --tp-group-res:   var(--accent-revenue);     /* residents */
+  --tp-group-work:  var(--accent-cost-food);   /* workers */
+  --tp-group-visit: var(--accent-brand);       /* visitors and hosts */
+  --tp-tl-prep:     var(--slate);              /* prep and close-out */
+  --tp-tl-drive:    var(--accent-revenue);
+  --tp-tl-setup:    var(--accent-cost-food);   /* setup and pack-up */
+  --tp-tl-service:  var(--accent-brand);
+  --tp-tl-wait:     var(--line);               /* hatched; the label says paid or unpaid */
+}
+```
+
+`truck.css` also holds `.tp-scrim` (3.7), `.tp-bottom-bar` (the phone planner bar: `position: fixed; bottom: 0; padding-bottom: env(safe-area-inset-bottom)`), `.tp-pin`, `.tp-hint`, and `.tp-no-print`. No hex colour is written in a component, with two exceptions: the map ramps of 5.5 (data, in `palette.ts`) and literal colours passed to the canvas.
+
+### 7.2 Text, numbers, spacing, controls
+
+| Thing | Rule |
+|---|---|
+| Font | Nunito only (already global). Never `font-sans`, never a second family. Canvas text names `Nunito` explicitly |
+| Page title | `text-2xl font-extrabold`, `--ink` |
+| Section title | `text-base font-extrabold`, `--ink` |
+| Caption above a number | `text-[10px]` or `text-[11px]`, `font-bold uppercase tracking-wider`, `--slate` |
+| Body copy | `text-sm`, weight 500 or 600, `--body`. Never weight 400 for a caption, never `text-slate-300`, `text-slate-400` or `--muted` for anything people read |
+| Decision numbers | `tabular-nums`, weight 800 for the page's main figure (take-home), 700 in tables and rows, never under 600, always `--ink` |
+| Estimates | only through `RangeValue`: value, range with "to", confidence chip |
+| Page container | `max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-6`; stacks `space-y-4`; grids `gap-3` or `gap-4` |
+| Radii | 8 px on buttons and inputs, 12 px on cards, panels, modals; full only on chips. Nothing rounder |
+| Buttons | `.btn .btn-primary` once per view; `.btn-secondary` for the rest; text buttons for minor actions; danger actions use `.btn-danger` only inside the confirming modal. `h-9 px-3 text-sm` on desktop, at least 44 px tall below `md` |
+| Inputs | `.input`; labels with `.label`; 44 px tall below `md` |
+| Focus | the global `:focus-visible` ring (2 px `--nav-ring`, 2 px offset) is never removed; inputs keep the `.input` focus border; every custom control is reachable and operable by keyboard |
+| Status | every status pairs a word with an icon; colour is never the only signal |
+| Motion | existing classes only (`.panel-slide-*`, `.card-expand`, `.carafe-route-fade`), 150 to 250 ms, all off under reduced motion. Numbers do not count up: `AnimatedNumber` is not used, values change at once |
+| Icons | lucide only, `currentColor`, 14 to 16 px inline, 20 to 22 px in titles |
+| z-index | sub-nav 20, floating map cards 20, popovers 40, modal and sheet 50 |
+
+### 7.3 Charts
+
+House charts are hand-rolled SVG (3.10 and the accuracy chart): fixed `viewBox`, `width="100%"`, `role="img"` with an `aria-label`, colours from variables, axis text 10 px weight 700 in `--slate`, at most four gridlines in `--line-soft`, a one-sentence summary printed above the chart, a legend as `<ul aria-label="Chart legend">` when there is more than one series, and a horizontally scrolling wrapper with a `minWidth` on phones. No chart library is imported by truck code.
+
+### 7.4 Print stylesheet (`components/truck/print.css`, package FE-8)
+
+Plain CSS, loaded with the truck chunk, written for the day sheet and harmless elsewhere.
+
+| Rule | Value |
+|---|---|
+| Page | `@page { size: letter portrait; margin: 12mm; }` |
+| Hidden in print | the top nav (`header`), the skip link, the sub-nav (`nav[aria-label="Truck Planner sections"]`), `.tp-no-print` (toolbars, buttons), toasts, the phone bottom bar |
+| Colours | black text on white; no backgrounds, no shadows; borders 1 px `#000` at 40 % for tables; chips print as bordered text |
+| Type | body 11 pt, section titles 13 pt bold, the day's title 18 pt bold; times in the "Times" table 12 pt bold, `tabular-nums` |
+| Layout | one column, `max-width: none`; tables full width; `break-inside: avoid` on each stop block and on table rows; `break-after: avoid` on headings |
+| Links | printed as their text only; no URLs appended |
+| Ranges | always printed as text through `fmtEstimate`, so a black-and-white page carries the same information |
+
+### 7.5 Do and do not (owner taste)
+
+| Do | Do not |
+|---|---|
+| Open on operations: next stop, today's plan, what to log | Open on a map or a wall of widgets; do not copy `DashboardPage` |
+| White cards on `--bg` with a 1 px border | Gradients of any kind (logo tile, progress bar, tinted cards), glows, gradient borders |
+| Plain scrims `rgba(15, 23, 42, 0.45)` | `backdrop-blur`, translucent panels |
+| `rounded-xl` at most | `rounded-2xl` and larger, bubbly pill buttons |
+| `--ink` and `--body` text, labels at weight 700 | light grey reading text, thin captions |
+| Purple for the primary action and selection only | purple fills behind content, the lighter accent stops (`--accent-cost-labor`, `--accent-margin`, `--accent-attention`) as text colours |
+| A word and an icon for every status | red or green as the only difference |
+| Lists that stay visible; one primary button per view | primary lists hidden behind tabs or modals; a second top bar or a second loading screen |
+| Plain numbers with their range and label | emoji, "AI", "smart", sparkle icons, celebration effects |
+| Real usefulness at 375 px for Today, Planner, Log and the day sheet; 44 px targets | shadows on page cards, bouncy motion, count-up numbers while the hour is dragged |
+| Variables and the `bg-white` class | hex in components, inline `background: 'white'`, Tailwind `dark:` classes |
+
+---
+
+## 8. Tests
+
+### 8.1 Layout and commands
+
+Vitest collects only `src/**/__tests__/**/*.test.ts` in a Node environment: no DOM, no canvas, no `.test.tsx`. Everything worth testing is therefore kept in pure modules. Test files are not type-checked by `tsc`. All truck tests live in `utils/truck/__tests__/`, with the file names of 8.2 so packages never collide.
+
+```bash
+cd frontend
+npx tsc --noEmit -p tsconfig.json          # not `tsc -b`: that rewrites the tracked tsconfig.tsbuildinfo
+npm test                                   # vitest run
+npx vite build --outDir "$TMP/tp-build" --emptyOutDir     # never build into public/app during checks
+node scripts/check-truck-chunks.mjs "$TMP/tp-build"
+```
+
+### 8.2 Unit tests
+
+| File | Owner | Must cover |
+|---|---|---|
+| `estimator.*.test.ts` | estimator engineer | the 286 golden cases with the model tolerance; the seed copy equals `tp_seeds.json`; the three anchors; the fast path with `Float32Array` at its looser tolerance |
+| `format.test.ts` | FE-0 | every example of 3.1; negative and zero money; `-0` never printed; grouping at 999 / 1,000 / 1,000,000; `fmtClock` at -30, 0, 720, 1439, 1440, 1470; `fmtEstimate` for `fixed`, zero, singular, negative low; `parseClock` examples of 3.6 and rejects (`25`, `12:60`, `13pm`, empty); `parseNumber`; `parseCoords` |
+| `time.test.ts` | FE-0 | `howOf`, `howParts` round trip for 0..167; `mondayOf` across a year boundary; `nextDateWithDow` when today is that weekday (returns today) |
+| `clock.test.ts` | FE-0 | the four check values of 2.7; the end of daylight time: `regionNow` at 2026-11-01 05:59 UTC is minute 119 and at 06:00 UTC minute 60, and `zonedToUtcStamp(..., '2026-11-01', 90)` is `20261101T053000Z` (the earlier 1:30 AM); on 2026-10-08, minute 1500 gives `20261009T050000Z` and minute -30 gives `20261008T033000Z`; the skew rule of 2.7 (one minute ignored, ten minutes applied) |
+| `links.test.ts` | FE-0 | the URL shapes of 3.14 character for character, including the server's own example `https://www.google.com/maps/search/?api=1&query=38.960000%2C-77.360000`; exactly six decimals; no `waypoints` param when empty |
+| `wording.test.ts` | FE-0 | every confidence label, seed tag, place type and warning code has a string; no string in `wording.ts` matches a banned pattern (6.9) |
+| `warnings.test.ts` | FE-0 | each of the 20 codes renders from a `DayResult` built by `dayPlan` (reuse the inputs of golden family g18); an unknown code gives the fallback text |
+| `breakdown.test.ts` | FE-0 | thirteen steps, in order, with the exact titles, for a window, an event and a day; "no forecast", "typical week" and "no logged services" lines; seeds tagged `tuned` are flagged |
+| `timelineView.test.ts` | FE-0 | the blueprint day sheet gives exactly the twelve segments of 3.10; an unpaid wait; a late arrival (no wait segment); an empty timeline |
+| `assemble.test.ts` | FE-0 | fixtures in the shapes of 04_BACKEND 4.1 (`Plan`, `Spot`, `DayInfo`, `DriveLeg`) for the worked day of 02_MODEL 4.12 produce, through `toStopInput`, `toLegs`, `buildContext` and `dayPlan`, the event minutes 574, 619, 630, 660, 840, 860, 870, 1020, 1200, 1220, 1221, 1251 and take-home 482.20 (-34.82 to 1136.78) within tolerance; `buildContext` with a null override equals the server's `DayInfo.context`; `buildAssumptions` throws on a version mismatch; an absent pair stays absent (never zero-filled); the keys of `toLegs` are `from_id>to_id`; `hostKey` ignores `only_food` and the size of a visitor host; a one-stop day on `typicalWithFuel` evaluates and raises neither `no_forecast` nor `holiday` |
+| `palette.test.ts` | FE-0 | table length 1,024; entry 0 transparent; strictly falling relative luminance along each ramp; reversed order on the dark theme; tick position = `sqrt(v / hi)`; `minByte` = 12, 13, 13; band lookup at every tick byte |
+| `logView.test.ts` | FE-0 | unlogged stops (closing time passed, no `ServiceLog` with that `plan_stop_id`, cancelled plans ignored, event and catering stops included); the four verdicts at the range edges |
+| `map.mercator.test.ts` | FE-1 | `worldX(-180) = 0`, `worldX(180) = 256`, `worldY(0) = 128`, round trip within 1e-9 degrees at the `dc` centre; the clamp near the poles |
+| `map.pack.test.ts` | FE-1 | a pack written by the test helper `_packFixture.ts` (which mirrors 03_DATA section 11) decodes to the same ids and to values within the quantisation bound `sqrt(v * scale) / 65535 + scale / (4 * 65535^2)`; zero is exact; each `PackError` code; a header length that needs 0 and 7 padding bytes |
+| `map.mesh.test.ts` | FE-1 | with real `h3-js`: `latLngToCell(38.9696, -77.3861, 9)` is `892aaab3043ffff`; that cell yields six distinct vertices around its centre; positions are relative to the origin and their float32 error is under 0.02 px at zoom 20; a five-vertex input repeats its last vertex; index pattern |
+| `map.frames.test.ts` | FE-1 | a one-cell pack holding the cell of 02_MODEL 4.17 gives bytes 206, 38 and 23 (each within 1) at `how` 84; the capacity clamp; the floor zeroes bytes under `minByte`; date rows equal week rows for a typical context; competition has two frames |
+| `map.pick.test.ts`, `map.viewport.test.ts` | FE-1 | index lookup for a point inside and outside the pack; `zoomOf`, `alphaForScale` at zoom 8.9, 9.5, 10; the world rectangle in view; blank-host pin projection |
+| `map.perf.test.ts` | FE-1 | loose bounds on any CI machine: scoring 60,000 synthetic cells for one hour under 10 ms (median of 20 runs); decoding a 60,000-cell pack under 500 ms; building its mesh under 1,500 ms |
+| `hourControl.test.ts` | FE-2 | the playback accumulator: 2.5 x the step time advances two hours and carries the rest; wrap from 167 to 0; no advance while paused |
+| `spotSummary.test.ts`, `profileForm.test.ts` | FE-3 | best window, orders and contribution for the two anchors of 02_MODEL 8.3; spots without vectors; profile draft round trip; every range read from the seed metadata; out-of-range values rejected, not clamped |
+| `plans.test.ts` | FE-0 | `planForDate`: the four cases of rule 1 in 4.5; cancelled plans never chosen; ties on `updated_at` broken by id |
+| `planDraft.test.ts` | FE-4 | add, move, remove; temporary ids from the counter, never `base`, and absent from the save body; default window avoids overlap; dirty detection; the save body matches 04_BACKEND 4.11 |
+| `nextAction.test.ts` | FE-5 | each event kind, before the first event, after the last, a day that ends after midnight |
+| `scoutView.test.ts` | FE-7 | host-fit words at 0.39, 0.4, 0.69, 0.7; the three kitchen sentences; the size phrase by segment group |
+| `ics.test.ts` | FE-8 | the worked day gives three events with `DTSTART:20261008T133400Z` for the day (9:34 AM Eastern) and `20261008T150000Z` for the first stop; CRLF endings; folding at 75 octets with a multi-byte character at the fold; escaping of comma, semicolon, backslash and newline; identical bytes for identical input |
+
+### 8.3 Source guards
+
+Guards are Vitest tests that read source files with `node:fs`. `_closure.ts` (a helper, not a test) provides `truckFiles()` (every `.ts`, `.tsx`, `.css` under `components/truck/`, `utils/truck/`, plus `api/truck.ts` and `stores/truck*.ts`, excluding `__tests__/`), `importClosure(entries)` (follows static `import`/`export ... from` and dynamic `import()` with relative specifiers, resolving `.ts`, `.tsx` and `/index.ts`; records bare package names) and `stripComments(source)` (so a comment that names a forbidden thing does not trip a guard; paths are normalised to forward slashes for Windows). The closure today reaches the shared shell files (`AppNav`, `ErrorBoundary`, `api/client`, `api/advanced`, `api/usage`, `authStore`, `uiPrefsStore`, `costStore`, `GooglePlaceAutocomplete`, `mapsLoader`, `mapStyle`) and is clean. `api/geocoding.ts` is deliberately not used: its server route can echo a URL that carries the Google key (DECISIONS 13).
+
+| Guard | Scope | Fails on |
+|---|---|---|
+| `guards.geolocation.test.ts` | truck files and their import closure | `geolocation`, `watchPosition`, `getCurrentPosition`, `navigator.permissions`, `permissions.query` |
+| `guards.ai.test.ts` | truck files and their import closure | hosts: `api.anthropic.com`, `api.openai.com`, `openai.azure.com`, `generativelanguage.googleapis.com`, `aiplatform.googleapis.com`, `bedrock`, `sagemaker`, `api.mistral.ai`, `api.cohere.`, `api.groq.com`, `api.together.`, `openrouter.ai`, `api.perplexity.ai`, `api.x.ai`, `api.deepseek.com`, `api.fireworks.ai`, `api.replicate.com`, `huggingface.co`, `api.voyageai.com`, `api.ai21.com`, `:11434`, `:8088`, `ml-sidecar`. Packages: `@anthropic-ai/`, `openai`, `@google/generative-ai`, `langchain`, `@huggingface/`, `cohere-ai`, `@mistralai/`, `ollama`, `@tensorflow/`, `onnxruntime`. Key names: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. Endpoints: `/ai-score`, `/ai-rankings`, `/dashboard/briefing`, `/recommendations/run`, `/recommend`, `/restaurants/sample`, `/pos/`. First-party names on word boundaries: `AiScoringController`, `OpsController`, `MenuEngineeringService`, `MenuEngineeringController`, `SampleDataService`, `pos.sync`. The bare word "model" is not banned |
+| `guards.network.test.ts` | truck files | `fetch(`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `sendBeacon`, an import of `axios`; any `api.get/post/put/delete` path literal that does not start with `/api/truck/` (the one non-literal path is `fetchPack(url)`, which itself rejects a URL that does not start with `/api/truck/regions/`); any `http://` or `https://` literal whose host and path prefix is not one of `www.google.com/maps/`, `www.openstreetmap.org/copyright`, `lehd.ces.census.gov/data/`, `www.w3.org/`; any bare import outside `react`, `react-dom`, `react-router-dom`, `@tanstack/react-query`, `zustand`, `zustand/middleware`, `react-hot-toast`, `lucide-react`, `@react-google-maps/api`, `h3-js` |
+| `guards.wording.test.ts` | truck files, including the seeds | the patterns of 6.9; emoji and dingbat code points (U+1F300 to U+1FAFF, U+2600 to U+27BF); `\bAI\b`, `\bsmart\b`, `\bmagic`, `powered by` inside string literals and JSX text. Also asserts that `spot/SpotCard.tsx` or `spot/SpotAnalysis.tsx`, `pages/SpotDetailPage.tsx`, `pages/SpotComparePage.tsx`, `pages/ScoutPage.tsx`, `pages/PlannerPage.tsx` and `sheet/DaySheet.tsx` render `PermissionNotice` |
+| `guards.determinism.test.ts` | truck files | `Math.random`, `new Date(`, `Date.now`, `Date.parse`, `Date.UTC`, `toISOString`, `toLocale`, `Intl.` outside `utils/truck/clock.ts`; `.toFixed(` and `Math.round(` outside `components/truck/map/` and `utils/truck/map/`; `localeCompare`; `setInterval(` (playback and clocks use animation frames and aligned timeouts) |
+| `guards.honest.test.ts` | `components/truck/` except `ui/RangeValue.tsx` | a formatter applied straight to an estimate's parts: a call to `fmtMoney`, `fmtMoneyCents`, `fmtCount`, `fmtCount1` or `fmtPerHour` whose first argument ends in `.value`, `.low` or `.high`, unless the line carries `// tp-allow-bare: <reason>` (the three-column money table and chart ticks are the expected uses) |
+| `guards.eager.test.ts` | the static import closure of `App.tsx` (dynamic imports not followed) | any file under `components/truck/` other than `TruckLayout.tsx`; anything under `utils/truck/`; `api/truck.ts`; `stores/truck*.ts`; the package `h3-js`. Also: `TruckLayout.tsx` imports only the five modules of 1.7 |
+
+### 8.4 Type-check and build checks
+
+1. `npx tsc --noEmit -p tsconfig.json` exits 0 (strict mode).
+2. `npm test` passes: the two existing test files, the estimator tests, and everything in 8.2 and 8.3.
+3. The build succeeds and `frontend/scripts/check-truck-chunks.mjs <dir>` passes: exactly one `assets/TruckPages-*.js`; the sentinel string `tp-chunk-sentinel` (exported by `utils/truck/model.ts` and rendered by `TruckGate` as a `data-tp-chunk` attribute, so it cannot be tree-shaken) occurs in that file and in no other `.js` file; no `assets/index-*.js` contains `cellToBoundary`; `index.html` does not mention `TruckPages-`; the gzip sizes meet the bundle budget of 5.9. The script prints the sizes it measured.
+4. CI: `.github/workflows/truck-planner.yml` (owned by backend package P1, 04_BACKEND 8.3) runs `npm ci && npm test` in `frontend` on Node 20, which covers 8.2 and 8.3. The type-check, the build and the chunk check must be added to that job as three more steps; until they are, every frontend package runs them by hand (rule 6 of 9.1).
+
+### 8.5 End-to-end browser pass
+
+There is no browser test runner in the repository and none is added. The pass is a scripted checklist run by a person or a browser-driving agent against a local stack built as in 04_BACKEND 8.3: a scratch MySQL 8 with the migrations applied and a region loaded (the mini region fixture for function, the full `dc` build for row 5), the API under `php -d date.timezone=UTC -S 127.0.0.1:8080 -t public public/index.php`, demo data from `php scripts/truck/seed-demo-truck.php --email=<user>` (a truck in Sterling, five spots, one planned Thursday, twelve logged services), and the app under `vite dev` (with the dev fallback of 9.3) or as a built copy under Apache. It is run at 1440 x 900, 820 x 1180 and 375 x 812, with `?tp_basemap=blank` for everything except the checks marked G, which need a real Google key. No check may depend on the device's position, and the browser must show no location prompt at any point.
+
+| # | After wave | Check |
+|---|:---:|---|
+| 1 | 1 | Hard-load `/truck`, `/truck/map`, `/truck/spots/x`, `/truck/nonsense`; refresh each; log out and in again and land on `/truck`. The Truck tab is first and lit on every sub-route; the sub-nav scrolls at 375 px |
+| 2 | 1 | A new organization sees "Set up your truck" on every `/truck` URL; saving shows the requested page; an out-of-area base shows the warning and still saves |
+| 3 | 1 | Map: the layer appears; switching layers changes the legend title, ramp and ticks; dragging the hour changes colours with no visible lag; Space plays and pauses; "Now" jumps; the hour and layer survive a reload through the URL |
+| 4 | 1 | Map: hover shows a band, never a single number; clicking opens the spot card at once with a skeleton and then numbers; every number has a range and a chip; "Why this number" lists thirteen steps |
+| 5 | 1 | Map with `?tp_perf=1` on the reference machine: tick and frame figures within 5.9 while playing at "Fast" for 30 seconds over the whole region; repeat in Safari and Firefox (G) |
+| 6 | 1 | Map resilience: block the pack request (colours unavailable, clicking still works); a truck whose region is `none` (no colours, the "outside" card on a click); force the 2D renderer (disable WebGL); G: an invalid key switches to the blank base with the notice; no key works in development mode |
+| 7 | 1 | Save a point as a spot (with and without a linked host); edit fee, visibility and host size and watch the numbers change; the list, detail and compare pages agree with the card for the same window; delete asks first |
+| 8 | 1 | Settings: change the ticket and capacity, save, and see the map legend cap and the spot numbers follow; an out-of-range value is rejected with the range message; override an assumption, see the tag "Your value", reset it |
+| 9 | 2 | Planner: rebuild the blueprint day (two stops, 11 AM to 2 PM and 5 PM to 8 PM); the timeline shows prep, leave-by, arrive, open, close, leave, back at base and done in order; mark the wait unpaid and watch labour and take-home change; reorder with the buttons at 375 px; override a drive time and enter a toll; save, reload, and find it again |
+| 10 | 2 | Planner honesty: with drive times unavailable every leg reads "Straight-line estimate" and the warning shows; with the forecast unavailable the strip of 2.6 shows; a holiday date shows its chip and "Treat this day as" changes the numbers at once |
+| 11 | 2 | Week: planned and empty days, the week total, navigation across a month end; Today: the "Next" sentence follows the clock, the plan card matches the planner, "Log it" prefills the form |
+| 12 | 2 | Log: save a service, see the verdict and the changed factors; a second service for the same spot and time shows the server's refusal; the spot card's chip moves from "Rough" toward "Fair" only through logged services; a sold-out service is counted as a minimum; Accuracy fills in |
+| 13 | 3 | Scout: ranked places with ranges reading "Very rough" where sizes are assumed; filters; lead status sticks and hidden places leave the list; "Look up phone and website" is only ever triggered by its button and shows what Google matched (G); "Save as spot" works; the OpenStreetMap credit and the standing notice are on the page |
+| 14 | 3 | Suggestions: "Suggest a day" and "Suggest a week" fill only empty days after confirmation; an event stop reads "Very rough" and a catering stop "Fixed" |
+| 15 | 3 | Day sheet: print preview on Letter shows no navigation, black on white, ranges as text, the notice and credits in the footer; the `.ics` file imports into a calendar at the right local times; every "Open in Google Maps" link opens the right pin or route (G) |
+| 16 | 3 | Data and export: the attribution strings match 6.4; the export downloads and parses as JSON; "Delete everything" needs the typed phrase and returns to "Set up your truck" |
+| 17 | all | Keyboard only: reach and operate every control on Today, Planner and Log; focus is always visible; modals trap and return focus. Search the rendered pages for the patterns of 6.9: no match |
+
+---
+
+## 9. Work packages
+
+### 9.1 Rules
+
+1. Nine packages. FE-0 lands first. After it, the packages of one wave run in parallel; a later wave starts when the earlier wave's acceptance checks and its rows of 8.5 are green. The waves match the backend's (04_BACKEND section 9): wave 1 needs backend P1 to P4, wave 2 needs P5 and P6, wave 3 needs P7 and P8. Until a backend package lands its routes answer 501, which the screens show as an ordinary failed request.
+2. File ownership is disjoint. A package creates or edits only the files in its row. The shared files (`App.tsx`, `AppNav.tsx`, `CommandPalette.tsx`, `api/truck.ts`, the three stores, `components/truck/ui/`, `components/truck/data/`, the `utils/truck/*.ts` files listed under FE-0, `truck.css`, `frontend/package.json`, `frontend/vite.config.ts`) belong to FE-0 for the whole build. A package that needs a change there asks FE-0's owner; it does not edit them.
+3. `utils/truck/estimator/` and `utils/truck/__tests__/estimator.*.test.ts` sit inside FE-0's boundary but are written by the estimator engineer. FE-0 integrates them through `utils/truck/model.ts` only.
+4. FE-0 creates every page and every cross-package component as a typed stub (9.2). From then on the stub's file belongs to the package named as its owner, which replaces the body and keeps the exported name and prop types. Because the stubs type-check and render, the app builds and every route resolves from the first day.
+5. Pure helpers a package needs go in `utils/truck/<name>.ts` with tests in `utils/truck/__tests__/<name>.test.ts`, using the names listed in its row.
+6. Every package finishes with: `npx tsc --noEmit -p tsconfig.json` clean, `npm test` green (guards included), the build and `check-truck-chunks.mjs` passing, and no file outside its row changed.
+
+### 9.2 Seams created by FE-0
+
+| File | Stub behaviour | Owner afterwards | Used by |
+|---|---|---|---|
+| `components/truck/pages/*.tsx` (the 11 pages and 2 redirects of 1.1) | a page with its `<h1>` and "Not built yet."; `TodayPage` is the starter page of 4.1; the redirects work | the package of 9.3 | `App.tsx` through the barrel |
+| `components/truck/map/types.ts` | the final interfaces of 5.1 | FE-1 | FE-2 |
+| `components/truck/map/TruckMap.tsx`, `MapPin.tsx`, `useCellPack.ts`, `authFailure.ts` | a grey panel "Map engine not installed" that still calls `onClick` with the region centre when clicked; `MapPin` renders nothing; `useCellPack` returns idle; `authFailure` does nothing | FE-1 | FE-2 |
+| `components/truck/spot/SpotAnalysis.tsx` | props `{ subject: { kind: 'point'; lat: number; lng: number } \| { kind: 'spot'; spot: Spot }; termsOverride?: SpotTerms; layout: 'card' \| 'page'; onSaveAsSpot?: (hosts: HostHint[]) => void }`; renders "Spot analysis not built yet." | FE-2 | FE-3 |
+| `components/truck/spot/SpotForm.tsx` | props `{ mode: 'create' \| 'edit'; initial: Partial<SpotBody>; spotId?: string; nearbyHosts?: HostHint[]; presentation: 'modal' \| 'inline'; onSaved: (spot: Spot) => void; onCancel: () => void }` (`SpotBody` = the body of route 11, typed in `api/truck.ts`) | FE-3 | FE-2 |
+| `components/truck/mapui/ScoutDotsLayer.tsx` | props `{ enabled: boolean; onPick: (p: { lat: number; lng: number; placeKey: string }) => void }`; renders null | FE-7 | FE-2 |
+| `components/truck/mapui/DateMode.tsx` | no props (reads and writes `truckHourStore.date`); renders null | FE-5 | FE-2 |
+| `components/truck/planner/EventTermsForm.tsx`, `CateringTermsForm.tsx` | props `{ stop: DraftStop; onChange: (patch: Partial<DraftStop>) => void }`; renders "Events and catering are not built yet." | FE-7 | FE-4 |
+| `components/truck/planner/SuggestDayPanel.tsx` | props `{ date: string; treatAs: DayContext['treat_as']; open: boolean; onClose: () => void; onUse: (s: Suggestion) => void }`; renders null | FE-7 | FE-4 |
+| `components/truck/week/BestWeekPanel.tsx` | props `{ weekStart: string; plannedDates: string[]; onApplied: () => void }`; renders null | FE-7 | FE-5 |
+| `components/truck/sheet/CalendarButton.tsx` | props `{ date: string; result: DayResult \| null; stops: { id: string; name: string; address: string; point: { lat: number; lng: number } }[]; disabled?: boolean }`; renders a disabled "Calendar file" button | FE-8 | FE-4, FE-8 |
+| `components/truck/settings/DataTab.tsx` | no props; renders "Not built yet." | FE-8 | FE-3 |
+| `components/truck/print.css` | empty | FE-8 | the barrel |
+
+### 9.3 Packages
+
+| Package | Wave | Creates or edits | Depends on | Acceptance checks |
+|---|:---:|---|---|---|
+| **FE-0 Foundation** | 1 (first) | Edits: `App.tsx`, `components/layout/AppNav.tsx`, `components/common/CommandPalette.tsx` (1.5, 1.6); `frontend/package.json` and `frontend/package-lock.json` (add `h3-js` 4.5.0, exact); `frontend/vite.config.ts` (a development-only middleware, `apply: 'serve'`, that rewrites HTML `GET` requests outside `/app/`, `/api` and `/@...` with no file extension to `/app/index.html`, so `/truck/...` can be hard-loaded under `vite dev`; **[A]**, verify by loading `/truck/map` directly). Creates: `api/truck.ts`; `stores/truckUiStore.ts`, `truckHourStore.ts`, `truckPlanDraftStore.ts`; `components/truck/TruckLayout.tsx`, `TruckPages.ts`, `TruckGate.tsx`, `SetupTruck.tsx`, `truck.css`; `components/truck/data/` (`TruckContext.tsx`, `useBootstrap.ts`, `useNow.ts`, `useSettledHow.ts`, `useSpots.ts`, `useSimulate.ts`, `useSpotEstimate.ts`, `useDayContexts.ts`, `useDriveTimes.ts`, `usePlans.ts`, `usePlanEvaluation.ts`, `useServices.ts`, `mutations.ts`, `index.ts`); `components/truck/ui/` (every component of section 3 and `index.ts`); `utils/truck/model.ts`, `format.ts`, `time.ts`, `clock.ts`, `links.ts`, `wording.ts`, `warnings.ts`, `breakdown.ts`, `timelineView.ts`, `assemble.ts`, `palette.ts`, `logView.ts`, `plans.ts` (`planForDate`, rule 1 of 4.5); the tests of 8.2 marked FE-0; the seven guards and `_closure.ts` (8.3); `frontend/scripts/check-truck-chunks.mjs`; every stub of 9.2 | the estimator port's `types.ts` and `index.ts` (type-level at first; a compiling port before the hooks are finished); backend P1 (all routes registered) and P3 (bootstrap, profile, assumptions) | every route of 1.1 renders its stub inside the layout; the eight tabs highlight correctly; the first-run step creates a truck through route 3; `/` redirects to `/truck`; `useTruck()` gives profile, assumptions, calibration, region and fuel on every page; a version mismatch shows the reload card; a 409 "Set up your truck first" brings the first-run step back; all FE-0 tests and all seven guards are green on the stub tree; the chunk check passes and `index-*.js` grew by no more than 8 kB gzip; rows 1 and 2 of 8.5 |
+| **FE-1 Map engine** | 1 | `utils/truck/map/mercator.ts`, `pack.ts`, `mesh.ts`, `frames.ts`, `pick.ts`, `viewport.ts`; everything under `components/truck/map/` (`types.ts`, `TruckMap.tsx`, `MapPin.tsx`, `HexLayer.ts`, `useCellPack.ts`, `authFailure.ts`, `PerfHud.tsx`, `renderers/webgl2.ts`, `renderers/canvas2d.ts`, `hosts/googleOverlayHost.ts`, `hosts/blankBasemapHost.ts`); tests `map.*.test.ts` and `_packFixture.ts` | FE-0 (`palette.ts`, `model.ts`, the hour and UI stores, `api/truck.ts`); `fastPath.ts`; backend P2 (a loaded region and route 8) for manual checks | the `map.*` tests are green; on the blank host and on Google the layer stays glued to the base during drag, wheel zoom and animated zoom; an hour tick recolours within the budgets of 5.9 (shown by `PerfHud`); hover returns the right cell near cell edges; pins stay on their coordinates on both hosts and a pin click does not reach the map; context loss recovers; with WebGL disabled the 2D renderer draws; an invalid key ends on the blank host with the notice; nothing in the layer can throw into React (kill the pack request and corrupt a pack by hand); rows 5 and 6 of 8.5 |
+| **FE-2 Map page and spot card** | 1 | `components/truck/pages/MapPage.tsx`; `components/truck/mapui/LayerSwitch.tsx`, `Legend.tsx`, `HourControl.tsx`, `HourStrip.tsx`, `HoverHint.tsx`, `MapTools.tsx`, `SpotPins.tsx`, `BasePin.tsx`, `PickBanner.tsx`, `MapStatus.tsx`; `components/truck/spot/SpotCard.tsx`, `SpotAnalysis.tsx`, `spot/sections/` (`ThisHour.tsx`, `BestWindows.tsx`, `WeekSection.tsx`, `WhoIsHere.tsx`, `Competition.tsx`, `MoneySection.tsx`); `utils/truck/hourControl.ts`; test `hourControl.test.ts` | FE-0; FE-1's interfaces (develops against the stub map until FE-1 lands); backend P4 (route 9) | everything in 4.2 and 4.3 at the three widths; URL params of 1.2 round-trip; the hover hint never prints a single figure; every figure in the card comes from `useSpotEstimate`; the anchors of 02_MODEL 8.3, fed as fixtures, show "60 orders (28 to 102)" and "39 orders (18 to 67)" with "Rough"; a click spends one `simulate` and no drive-time request; pick mode sets the base; Google's logo and terms are never covered; rows 3 and 4 of 8.5 |
+| **FE-3 Spots and Settings** | 1 | `components/truck/pages/SpotsPage.tsx`, `SpotDetailPage.tsx`, `SpotComparePage.tsx`, `SettingsPage.tsx`; `components/truck/spot/SpotForm.tsx`, `spot/HostPicker.tsx`; `components/truck/spots/` (`SpotTable.tsx`, `SpotResults.tsx`, `CompareTable.tsx`); `components/truck/settings/TruckCostsTab.tsx`, `AssumptionsTab.tsx`, `CurveEditor.tsx`, `BasePicker.tsx`, `CountyChecklist.tsx`, `FuelPriceCard.tsx`, `StartingValuesModal.tsx`; `utils/truck/spotSummary.ts`, `profileForm.ts`; tests `spotSummary.test.ts`, `profileForm.test.ts` | FE-0; `SpotAnalysis` from FE-2 (stub until it lands); backend P3 and P4 (routes 3, 5, 6, 9 to 15) | everything in 4.4 and the first two tabs of 4.9; a spot edit that changes vectors waits for the server, every other edit is instant; the form's body matches 04_BACKEND 4.8 (a linked host sends `place_key`, never a `point_id`); ranges and defaults come from the seed metadata; invalid values are rejected with the range message and never clamped; only changed profile keys and override paths are sent; the host-size label follows the segment group; deleting a spot archives it and planned days keep working; rows 7 and 8 of 8.5 |
+| **FE-4 Planner and drive times** | 2 | `components/truck/pages/PlannerPage.tsx`, `PlanIndexRedirect.tsx`; `components/truck/planner/PlannerHeader.tsx`, `StopList.tsx`, `StopCard.tsx`, `AddStopMenu.tsx`, `LegRow.tsx`, `LegEditor.tsx`, `AddsLine.tsx`, `DaySummary.tsx`, `MoneyTable.tsx`, `UnpaidGapCard.tsx`, `PlannerActions.tsx`, `BottomBar.tsx`; `utils/truck/planDraft.ts`; test `planDraft.test.ts` | FE-0 (`usePlanEvaluation`, `useDriveTimes`, `useDayContexts`, `plans.ts`, the draft store, `Timeline`, `WarningList`); wave 1 spots; backend P5 and P6 (routes 17, 18, 20 to 23, 25 to 27) | everything in 4.5 except the forms and panel owned by FE-7; the blueprint day reproduces its twelve clock times exactly; the worked day of 02_MODEL 4.12, fed as fixtures, shows take-home "$482 (-$35 to $1,137)", the second stop adding "$135 (-$72 to $398)", break-even 26 orders and the unpaid alternative "$561 ($44 to $1,216)"; every leg shows its source label and, for a straight line, its reason; a correction and a toll persist and can be removed; a second plan on the same date is reachable through the plan picker; nothing reorders stops except the owner; usable one-handed at 375 px; rows 9 and 10 of 8.5 |
+| **FE-5 Week, dates and Today** | 2 | `components/truck/pages/TodayPage.tsx`, `WeekPage.tsx`, `WeekIndexRedirect.tsx`; `components/truck/today/NextAction.tsx`, `TodayPlanCard.tsx`, `ToLogCard.tsx`, `WeatherAtStops.tsx`, `FuelLine.tsx`; `components/truck/week/DayCard.tsx`, `WeekTotals.tsx`; `components/truck/mapui/DateMode.tsx`; `utils/truck/nextAction.ts`; test `nextAction.test.ts` | FE-0; wave 1; backend P5 and P6 (routes 17, 22, 25, 31) | everything in 4.1 and 4.6 except the best-week panel; the week total equals `estSum` of the day results; holiday and weather chips match the day contexts; "Pick a date" on the map uses the date's holiday pattern and no weather; Today has no map and works at 375 px; "today" follows the truck's time zone when the device is set to another zone or a wrong date; row 11 of 8.5 |
+| **FE-6 Log and Accuracy** | 2 | `components/truck/pages/LogPage.tsx`; `components/truck/log/QuickEntry.tsx`, `ResultCard.tsx`, `PendingList.tsx`, `HistoryTable.tsx`, `AccuracyTab.tsx`, `AccuracyTiles.tsx`, `AccuracyChart.tsx`, `FactorsCard.tsx` | FE-0 (`logView.ts`, `useServices`, mutations); wave 1; backend P6 (routes 31, 32, 34, 35, 37) | everything in 4.7; saving a service writes the returned calibration into the context and the spot card's numbers and label follow without a reload; a stop logged from a plan sends its `plan_stop_id`; the sold-out switch is stored and worded as a minimum; the accuracy sentences match the report for the example of 02_MODEL 4.13 (seven services, six scored, one sold out); the form is the first thing on the page at 375 px; row 12 of 8.5 |
+| **FE-7 Scout, suggestions, events and catering** | 3 | `components/truck/pages/ScoutPage.tsx`; `components/truck/scout/ScoutFilters.tsx`, `ScoutCard.tsx`, `LeadControls.tsx`, `ContactLookup.tsx`, `SaveLeadModal.tsx`; `components/truck/mapui/ScoutDotsLayer.tsx`; `components/truck/planner/EventTermsForm.tsx`, `CateringTermsForm.tsx`, `SuggestDayPanel.tsx`; `components/truck/week/BestWeekPanel.tsx`; `utils/truck/scoutView.ts`; test `scoutView.test.ts` | FE-0; FE-4 and FE-5 (the mounts of its seams); backend P7 and P8 (routes 29, 30, 38 to 41) | everything in 4.8, rules 5 and 6 of 4.5, the best-week panel of 4.6; the contact lookup fires only from its button, its results are labelled Google with their date and show the matched name and address; the score is never shown; suggestions never overwrite a planned day and create drafts only; event estimates read "Very rough", catering lines "Fixed"; rows 13 and 14 of 8.5 |
+| **FE-8 Day sheet, calendar file, export and the data page** | 3 | `components/truck/pages/DaySheetPage.tsx`; `components/truck/sheet/DaySheet.tsx`, `CalendarButton.tsx`; `components/truck/print.css`; `components/truck/settings/DataTab.tsx`; `utils/truck/ics.ts`; test `ics.test.ts` | FE-0; FE-4 (a saved plan to print); backend P8 (routes 42 to 44) | everything in 4.10 and the third tab of 4.9; the sheet prints on one or two Letter pages with no navigation; the calendar file passes `ics.test.ts` and imports at the right local times; the attribution strings shown are the server's and equal 6.4 character for character; the export saves under the server's file name; delete needs the typed phrase and ends on the first-run step; rows 15 and 16 of 8.5 |
+
+---
+
+## 10. Conflicts, assumptions and open issues
+
+| # | Issue | Handling here |
+|---|---|---|
+| 1 | The backend identifies plans by id and allows several per date; this file addresses the Planner by date | Rule 1 of 4.5 picks one plan per date and offers a picker when there are more. If the owner should only ever have one plan per date, the backend can enforce it and the picker disappears |
+| 2 | The server evaluates a saved plan with loop legs only; the browser asks route 18 for the full matrix so that "what each stop adds" uses real drive times for the leg that skips a stop | Totals agree; `adds` can differ from the stored snapshot. Costs 20 matrix elements instead of 5 for a four-stop day, once per 30 days |
+| 3 | `simulate.estimate`, `Plan.result` and the plan list's `summary` are server-computed numbers that DECISIONS 10 says the screens should compute themselves | They are used only as a development drift check (0.2) |
+| 4 | A `Spot` carries one vector set, for its own visibility | The spot form previews the three levels through `simulate`; saving stores the chosen one |
+| 5 | The forecast is for the truck's base point only (04_BACKEND C11) | Chips say "Forecast for the area around your base" |
+| 6 | The export is one JSON document; there are no CSV files | One download button. A browser-made CSV of the service log would be a small later addition |
+| 7 | Scout returns at most 50 ranked places; type, county, kitchen and contact filters therefore narrow those 50 in the browser, and only the status filter (`hide`) changes the ranking | Stated on the page ("{n} places shown, {screened} looked at") |
+| 8 | DECISIONS 7.7 names uncertainty seeds 0.24 / 0.19 / 0.20; 02_MODEL and `tp_seeds.json` hold 0.30 / 0.25 / 0.26, so ranges before any log are wider than the blueprint's | The frontend hard-codes neither; the example figures in this file follow 02_MODEL and change with the seeds |
+| 9 | 03_DATA section 14 does not put an OpenStreetMap credit on the map; DECISIONS 8 (later) puts it in the legend's source line | DECISIONS followed (4.2, 6.4 row L) |
+| 10 | 02_MODEL 1.4 writes the colour byte without the square root that 4.17 defines | `scoreByte` from `fastPath.ts` is used as is |
+| 11 | The hover hint shows a legend band, not a figure, because a figure would come from the quantised pack and would lack a range and label | The owner may prefer a number; it would have to be a full estimate from `simulate` |
+| 12 | From memory, unverified: Google's waypoint limits for Maps URLs; the `.gm-err-container` class; whether Google asks for a visible credit when its drive times are shown away from a Google map (day sheet) | Marked **[M]**; the day sheet prints a drive-time credit line regardless |
+| 13 | The map layer was measured in headless Chrome only, without a key | Row 5 of 8.5 repeats it in Safari and Firefox and with the production key before wave 1 closes |
+| 14 | The `vite.config.ts` development fallback is untested; the CI workflow (owned by backend P1) runs `npm test` only | FE-0 verifies the fallback; the type-check, build and chunk steps need adding to the workflow (8.4) |
+| 15 | Shared shell behaviour left unchanged: the gradient loading screen of `ProtectedRoute` ("Loading your projects..."), the cost widget shown to owners, deep links lost at login, the once-per-tab stale-chunk reload, the PWA scope `/app/` | Owner decisions; none blocks the build |
+| 16 | Editing 24-hour curves for 16 segments is offered as a plain grid of fields | Good enough for an owner who knows better for one segment; a richer editor is a later layer |
+| 17 | No browser test runner exists; 8.5 is a scripted manual pass | Adding one is a separate decision |

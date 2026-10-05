@@ -20,7 +20,7 @@
     "dayparts": ["breakfast", "lunch", "dinner", "late"],
     "visibility_levels": ["hidden", "normal", "prominent"],
     "place_types": ["taproom", "bar", "restaurant", "fast_food", "cafe", "convenience", "gym", "park", "shopping_centre", "big_box", "campus", "hospital", "transit_station", "events_venue", "stadium", "hotel", "attraction", "farmers_market", "office_park", "apartment_community", "industrial_site", "car_dealership"],
-    "confidence_labels": ["fixed", "good", "fair", "rough", "very_rough"],
+    "confidence_labels": ["very_rough", "rough", "fair", "good", "fixed"],
     "dow": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
     "structural_keys": ["value", "unit", "tag", "scope", "min", "max", "source", "note", "order", "rows", "match", "match_rule", "upper_f", "upper_mph", "allowed", "as_of", "index", "label", "group", "base_unit", "host_mode", "weak", "lodes_cns", "rules"]
   },
@@ -918,7 +918,14 @@
       "unit": "distance-weighted people (sum of the nearby vector)",
       "tag": "assumed",
       "scope": "build",
-      "source": "Map cells below this are left out of the cell pack; a click there is still simulated exactly. 03_DATA.md s7.2, DECISIONS s8."
+      "source": "Map cells below this are left out of the cell pack unless etl.cell_min_venue keeps them; a click there is still simulated exactly. 03_DATA.md s7.2, DECISIONS s8."
+    },
+    "cell_min_venue": {
+      "value": 15.0,
+      "unit": "distance-weighted venue visitors",
+      "tag": "assumed",
+      "scope": "build",
+      "source": "A map cell is also kept when the venue part of its nearby vector (the eight v_ segments) reaches this: keeps cells within about 370 m of a default-size venue (a park of 38). 03_DATA.md s7.2"
     }
   },
   "host": {
@@ -955,6 +962,13 @@
       "tag": "assumed",
       "scope": "fixed",
       "source": "How far from the truck the host's declared workers or residents are looked for in the block data so they are not counted twice."
+    },
+    "venue_link_radius_m": {
+      "value": 75.0,
+      "unit": "m",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "A venue host without a linked place takes the nearest source point of its own segment within this distance as its own, so the venue is not counted twice."
     }
   },
   "place_types": {
@@ -1564,12 +1578,19 @@
       "late": 0.8,
       "source": "A lunch-and-dinner menu is not credited with the coffee and breakfast purchases in the curves. Assumed."
     },
-    "routing_profile": {
-      "value": "car",
-      "unit": "car | truck",
+    "avoid_tolls": {
+      "value": false,
+      "unit": "boolean",
       "tag": "assumed",
       "scope": "profile_default",
-      "source": "Google routes as a car (travel mode DRIVE). 'truck' is kept for a later truck-aware source; the model treats both alike and applies truck_time_factor."
+      "source": "Routing option sent to Google as a route modifier and part of the leg cache key. DECISIONS s6, s9."
+    },
+    "avoid_highways": {
+      "value": false,
+      "unit": "boolean",
+      "tag": "assumed",
+      "scope": "profile_default",
+      "source": "Routing option sent to Google as a route modifier and part of the leg cache key. DECISIONS s6, s9."
     },
     "truck_time_factor": {
       "value": 1.1,
@@ -1648,25 +1669,25 @@
   },
   "uncertainty": {
     "sd_truck": {
-      "value": 0.3,
+      "value": 0.24,
       "unit": "natural-log units",
-      "tag": "assumed",
+      "tag": "derived",
       "scope": "fixed",
-      "source": "Uncertainty about this truck's overall level before any log. sd_truck, sd_spot and sd_day combine to 0.47 (recon 10 prior_log_sd). The blueprint's ranges (66: 40-103; 39: 23-64) have a log half-width of about 0.47; using 0.47 as the standard deviation makes ranges before any log deliberately wider than the blueprint's. recon 10 s4.1"
+      "source": "Uncertainty about this truck's overall level before any log. Derived from the blueprint worked ranges (66: 40-103, 39: 23-64); the interval of this model at those values is 36.2-102.1 and 20.5-61.6. sd_truck, sd_spot and sd_day combine to 0.3657. DECISIONS s7.7"
     },
     "sd_spot": {
-      "value": 0.25,
+      "value": 0.19,
       "unit": "natural-log units",
-      "tag": "assumed",
+      "tag": "derived",
       "scope": "fixed",
-      "source": "Uncertainty about one spot relative to the truck's level."
+      "source": "Uncertainty about one spot relative to the truck's level. Derived from the blueprint worked ranges (see sd_truck). DECISIONS s7.7"
     },
     "sd_day": {
-      "value": 0.26,
+      "value": 0.2,
       "unit": "natural-log units",
-      "tag": "assumed",
+      "tag": "derived",
       "scope": "fixed",
-      "source": "Day-to-day variation that no amount of logging removes; replaced by the logged residual spread as logs accumulate."
+      "source": "Day-to-day variation that no amount of logging removes; replaced by the logged residual spread as logs accumulate. Derived from the blueprint worked ranges (see sd_truck). DECISIONS s7.7"
     },
     "sd_weak": {
       "value": 0.4,
@@ -1691,9 +1712,27 @@
       "source": "Counting noise: orders in a window scatter more than a Poisson count."
     },
     "resid_prior_weight": {"value": 6.0, "unit": "services", "tag": "assumed", "scope": "fixed", "source": "Weight of sd_day against the logged residual spread."},
-    "label_good_below": {"value": 0.3, "unit": "natural-log units", "tag": "assumed", "scope": "fixed", "source": "Model spread below this = 'good'."},
-    "label_fair_below": {"value": 0.4, "unit": "natural-log units", "tag": "assumed", "scope": "fixed", "source": "Below this = 'fair'."},
-    "label_rough_below": {"value": 0.55, "unit": "natural-log units", "tag": "assumed", "scope": "fixed", "source": "Below this = 'rough'; at or above = 'very_rough'."}
+    "label_good_below": {
+      "value": 0.23,
+      "unit": "natural-log units",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Model spread below this = 'good'. Reached only with logged services. DECISIONS s7.7"
+    },
+    "label_fair_below": {
+      "value": 0.31,
+      "unit": "natural-log units",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Below this = 'fair'. Under the spread before any log (0.3657), so 'fair' needs logged services. DECISIONS s7.7"
+    },
+    "label_rough_below": {
+      "value": 0.41,
+      "unit": "natural-log units",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Below this = 'rough'; at or above = 'very_rough'. Before any log a weak-seed share of 0.464 or a default host size supplying 0.31 of the demand reaches it. DECISIONS s7.7"
+    }
   },
   "calibration": {
     "k_truck": {
@@ -1705,9 +1744,34 @@
     },
     "k_spot": {"value": 3.0, "unit": "services", "tag": "assumed", "scope": "fixed", "source": "Prior weight for a spot factor."},
     "half_life_days": {"value": 120.0, "unit": "days", "tag": "assumed", "scope": "fixed", "source": "A service this old counts half."},
-    "ratio_clamp": {"value": 4.0, "unit": "ratio", "tag": "assumed", "scope": "fixed", "source": "Actual / predicted is limited to 1/4 .. 4 before taking logs."},
-    "min_predicted": {"value": 3.0, "unit": "orders", "tag": "assumed", "scope": "fixed", "source": "Services predicted below this are not used."},
-    "min_actual": {"value": 0.5, "unit": "orders", "tag": "assumed", "scope": "fixed", "source": "Zero orders are counted as half an order so the log exists."},
+    "ratio_clamp": {
+      "value": 4.0,
+      "unit": "ratio",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Actual / predicted is limited to 1/4 .. 4 before taking logs, for the truck factor."
+    },
+    "spot_ratio_clamp": {
+      "value": 50.0,
+      "unit": "ratio",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Actual / predicted is limited to 1/50 .. 50 for what a service may tell its own spot."
+    },
+    "min_predicted": {
+      "value": 3.0,
+      "unit": "orders",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Services predicted below this stay out of the truck factor and the residual spread; they still inform their own spot."
+    },
+    "min_actual": {
+      "value": 0.5,
+      "unit": "orders",
+      "tag": "assumed",
+      "scope": "fixed",
+      "source": "Zero orders are counted as half an order so the log exists; a prediction below half an order is raised to it."
+    },
     "min_resid_n": {"value": 3, "unit": "services", "tag": "assumed", "scope": "fixed", "source": "Residual spread is reported from this many unsold-out services."}
   },
   "timeline": {

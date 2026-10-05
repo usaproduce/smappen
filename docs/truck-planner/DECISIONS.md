@@ -184,8 +184,9 @@ Dates are `YYYY-MM-DD` civil dates in the truck's region time zone. Hour-of-week
   flagged blocks is part of this build (real large sites such as hospitals, campuses, airports and federal
   complexes are kept; head-office payroll addresses are spread) and is marked as needing the owner's confirmation.
   Construction jobs (CNS04) are coded to the contractor's office, not the building site, so they count at
-  **0.3** in the industrial segment (seed `etl.cns04_weight`, tagged assumed). The cell pruning threshold is the
-  seed `etl.cell_min_nearby` (100 distance-weighted people).
+  **0.3** in the industrial segment (seed `etl.cns04_weight`, tagged assumed). A map cell is kept when it has at
+  least `etl.cell_min_nearby` (100) distance-weighted people **or** at least `etl.cell_min_venue` (15)
+  distance-weighted venue visitors, so small venues such as taprooms are not pruned off the map.
 - **Places** (the metro-wide dataset behind the heat map, the share model and Scout's candidate list): one dated
   OpenStreetMap snapshot per region from Geofabrik state extracts, read by an in-repo zero-dependency PBF reader.
   Never Overpass at request time, never a bulk Google Places sweep, never the vendor tables. OSM-derived rows stay
