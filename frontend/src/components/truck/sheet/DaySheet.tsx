@@ -206,9 +206,15 @@ interface WeatherLine {
   toHour: number;
   /** The stop opens after midnight: its hours are those of the next civil date. */
   nextDay: boolean;
+  /** The stop has closed (by the truck's clock): a missing forecast is then not one still to come. */
+  passed: boolean;
 }
 
-function weatherLines(stops: readonly PlanStop[], names: readonly string[]): WeatherLine[] {
+function weatherLines(stops: readonly PlanStop[], names: readonly string[], date: string, now: { date: string; minute: number }): WeatherLine[] {
+  // Minutes from the sheet's midnight to now: negative before the date, past 1440 after it.
+  const tomorrow = addDays(date, 1);
+  const sinceMidnight =
+    now.date === date ? now.minute : now.date === tomorrow ? 1440 + now.minute : now.date < date ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
   return stops.map((stop, index) => {
     const nextDay = stop.open_minute >= 1440;
     const shift = nextDay ? 1440 : 0;
@@ -219,6 +225,7 @@ function weatherLines(stops: readonly PlanStop[], names: readonly string[]): Wea
       fromHour: hours.fromHour,
       toHour: hours.toHour,
       nextDay,
+      passed: stop.close_minute <= sinceMidnight,
     };
   });
 }
@@ -236,9 +243,10 @@ function SheetHeading({ date }: { date: string }) {
 /** Section 1: "Day sheet", the date, the truck's name, the holiday if any, one weather line per stop. */
 function SheetTitle({ date, day }: { date: string; day: SavedDay }) {
   const { profile } = useTruck();
+  const now = useNow();
   const context = day.context;
   const next = day.contextNext;
-  const lines = weatherLines(day.stops, day.names);
+  const lines = weatherLines(day.stops, day.names, date, now);
   return (
     <div className="space-y-2">
       <SheetHeading date={date} />
@@ -256,6 +264,7 @@ function SheetTitle({ date, day }: { date: string; day: SavedDay }) {
                 fromHour={line.fromHour}
                 toHour={line.toHour}
                 info={day.days.forecast}
+                passed={line.passed}
               />
             </li>
           ))}
