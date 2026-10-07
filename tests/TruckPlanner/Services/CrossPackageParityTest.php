@@ -21,8 +21,8 @@ use PHPUnit\Framework\TestCase;
  *   - the state of a plan's stored result (04_BACKEND.md 5.8): PlanningService for the API, ExportService
  *     for the export
  *   - the source lines of 03_DATA.md section 14: SourcesService holds all twelve (and is tested against
- *     the document); SimulateService and ScoutingService answer some of them, and the drive-time line is
- *     a setting
+ *     the document); SimulateService and ScoutingService answer some of them (Scout also the line that
+ *     stands beside a looked-up contact detail), and the drive-time line is a setting
  */
 final class CrossPackageParityTest extends TestCase
 {
@@ -130,6 +130,7 @@ final class CrossPackageParityTest extends TestCase
         self::assertSame(SourcesService::TEXTS[4], $constant(SimulateService::class, 'ATTRIBUTION_JOBS'));
         self::assertSame(SourcesService::TEXTS[1], $constant(ScoutingService::class, 'ATTRIBUTION_PLACES'));
         self::assertSame(SourcesService::TEXTS[2], $constant(ScoutingService::class, 'ATTRIBUTION_PLACES_SENTENCE'));
+        self::assertSame(SourcesService::TEXTS[12], $constant(ScoutingService::class, 'ATTRIBUTION_CONTACT'));
         self::assertSame(SourcesService::TEXTS[9], TpConfig::get('routing.attribution'));
         self::assertSame('National Weather Service (weather.gov)', TpConfig::get('weather.source'));
         self::assertStringContainsString((string) TpConfig::get('weather.source'), SourcesService::TEXTS[6]);

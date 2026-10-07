@@ -10,21 +10,26 @@ use App\TruckPlanner\Model\Seeds;
  *   1. A query that fails names its field, and a key that is no possible host of the truck's region answers
  *      404 on every lead route. Without usable region data the list answers 409 with the sentence that
  *      says why, and the step ends there.
- *   2. The list: at most 50 places in rank order, each with the model's result (orders and contribution as
- *      ranges with a confidence label, the round trip within the drive limit), its OpenStreetMap columns,
- *      the owner's lead, a map link that needs no API call and where its drive legs came from. The standing
- *      reminder and the sources travel with it. A second call is served from the caches and says so.
- *      For the best places the orders are the model's window on the vectors simulate answers at the place.
- *   3. The drive limit and the licence counties of the profile narrow the list.
- *   4. Leads: created on first touch, changed key by key (V12 when a change carries nothing), listed with
- *      their place. A hidden lead leaves the ranking and comes back when nothing is hidden.
- *   5. The contact lookup: on a server without a Google key it answers 503 with its sentence and stores
+ *   2. The list: the best few places of every kind, kind by kind, each with its kind, the model's result
+ *      (orders and contribution as ranges with a confidence label, the round trip within the drive limit),
+ *      its OpenStreetMap columns, the owner's lead, a map link that needs no API call and where its drive
+ *      legs came from. No kind holds more than its quota and the answer no more than 150 places. The counts
+ *      of every kind, the standing reminder and the sources travel with it. Inside a kind the places are in
+ *      the order of the model, except that neighbours that all fill the truck are in the order of their
+ *      demand. A second call is served from the caches and says so. For the best places the orders are
+ *      the model's window on the vectors simulate answers at the place.
+ *   3. `types` looks at the named kinds only, and deeper into them.
+ *   4. The drive limit and the licence counties of the profile narrow the list.
+ *   5. Leads: created on first touch, changed key by key (V12 when a change carries nothing), listed with
+ *      their place. A hidden lead leaves the list and comes back when nothing is hidden; with `new` hidden
+ *      only the owner's own places are listed.
+ *   6. The contact lookup: on a server without a Google key it answers 503 with its sentence and stores
  *      nothing. (On a server with a key the step does not call it: a lookup is billed.)
- *   6. Save as spot, for one place of each kind the region offers (with a typical size, without one, without
- *      a host segment): the spot stands at the place, is linked to it and carries no looked-up detail; a
- *      place without a typical size needs the owner's figure; a place is saved once until its spot is
- *      archived.
- *   7. The second user has leads of its own for the same places and gets 404 for the first user's spot.
+ *   7. Save as spot, for one place of each kind of host the list holds (with a typical size, without one,
+ *      without a host segment): the spot stands at the place, is linked to it and carries no looked-up
+ *      detail; a place without a typical size needs the owner's figure; a place is saved once until its
+ *      spot is archived.
+ *   8. The second user has leads of its own for the same places and gets 404 for the first user's spot.
  *
  * It starts from the trucks of step 20. The spots it saves are archived again and the profile is put back,
  * so user 1 is left as step 30 left it, with a few leads more.
@@ -62,7 +67,7 @@ return function (SmokeClient $c, array &$state): void {
         }
         return abs($a - $b) <= 1e-9 * max(1.0, abs($a), abs($b));
     };
-    // The place keys of a list, in rank order.
+    // The place keys of a list, in the order of the list.
     $keysOf = static function (mixed $candidates): array {
         $keys = [];
         foreach ((array) $candidates as $candidate) {
@@ -71,8 +76,11 @@ return function (SmokeClient $c, array &$state): void {
         return $keys;
     };
     // One candidate as the specification describes it.
-    $checkCandidate = static function (SmokeClient $c, array $candidate, int $position, int $limit) use ($mapsLink): void {
-        $c->check(array_keys($candidate) === ['result', 'place', 'lead', 'maps_url', 'leg_sources'], 'a candidate has the fields of the specification, in order');
+    $checkCandidate = static function (SmokeClient $c, array $candidate, int $limit) use ($mapsLink): void {
+        $c->check(
+            array_keys($candidate) === ['kind', 'result', 'place', 'lead', 'maps_url', 'leg_sources', 'at_capacity', 'demand_key', 'merged'],
+            'a candidate has the fields of the specification, in order'
+        );
         $result = $candidate['result'];
         $place = $candidate['place'];
         $c->check(
@@ -85,8 +93,8 @@ return function (SmokeClient $c, array &$state): void {
                 'postcode', 'phone', 'website', 'opening_hours_raw', 'kitchen'],
             'a place has its OpenStreetMap columns'
         );
-        $c->check($result['position'] === $position, 'positions count from 1 without a gap');
         $c->check($result['place_id'] === $place['place_key'] && $result['place_type'] === $place['place_type'], 'result and place are the same place');
+        $c->check($candidate['kind'] === $place['place_type'], 'the kind of a candidate is the type of its place');
         $c->check(is_string($place['name']) && $place['name'] !== '', 'a possible host has a name');
         $c->check(is_string($place['county_fips']) && strlen($place['county_fips']) === 5, 'and lies in a county of the region');
         $c->check($result['host_fit'] > 0 && $result['host_fit'] <= 1, 'its kind of place hosts trucks at least sometimes');
@@ -116,6 +124,72 @@ return function (SmokeClient $c, array &$state): void {
             && in_array($candidate['leg_sources']['back'] ?? null, ['google_routes', 'google_distance_matrix', 'straight_line', 'same_point'], true),
             'both legs say where they came from'
         );
+        // A place that fills the truck carries the demand that places it among its like; no other place does.
+        $c->check(is_bool($candidate['at_capacity']), 'a candidate says whether it fills the truck');
+        $c->check(
+            $candidate['at_capacity']
+                ? (is_int($candidate['demand_key']) || is_float($candidate['demand_key'])) && $candidate['demand_key'] >= $result['orders']['value']
+                : $candidate['demand_key'] === null,
+            'the demand before capacity is given for a place at capacity and for no other'
+        );
+        $c->check(is_int($candidate['merged']) && $candidate['merged'] >= 0, 'a candidate says how many places of its site it stands for');
+    };
+    // A whole list: grouped by kind in the order of `kinds`, no kind over its quota, the counts true.
+    $checkList = static function (SmokeClient $c, array $list, int $limit) use ($checkCandidate): void {
+        $c->check(
+            array_keys($list) === ['candidates', 'kinds', 'quota', 'screened', 'truncated', 'limit_minutes', 'licence_counties',
+                'dataset_version', 'cached', 'notice', 'attribution'],
+            'the list has the fields of the specification, in order'
+        );
+        $c->check(is_array($list['candidates']) && array_is_list($list['candidates']), 'the candidates are a list');
+        $c->check(is_array($list['kinds']) && array_is_list($list['kinds']) && $list['kinds'] !== [], 'the kinds are a list');
+        $c->check(is_int($list['quota']) && $list['quota'] >= 1 && $list['quota'] <= 50, 'the quota of a kind is between 1 and 50');
+        $c->check(count($list['candidates']) <= 150, 'no answer holds more than 150 places');
+        $byKind = [];
+        foreach ($list['candidates'] as $candidate) {
+            $byKind[(string) $candidate['kind']][] = $candidate;
+        }
+        $order = [];
+        $screened = 0;
+        foreach ($list['kinds'] as $row) {
+            $c->check(is_array($row) && array_keys($row) === ['kind', 'screened', 'listed', 'merged'], 'a kind has its three counts');
+            $kind = (string) $row['kind'];
+            $of = $byKind[$kind] ?? [];
+            $c->check($row['listed'] === count($of), 'a kind lists as many places as it says: ' . $kind);
+            $c->check($row['listed'] <= $list['quota'] && $row['listed'] <= $row['screened'], 'no kind is over its quota: ' . $kind);
+            $c->check($row['merged'] === array_sum(array_column($of, 'merged')), 'the merged places of a kind are those of its candidates: ' . $kind);
+            $screened += $row['screened'];
+            if ($of !== []) {
+                $order[] = $kind;
+            }
+            // Inside the kind: numbered from 1, in the model's order. Neighbours that all fill the truck are a
+            // tie, in the order of their demand; a place that does not fill it stands alone.
+            $ties = [];
+            foreach ($of as $n => $candidate) {
+                $checkCandidate($c, $candidate, $limit);
+                $c->check($candidate['result']['position'] === $n + 1, 'positions count from 1 inside a kind');
+                $fills = $candidate['at_capacity'] === true;
+                $last = count($ties) - 1;
+                if ($last < 0 || !$fills || !$ties[$last]['fills']) {
+                    $ties[] = ['fills' => $fills, 'scores' => [], 'demand' => []];
+                    $last++;
+                }
+                $ties[$last]['scores'][] = Estimator::qkey((float) $candidate['result']['score']);
+                $ties[$last]['demand'][] = $fills ? Estimator::qkey((float) $candidate['demand_key']) : 0;
+            }
+            $byDemand = true;
+            $byModel = true;
+            foreach ($ties as $n => $tie) {
+                $sorted = $tie['demand'];
+                rsort($sorted);
+                $byDemand = $byDemand && $sorted === $tie['demand'];
+                $byModel = $byModel && ($n === 0 || min($ties[$n - 1]['scores']) >= max($tie['scores']));
+            }
+            $c->check($byDemand, 'neighbours that fill the truck are in the order of their demand: ' . $kind);
+            $c->check($byModel, 'no place stands ahead of one the model ranks higher, unless the two are such neighbours: ' . $kind);
+        }
+        $c->check($screened === $list['screened'], 'the kinds add up to the places that were screened');
+        $c->check(array_values(array_unique(array_column($list['candidates'], 'kind'))) === $order, 'the candidates come kind by kind, in the order of the kinds');
     };
 
     // ---- where user 1 stands
@@ -129,6 +203,19 @@ return function (SmokeClient $c, array &$state): void {
     $withRegion = !$state['no_region'] && is_array($region) && ($region['usable'] ?? false) === true;
     $limit = (int) $profile['scout_drive_minutes_limit'];
     $c->check($profile['licence_counties'] === [], 'step 20 leaves user 1 without licence counties');
+    $A = Seeds::assumptions($overrides, is_array($regionBlock) ? $regionBlock : null);
+
+    // The kinds of place there are: the place types of the seed file that host at all, those that host most
+    // commonly first.
+    $allKinds = [];
+    foreach (array_values(Estimator::seed($A, 'vocabulary.place_types')) as $n => $type) {
+        $fit = (float) Estimator::seed($A, 'place_types.rows.' . $type)['host_fit'];
+        if ($fit > 0.0) {
+            $allKinds[] = [-Estimator::qkey($fit), $n, (string) $type];
+        }
+    }
+    sort($allKinds);
+    $allKinds = array_column($allKinds, 2);
 
     // =====================================================================================
     // 1. what is refused whatever the region
@@ -136,6 +223,9 @@ return function (SmokeClient $c, array &$state): void {
     $refused($c->get('/api/truck/scout', ['hide' => 'gone']), 'hide must be one of: ' . $statuses, 'hide', 'V4');
     $refused($c->get('/api/truck/scout', ['hide' => 'hidden,']), 'hide must be one of: ' . $statuses, 'hide', 'V4');
     $refused($c->get('/api/truck/scout', ['refresh' => 'yes']), 'refresh must be true or false', 'refresh', 'V6');
+    foreach (['restaurant', 'taproom,', ''] as $types) {
+        $refused($c->get('/api/truck/scout', ['types' => $types]), 'types must be one of: ' . implode(', ', $allKinds), 'types', 'V4');
+    }
 
     // A key that is no place, and texts that cannot be keys: 404 on every lead route, with or without a body.
     foreach (['n0', 'w%201', 'no-such-place-key-at-all'] as $key) {
@@ -148,7 +238,7 @@ return function (SmokeClient $c, array &$state): void {
     $leadsBefore = (int) $c->value('data.counts.leads');
 
     if (!$withRegion) {
-        // Without usable region data there is nothing to rank, and the answer says which of the two it is.
+        // Without usable region data there is nothing to list, and the answer says which of the two it is.
         // (With --no-region on a server whose region is usable, nothing is asserted here.)
         $reason = is_array($region) ? ($region['unusable_reason'] ?? null) : 'none';
         if ($reason === 'build_mismatch') {
@@ -156,10 +246,9 @@ return function (SmokeClient $c, array &$state): void {
         } elseif ($reason !== null) {
             $c->get('/api/truck/scout')->status(409)->path('success', false)->path('error', 'Scouting needs a loaded region');
         }
-        tp_out('    60: the ranked list and the lead checks need a usable region and are skipped');
+        tp_out('    60: the list and the lead checks need a usable region and are skipped');
         return;
     }
-    $regionId = (string) $region['region_id'];
     $dataset = (string) $region['dataset_version'];
 
     // =====================================================================================
@@ -172,20 +261,18 @@ return function (SmokeClient $c, array &$state): void {
         ->path('data.dataset_version', $dataset)
         ->path('data.cached', false)
         ->path('data.notice', $notice)
+        ->path('data.quota', 8)
         ->finite('data.screened', 'data.candidates.*.result.score', 'data.candidates.*.result.round_trip.miles', 'data.candidates.*.result.round_trip.cost',
-            'data.candidates.*.place.lat', 'data.candidates.*.place.lng');
+            'data.candidates.*.place.lat', 'data.candidates.*.place.lng', 'data.kinds.*.screened', 'data.kinds.*.listed', 'data.kinds.*.merged');
     $list = $c->value('data');
-    $c->check(
-        array_keys($list) === ['candidates', 'screened', 'truncated', 'limit_minutes', 'licence_counties', 'dataset_version', 'cached', 'notice', 'attribution'],
-        'the list has the fields of the specification, in order'
-    );
+    $checkList($c, $list, $limit);
     $candidates = $list['candidates'];
-    $c->check(is_array($candidates) && array_is_list($candidates) && $candidates !== [], 'a loaded region has places that could host a truck within reach of its centre');
-    $c->check(count($candidates) <= 50 && $list['screened'] >= count($candidates), 'at most 50 places, out of those that were screened');
-    foreach ($candidates as $i => $candidate) {
-        $checkCandidate($c, $candidate, $i + 1, $limit);
+    $c->check($candidates !== [], 'a loaded region has places that could host a truck within reach of its centre');
+    $c->check(array_column($list['kinds'], 'kind') === $allKinds, 'every kind of place is counted, those that host most commonly first');
+    $c->check($list['screened'] >= count($candidates), 'the listed places are among those that were screened');
+    foreach ($candidates as $candidate) {
         $c->check($candidate['lead'] === ['id' => null, 'place_key' => $candidate['place']['place_key'], 'status' => 'new', 'notes' => null, 'spot_id' => null, 'google' => null], 'a place nobody touched has the lead of a new place');
-        // No place id is stored yet: the link is a pin at the place's own point, to six decimals.
+        // No place id is kept yet: the link is a pin at the place's own point, to six decimals.
         $c->check(
             $candidate['maps_url'] === $mapsLink . sprintf('%.6F', Estimator::roundHalfAway((float) $candidate['place']['lat'], 6))
                 . '%2C' . sprintf('%.6F', Estimator::roundHalfAway((float) $candidate['place']['lng'], 6)),
@@ -193,12 +280,6 @@ return function (SmokeClient $c, array &$state): void {
         );
         if ($noKey) {
             $c->check($candidate['leg_sources'] === ['out' => 'straight_line', 'back' => 'straight_line'], 'without a Google key every leg is a straight-line estimate');
-        }
-        if ($i > 0) {
-            $c->check(
-                Estimator::qkey((float) $candidates[$i - 1]['result']['score']) >= Estimator::qkey((float) $candidate['result']['score']),
-                'the list is in rank order'
-            );
         }
     }
     $c->check(count(array_unique($keysOf($candidates))) === count($candidates), 'each place once');
@@ -209,13 +290,15 @@ return function (SmokeClient $c, array &$state): void {
     }
     $c->check(str_contains((string) $attribution[0], 'OpenStreetMap contributors') && str_contains((string) $attribution[1], 'Open Database License'), 'places are credited to OpenStreetMap');
     $c->check(str_starts_with((string) $attribution[2], 'Drive times and distances: Google Maps Platform'), 'and drive times to Google');
-    // The standing reminder is the only thing the list says about rules. (That no sentence of the backend
-    // states that a place may be used is held by the house-rules test, which reads every string of it.)
+    // The standing reminder is the only thing the list says about rules, and nothing in it says that a place
+    // takes trucks. (That no sentence of the backend states either is held by the house-rules test and by
+    // the tests of the service, which read every string and every payload.)
     $c->check($list['notice'] === $notice, 'the reminder travels with the list');
 
     // Warm: served from the caches, and the same list.
     $c->get('/api/truck/scout')->status(200)->path('data.cached', true)->path('data.screened', $list['screened']);
     $c->check($c->value('data.candidates') === $candidates, 'the cached list is the list');
+    $c->check($c->value('data.kinds') === $list['kinds'], 'with the same counts');
     $c->get('/api/truck/scout', ['hide' => 'hidden'])->status(200)->path('data.cached', true);
     // refresh computes it again, to the same result
     $c->get('/api/truck/scout', ['refresh' => 1])->status(200)->path('data.cached', false);
@@ -223,7 +306,6 @@ return function (SmokeClient $c, array &$state): void {
 
     // The orders of the best places are the model's window on the vectors simulate answers at the place:
     // the screen picked the places, the model made the numbers.
-    $A = Seeds::assumptions($overrides, is_array($regionBlock) ? $regionBlock : null);
     foreach (array_slice($candidates, 0, 3) as $candidate) {
         $result = $candidate['result'];
         if ($result['best_window'] === null) {
@@ -257,7 +339,39 @@ return function (SmokeClient $c, array &$state): void {
     }
 
     // =====================================================================================
-    // 3. the drive limit and the licence counties narrow the list
+    // 3. `types`: only the named kinds, and deeper into them
+    // =====================================================================================
+    $firstKind = (string) $candidates[0]['kind'];
+    $firstRow = null;
+    foreach ($list['kinds'] as $row) {
+        if ($row['kind'] === $firstKind) {
+            $firstRow = $row;
+        }
+    }
+    $c->get('/api/truck/scout', ['types' => $firstKind])->status(200)
+        ->path('data.quota', 30)
+        ->path('data.screened', $firstRow['screened'])
+        ->path('data.kinds.0.kind', $firstKind)
+        ->path('data.kinds.0.screened', $firstRow['screened'])
+        ->path('data.notice', $notice);
+    $deep = $c->value('data');
+    $checkList($c, $deep, $limit);
+    $c->check(count($deep['kinds']) === 1, 'only the kind that was asked for is counted');
+    $c->check(count($deep['candidates']) >= $firstRow['listed'], 'a kind that is asked for is listed at least as deep as in the list of every kind');
+    foreach ($deep['candidates'] as $candidate) {
+        $c->check($candidate['kind'] === $firstKind, 'and only places of that kind are listed');
+    }
+    // two kinds, in the order of the list whatever the order of the request
+    if (count($allKinds) > 1) {
+        $c->get('/api/truck/scout', ['types' => $allKinds[1] . ', ' . $allKinds[0]])->status(200)
+            ->path('data.kinds.0.kind', $allKinds[0])
+            ->path('data.kinds.1.kind', $allKinds[1])
+            ->path('data.quota', 30);
+        $checkList($c, (array) $c->value('data'), $limit);
+    }
+
+    // =====================================================================================
+    // 4. the drive limit and the licence counties narrow the list
     // =====================================================================================
     $county = (string) $candidates[0]['place']['county_fips'];
     $c->put('/api/truck/profile', ['scout_drive_minutes_limit' => 5, 'licence_counties' => [$county]])->status(200)
@@ -267,11 +381,12 @@ return function (SmokeClient $c, array &$state): void {
         ->path('data.limit_minutes', 5)
         ->path('data.licence_counties', [$county])
         ->path('data.cached', false);
-    $narrow = (array) $c->value('data.candidates');
-    $c->check($c->value('data.screened') <= $list['screened'], 'a shorter drive and one county screen no more places');
+    $narrowList = (array) $c->value('data');
+    $checkList($c, $narrowList, 5);
+    $narrow = $narrowList['candidates'];
+    $c->check($narrowList['screened'] <= $list['screened'], 'a shorter drive and one county screen no more places');
     $c->check(count($narrow) <= count($candidates), 'and list no more of them');
-    foreach ($narrow as $i => $candidate) {
-        $checkCandidate($c, $candidate, $i + 1, 5);
+    foreach ($narrow as $candidate) {
         $c->check($candidate['place']['county_fips'] === $county, 'only places of the licence county are listed');
     }
     $c->put('/api/truck/profile', ['scout_drive_minutes_limit' => $limit, 'licence_counties' => []])->status(200)
@@ -281,9 +396,19 @@ return function (SmokeClient $c, array &$state): void {
     $c->check($c->value('data.candidates') === $candidates, 'with the profile put back the list is the one of before');
 
     // =====================================================================================
-    // 4. leads
+    // 5. leads
     // =====================================================================================
-    $first = (string) $candidates[0]['place']['place_key'];
+    // The place the leads of this step are kept on: the first of the list that stands for no other place of
+    // its site, so that touching it changes nothing but its lead.
+    $at = null;
+    foreach ($candidates as $n => $candidate) {
+        if ($candidate['merged'] === 0) {
+            $at = $n;
+            break;
+        }
+    }
+    $c->check($at !== null, 'the list holds a place that stands for itself alone');
+    $first = (string) $candidates[$at]['place']['place_key'];
     $leadPath = '/api/truck/scout/leads/' . $first;
 
     // refused bodies write nothing
@@ -306,10 +431,12 @@ return function (SmokeClient $c, array &$state): void {
     $lead = $c->value('data.lead');
     $leadId = (string) $lead['id'];
     $c->check(array_keys($lead) === ['id', 'place_key', 'status', 'notes', 'spot_id', 'google'] && strlen($leadId) === 36, 'a lead has the fields of the specification and an id');
-    $c->put($leadPath, ['notes' => 'Booked for Friday'])->status(200)
+    // What a lookup leaves on a lead cannot be set through the lead itself.
+    $c->put($leadPath, ['notes' => 'Booked for Friday', 'google' => ['place_id' => 'ChIJforged'], 'google_place_id' => 'ChIJforged'])->status(200)
         ->path('data.lead.id', $leadId)
         ->path('data.lead.status', 'contacted')
-        ->path('data.lead.notes', 'Booked for Friday');
+        ->path('data.lead.notes', 'Booked for Friday')
+        ->path('data.lead.google', null);
     $c->put($leadPath, ['status' => 'booked', 'id' => 'another', 'organization_id' => $state['users'][2]['organization_id']])->status(200)
         ->path('data.lead.id', $leadId)
         ->path('data.lead.status', 'booked')
@@ -317,35 +444,34 @@ return function (SmokeClient $c, array &$state): void {
     $c->put($leadPath, ['notes' => null])->status(200)->path('data.lead.notes', null)->path('data.lead.status', 'booked');
     $c->get('/api/truck/bootstrap')->status(200)->path('data.counts.leads', $leadsBefore + 1);
 
-    // the list shows the lead with its place, from the caches
-    $c->get('/api/truck/scout')->status(200)->path('data.cached', true)
-        ->path('data.candidates.0.lead', ['id' => $leadId, 'place_key' => $first, 'status' => 'booked', 'notes' => null, 'spot_id' => null, 'google' => null]);
-    $c->check($keysOf($c->value('data.candidates')) === $keysOf($candidates), 'a status that is not hidden leaves the ranking as it was');
+    // the list shows the lead with its place, and is otherwise the list of before
+    $shown = ['id' => $leadId, 'place_key' => $first, 'status' => 'booked', 'notes' => null, 'spot_id' => null, 'google' => null];
+    $c->get('/api/truck/scout')->status(200)->path('data.candidates.' . $at . '.lead', $shown);
+    $c->check($keysOf($c->value('data.candidates')) === $keysOf($candidates), 'a status that is not hidden leaves the list as it was');
+    // a later change of the lead recomputes nothing: the lead is read fresh over the cached list
+    $c->put($leadPath, ['notes' => 'Friday, 11 to 2'])->status(200);
+    $c->get('/api/truck/scout')->status(200)->path('data.cached', true)->path('data.candidates.' . $at . '.lead.notes', 'Friday, 11 to 2');
+    $c->put($leadPath, ['notes' => null])->status(200);
 
-    // a hidden lead leaves the ranking, and the others move up
+    // a hidden lead leaves the list
     $c->put($leadPath, ['status' => 'hidden'])->status(200)->path('data.lead.status', 'hidden');
     $c->get('/api/truck/scout')->status(200);
-    $withoutFirst = (array) $c->value('data.candidates');
-    $c->check(!in_array($first, $keysOf($withoutFirst), true), 'a hidden place is not listed');
-    $c->check($c->value('data.screened') === $list['screened'] - 1, 'and is not screened');
-    foreach ($withoutFirst as $i => $candidate) {
-        $c->check($candidate['result']['position'] === $i + 1, 'the places after it move up');
-    }
-    if (count($candidates) > 1) {
-        $c->check($withoutFirst[0]['place']['place_key'] === $candidates[1]['place']['place_key'], 'the second place is now the first');
-    }
+    $withoutFirst = (array) $c->value('data');
+    $checkList($c, $withoutFirst, $limit);
+    $c->check(!in_array($first, $keysOf($withoutFirst['candidates']), true), 'a hidden place is not listed');
+    $c->check($withoutFirst['screened'] === $list['screened'] - 1, 'and is not screened');
     // nothing hidden: it is back, with its status
-    $c->get('/api/truck/scout', ['hide' => ''])->status(200)->path('data.candidates.0.place.place_key', $first)->path('data.candidates.0.lead.status', 'hidden');
+    $c->get('/api/truck/scout', ['hide' => ''])->status(200)->path('data.candidates.' . $at . '.place.place_key', $first)->path('data.candidates.' . $at . '.lead.status', 'hidden');
     $c->check($keysOf($c->value('data.candidates')) === $keysOf($candidates), 'with nothing hidden the list is whole');
-    // a place nobody touched is new: hiding new leaves the places the owner touched
+    // a place nobody touched is new: hiding new leaves the places the owner touched, every one of them
     $c->get('/api/truck/scout', ['hide' => 'new,hidden'])->status(200);
     $c->check($keysOf($c->value('data.candidates')) === [], 'hiding new and hidden leaves nothing while the one lead is hidden');
-    $c->get('/api/truck/scout', ['hide' => 'new,declined'])->status(200)->path('data.screened', 1);
+    $c->get('/api/truck/scout', ['hide' => 'new,declined'])->status(200)->path('data.screened', 1)->path('data.quota', 50);
     $c->check($keysOf($c->value('data.candidates')) === [$first], 'hiding new and declined leaves the one place the owner touched');
     $c->put($leadPath, ['status' => 'shortlisted'])->status(200)->path('data.lead.status', 'shortlisted');
 
     // =====================================================================================
-    // 5. the contact lookup
+    // 6. the contact lookup
     // =====================================================================================
     $refused($c->post($leadPath . '/contact', ['force' => 1]), 'force must be true or false', 'force', 'V6');
     if ($noKey) {
@@ -356,8 +482,14 @@ return function (SmokeClient $c, array &$state): void {
         }
         // nothing was stored, also for a place that had no lead yet
         $c->put($leadPath, ['notes' => 'no lookup here'])->status(200)->path('data.lead.google', null);
-        if (count($candidates) > 1) {
-            $untouched = (string) $candidates[1]['place']['place_key'];
+        $untouched = null;
+        foreach ($candidates as $candidate) {
+            if ($candidate['place']['place_key'] !== $first) {
+                $untouched = (string) $candidate['place']['place_key'];
+                break;
+            }
+        }
+        if ($untouched !== null) {
             $c->allow(503)->post('/api/truck/scout/leads/' . $untouched . '/contact')->status(503);
             $c->get('/api/truck/bootstrap')->status(200)->path('data.counts.leads', $leadsBefore + 1);
         }
@@ -366,42 +498,19 @@ return function (SmokeClient $c, array &$state): void {
     }
 
     // =====================================================================================
-    // 6. save as spot
+    // 7. save as spot
     // =====================================================================================
     $c->get('/api/truck/spots')->status(200);
     $spotsBefore = array_column((array) $c->value('data.spots'), 'id');
     $saved = [];
 
-    // one place of each kind the lists hold: with a typical size, without one, without a host segment.
-    // The short list around the base of part 3 is looked at as well: it often holds kinds the long one lacks.
+    // one place of each kind of host the lists hold: with a typical size, without one, without a host
+    // segment. The list of every kind holds all three wherever the region does.
     $kinds = ['sized' => null, 'unsized' => null, 'hostless' => null];
     foreach (array_merge($candidates, $narrow) as $candidate) {
         $result = $candidate['result'];
         $kind = $result['host_segment'] === null ? 'hostless' : ($result['host_size'] > 0 ? 'sized' : 'unsized');
         $kinds[$kind] ??= $candidate;
-    }
-    // Where office buildings fill both lists, a place with a typical size may still stand beside one of
-    // them. Simulate names the possible hosts around a point; a lead on one of those, and the list of the
-    // touched places only, give its candidate.
-    if ($kinds['sized'] === null) {
-        $tries = 0;
-        foreach (array_slice($candidates, 0, 5) as $listed) {
-            $c->post('/api/truck/simulate', ['point' => ['lat' => $listed['place']['lat'], 'lng' => $listed['place']['lng']], 'visibilities' => ['normal']])->status(200);
-            foreach ((array) $c->value('data.hosts_nearby') as $hint) {
-                if ($kinds['sized'] !== null || $tries >= 3 || $hint['host_segment'] === null || !($hint['default_size'] > 0)) {
-                    continue;
-                }
-                $tries++;
-                $c->put('/api/truck/scout/leads/' . $hint['place_key'], ['status' => 'shortlisted'])->status(200)->path('data.lead.status', 'shortlisted');
-                $c->get('/api/truck/scout', ['hide' => 'new,hidden'])->status(200);
-                foreach ((array) $c->value('data.candidates') as $touched) {
-                    if ($touched['place']['place_key'] === $hint['place_key'] && $touched['result']['host_size'] > 0) {
-                        $c->check($touched['lead']['status'] === 'shortlisted', 'a touched place is listed with its lead');
-                        $kinds['sized'] = $touched;
-                    }
-                }
-            }
-        }
     }
 
     // refused bodies save nothing
@@ -491,12 +600,12 @@ return function (SmokeClient $c, array &$state): void {
     $saved[$kind] = $again;
 
     // =====================================================================================
-    // 7. the second user
+    // 8. the second user
     // =====================================================================================
     $c->as(2)->get('/api/truck/spots/' . $again)->status(404)->path('error', 'Spot not found');
     $c->get('/api/truck/scout', ['hide' => ''])->status(200, 409);
     if ($c->lastStatus() === 409) {
-        // Its truck stands outside every loaded region: nothing to rank, and no place to keep a lead on.
+        // Its truck stands outside every loaded region: nothing to list, and no place to keep a lead on.
         $c->path('error', 'Scouting needs a loaded region');
         $c->put($leadPath, ['status' => 'hidden'])->status(404)->path('error', $noPlace);
         $c->post($leadPath . '/spot')->status(404)->path('error', $noPlace);

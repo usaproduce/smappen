@@ -223,13 +223,14 @@ final class DataPurgeServiceTest extends TestCase
 
         $result = $service->purgeGoogleCaches();
 
-        self::assertSame(['drive_legs' => 4, 'lead_contacts' => 1, 'plan_snapshots' => 2, 'failed' => []], $result);
-        // Every expired leg (no limit), every organization's leads, every organization's plan results.
+        self::assertSame(['drive_legs' => 4, 'plan_snapshots' => 2, 'failed' => []], $result);
+        // Every expired leg (no limit) and every organization's plan results.
         self::assertSame([['purgeExpired', [0]]], $service->installed['DriveLegRepository']->calls);
-        self::assertSame([['purgeExpiredGoogle', [null]]], $service->installed['ScoutLeadRepository']->calls);
         self::assertSame([['purgeExpiredSnapshots', [null]]], $service->installed['PlanRepository']->calls);
+        // The leads are not part of the sweep: of a lookup they keep a place id, which does not expire.
+        self::assertSame([], $service->installed['ScoutLeadRepository']->calls);
         self::assertSame(
-            ['App\\TruckPlanner\\Data\\DriveLegRepository', 'App\\TruckPlanner\\Data\\ScoutLeadRepository', 'App\\TruckPlanner\\Data\\PlanRepository'],
+            ['App\\TruckPlanner\\Data\\DriveLegRepository', 'App\\TruckPlanner\\Data\\PlanRepository'],
             $service->asked
         );
         // The sweep itself writes nothing to the owner tables.
@@ -241,10 +242,10 @@ final class DataPurgeServiceTest extends TestCase
         $service = new SweepingPurge(new TruckDataRepository($this->tables));
         $service->installed = ['PlanRepository' => new PurgingRepository(2)];
 
-        self::assertSame(['drive_legs' => null, 'lead_contacts' => null, 'plan_snapshots' => 2, 'failed' => []], $service->purgeGoogleCaches());
+        self::assertSame(['drive_legs' => null, 'plan_snapshots' => 2, 'failed' => []], $service->purgeGoogleCaches());
 
         $service->installed = [];
-        self::assertSame(['drive_legs' => null, 'lead_contacts' => null, 'plan_snapshots' => null, 'failed' => []], $service->purgeGoogleCaches());
+        self::assertSame(['drive_legs' => null, 'plan_snapshots' => null, 'failed' => []], $service->purgeGoogleCaches());
     }
 
     public function testAPartThatFailsIsReportedAndTheOthersStillRun(): void
@@ -253,8 +254,7 @@ final class DataPurgeServiceTest extends TestCase
         $broken = new PurgingRepository(0);
         $broken->error = new \RuntimeException('deadlock on https://example.test/?key=AIzaSECRETSECRET');
         $service->installed = [
-            'DriveLegRepository' => new PurgingRepository(4),
-            'ScoutLeadRepository' => $broken,
+            'DriveLegRepository' => $broken,
             'PlanRepository' => new PurgingRepository(2),
         ];
 
@@ -263,9 +263,9 @@ final class DataPurgeServiceTest extends TestCase
             $result = $service->purgeGoogleCaches();
         });
 
-        self::assertSame(['drive_legs' => 4, 'lead_contacts' => null, 'plan_snapshots' => 2, 'failed' => ['lead_contacts']], $result);
+        self::assertSame(['drive_legs' => null, 'plan_snapshots' => 2, 'failed' => ['drive_legs']], $result);
         self::assertCount(1, $lines);
-        self::assertStringStartsWith('[tp] purge of lead_contacts failed: RuntimeException: deadlock', $lines[0]);
+        self::assertStringStartsWith('[tp] purge of drive_legs failed: RuntimeException: deadlock', $lines[0]);
         self::assertStringNotContainsString('AIza', $lines[0]);
     }
 
@@ -278,7 +278,7 @@ final class DataPurgeServiceTest extends TestCase
             'PlanRepository' => new PurgingRepository(2),
         ];
         $service->purgeGoogleCaches();
-        self::assertSame(['drive_legs' => 0, 'lead_contacts' => 0, 'plan_snapshots' => 0, 'failed' => []], $service->purgeGoogleCaches());
+        self::assertSame(['drive_legs' => 0, 'plan_snapshots' => 0, 'failed' => []], $service->purgeGoogleCaches());
     }
 
     public function testADryRunCountsWhatHasExpiredAndAsksNoRepositoryToPurge(): void
@@ -287,9 +287,9 @@ final class DataPurgeServiceTest extends TestCase
         $service->installed = ['DriveLegRepository' => new PurgingRepository(4)];
         $before = $this->tables->rows;
 
-        // The fixture, as of 2026-10-05 12:00: one cached leg of 31 days, one lead looked up 40 days ago,
-        // one plan result with Google legs of 35 days.
-        self::assertSame(['drive_legs' => 1, 'lead_contacts' => 1, 'plan_snapshots' => 1, 'failed' => []], $service->purgeGoogleCaches(true));
+        // The fixture, as of 2026-10-05 12:00: one cached leg of 31 days and one plan result with Google
+        // legs of 35 days. A lead whose place was matched 40 days ago is not counted: it has nothing to lose.
+        self::assertSame(['drive_legs' => 1, 'plan_snapshots' => 1, 'failed' => []], $service->purgeGoogleCaches(true));
 
         self::assertSame([], $service->asked);
         self::assertSame([], $service->installed['DriveLegRepository']->calls);
@@ -307,17 +307,18 @@ final class DataPurgeServiceTest extends TestCase
 
     public function testTheInstalledRepositoriesOfferThePurgeTheSweepCalls(): void
     {
-        // The three belong to other packages. Where one is installed, it must answer the call of the sweep.
+        // The two belong to other packages. Where one is installed, it must answer the call of the sweep.
         $sweeps = (new \ReflectionClassConstant(DataPurgeService::class, 'SWEEPS'))->getValue();
-        self::assertSame(['drive_legs', 'lead_contacts', 'plan_snapshots'], array_keys($sweeps));
+        self::assertSame(['drive_legs', 'plan_snapshots'], array_keys($sweeps));
         self::assertSame(
             [
                 ['App\\TruckPlanner\\Data\\DriveLegRepository', 'purgeExpired', 0],
-                ['App\\TruckPlanner\\Data\\ScoutLeadRepository', 'purgeExpiredGoogle', null],
                 ['App\\TruckPlanner\\Data\\PlanRepository', 'purgeExpiredSnapshots', null],
             ],
             array_values($sweeps)
         );
+        // Nothing of a Scout lead expires, so its repository has no purge to offer.
+        self::assertFalse(method_exists(\App\TruckPlanner\Data\ScoutLeadRepository::class, 'purgeExpiredGoogle'));
         foreach ($sweeps as [$class, $method]) {
             if (!class_exists($class)) {
                 continue;

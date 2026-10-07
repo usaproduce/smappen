@@ -12,9 +12,13 @@ use App\TruckPlanner\Services\Support\TpConfig;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The Google Places (New) Text Search call of the contact lookup, against a stubbed transport
- * (04_BACKEND.md 5.4). The request below was checked against Google's reference on 2026-10-05: the method
- * and address, the three headers, the body fields and the names of the mask.
+ * The two Google Places (New) calls of the contact lookup, against a stubbed transport (04_BACKEND.md 5.4):
+ * the Text Search by name of a first lookup, and the Place Details request by id of a later one. Both
+ * requests below were checked against Google's reference on 2026-10-05: method and address, headers, the
+ * body fields of the search and the names of the two masks.
+ *
+ * The client hands an answer to its caller and keeps none of it: the last tests look for the texts of an
+ * answer in every log line and every ledger row.
  */
 final class PlacesContactClientTest extends TestCase
 {
@@ -79,6 +83,19 @@ final class PlacesContactClientTest extends TestCase
     private function find(): array
     {
         return $this->client->find(self::NAME, self::LAT, self::LNG);
+    }
+
+    /**
+     * The same place as Google answers it for a request by id: the place itself, without a location.
+     *
+     * @param array<string, mixed> $over
+     * @return array<string, mixed>
+     */
+    private static function googleDetails(array $over = []): array
+    {
+        $place = $over + self::googlePlace();
+        unset($place['location']);
+        return $place;
     }
 
     /**
@@ -256,13 +273,14 @@ final class PlacesContactClientTest extends TestCase
         self::assertSame('far', $this->find()['match']);
     }
 
-    public function testWhatComesBackIsFittedToTheColumnsOfTheLead(): void
+    public function testWhatIsPassedOnIsCleanAndBounded(): void
     {
+        $long = 'https://example.com/' . str_repeat('a', 240);
         $this->http->json(200, ['places' => [self::googlePlace(10.0, [
             'displayName' => ['text' => "  " . str_repeat('é', 200) . "  "],
             'formattedAddress' => "1 Example Rd,\nSterling " . str_repeat('x', 300),
             'nationalPhoneNumber' => str_repeat('5', 60),
-            'websiteUri' => 'https://example.com/' . str_repeat('a', 240),
+            'websiteUri' => $long,
             'googleMapsUri' => 'https://maps.google.com/?cid=1',
         ])]]);
         $place = $this->find()['place'];
@@ -270,9 +288,13 @@ final class PlacesContactClientTest extends TestCase
         self::assertSame(255, mb_strlen($place['address']));
         self::assertStringStartsWith('1 Example Rd, Sterling x', $place['address']);
         self::assertSame(str_repeat('5', 40), $place['phone']);
-        // a cut address would lead nowhere: one that does not fit is dropped
-        self::assertNull($place['website']);
+        // No column holds the answer, so an address of ordinary length passes whole ...
+        self::assertSame($long, $place['website']);
         self::assertSame('https://maps.google.com/?cid=1', $place['maps_uri']);
+
+        // ... and only one that is no web address any more is dropped: a cut address would lead nowhere.
+        $this->http->json(200, ['places' => [self::googlePlace(10.0, ['websiteUri' => 'https://example.com/' . str_repeat('a', 2040)])]]);
+        self::assertNull($this->find()['place']['website']);
     }
 
     public function testMissingAndMalformedFieldsAreNull(): void
@@ -456,5 +478,201 @@ final class PlacesContactClientTest extends TestCase
             $this->find();
         });
         self::assertCount(1, $this->http->requests);
+    }
+
+    // ------------------------------------------------------------------------------------ a place by its id
+
+    public function testTheRequestByIdIsTheOneOfTheSpecification(): void
+    {
+        $this->http->json(200, self::googleDetails());
+        $this->client->details('ChIJN1t_tDeuEmsRUsoyG83frY4');
+
+        self::assertCount(1, $this->http->requests);
+        $request = $this->http->requests[0];
+        self::assertSame('GET', $request['method']);
+        self::assertSame('https://places.googleapis.com/v1/places/ChIJN1t_tDeuEmsRUsoyG83frY4?languageCode=en', $request['url']);
+        self::assertSame(
+            [
+                'X-Goog-Api-Key: ' . self::KEY,
+                'X-Goog-FieldMask: id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,googleMapsUri',
+            ],
+            $request['headers']
+        );
+        self::assertNull($request['body']);
+        self::assertSame([3, 6], [$request['connect_timeout_s'], $request['timeout_s']]);
+        self::assertStringNotContainsString(self::KEY, $request['url']);
+    }
+
+    public function testTheMaskOfARequestByIdNamesTheContactFieldsWithoutAPrefixAndNoLocation(): void
+    {
+        self::assertSame(
+            ['id', 'displayName', 'formattedAddress', 'nationalPhoneNumber', 'websiteUri', 'googleMapsUri'],
+            explode(',', PlacesContactClient::DETAILS_FIELD_MASK)
+        );
+        self::assertSame('https://places.googleapis.com/v1/places/', PlacesContactClient::DETAILS_URL);
+        // the same fields as the search, less the location that only the search needs for its check
+        $search = array_map(static fn (string $name): string => substr($name, strlen('places.')), explode(',', PlacesContactClient::FIELD_MASK));
+        self::assertSame(array_values(array_diff($search, ['location'])), explode(',', PlacesContactClient::DETAILS_FIELD_MASK));
+    }
+
+    public function testAPlaceAskedForByItsIdIsFound(): void
+    {
+        $this->http->json(200, self::googleDetails());
+        self::assertSame(
+            [
+                'ok' => true,
+                'error' => null,
+                'match' => 'found',
+                'place' => [
+                    'place_id' => 'ChIJN1t_tDeuEmsRUsoyG83frY4',
+                    'name' => 'Example Brewing Co',
+                    'address' => '1 Example Rd, Sterling, VA 20166, USA',
+                    'phone' => '(703) 555-0100',
+                    'website' => 'https://example.com/',
+                    'maps_uri' => 'https://maps.google.com/?cid=1234567890',
+                ],
+            ],
+            $this->client->details('ChIJN1t_tDeuEmsRUsoyG83frY4')
+        );
+        // a field Google does not have is left out of its answer
+        $this->http->json(200, ['id' => 'ChIJN1t_tDeuEmsRUsoyG83frY4', 'displayName' => ['text' => 'Example Brewing Co']]);
+        self::assertSame(
+            ['place_id' => 'ChIJN1t_tDeuEmsRUsoyG83frY4', 'name' => 'Example Brewing Co', 'address' => null, 'phone' => null, 'website' => null, 'maps_uri' => null],
+            $this->client->details('ChIJN1t_tDeuEmsRUsoyG83frY4')['place']
+        );
+    }
+
+    public function testAnIdGoogleNoLongerKnowsIsAnAnswerAndNotAFailure(): void
+    {
+        $gone = ['ok' => true, 'error' => null, 'match' => 'gone', 'place' => null];
+        $cases = [
+            fn () => $this->http->json(404, ['error' => ['code' => 404, 'message' => 'Place ID is no longer valid.', 'status' => 'NOT_FOUND']]),
+            fn () => $this->http->queue(404, ''),
+            fn () => $this->http->json(400, ['error' => ['code' => 400, 'message' => 'The place is gone', 'status' => 'NOT_FOUND']]),
+        ];
+        foreach ($cases as $queue) {
+            $this->ledgerRows->calls = [];
+            $queue();
+            $answer = null;
+            $lines = LogCapture::during(function () use (&$answer): void {
+                $answer = $this->client->details('ChIJN1t_tDeuEmsRUsoyG83frY4');
+            });
+            self::assertSame($gone, $answer);
+            self::assertSame([], $lines, 'an id that is gone is not a failure to log');
+            $row = $this->ledgerRow();
+            self::assertSame('tp_places_details', $row['sku']);
+            self::assertSame(0, $row['billable_units']);
+        }
+        // a search has no id to be gone: its 404 is a failure like any other
+        $this->http->json(404, ['error' => ['code' => 404, 'message' => 'Not found', 'status' => 'NOT_FOUND']]);
+        $answer = null;
+        LogCapture::during(function () use (&$answer): void {
+            $answer = $this->find();
+        });
+        self::assertSame('upstream', $answer['error']);
+    }
+
+    public function testATextThatCannotBeAnIdIsNotSent(): void
+    {
+        foreach (['', 'not a place id!', 'places/ChIJ', '../ChIJ', 'ChIJ?fields=*', str_repeat('a', 256)] as $text) {
+            self::assertSame(['ok' => true, 'error' => null, 'match' => 'gone', 'place' => null], $this->client->details($text));
+        }
+        self::assertSame([], $this->http->requests);
+        self::assertSame([], $this->ledgerRows->calls);
+    }
+
+    public function testFailuresOfARequestByIdAreTheOnesOfASearch(): void
+    {
+        $cases = [
+            ['quota', 'RESOURCE_EXHAUSTED', fn () => $this->http->json(429, ['error' => ['code' => 429, 'message' => 'Quota exceeded', 'status' => 'RESOURCE_EXHAUSTED']])],
+            ['refused', 'PERMISSION_DENIED', fn () => $this->http->json(403, ['error' => ['code' => 403, 'message' => 'Not enabled', 'status' => 'PERMISSION_DENIED']])],
+            ['upstream', 'INVALID_ARGUMENT', fn () => $this->http->json(400, ['error' => ['code' => 400, 'message' => 'Invalid field mask', 'status' => 'INVALID_ARGUMENT']])],
+            ['upstream', 'http_500', fn () => $this->http->queue(500, 'oops')],
+            ['timeout', 'timeout', fn () => $this->http->fail('timeout')],
+            ['upstream', 'bad_body', fn () => $this->http->queue(200, 'not json')],
+            // a place without the id that was asked for in the mask is no place
+            ['upstream', 'bad_body', fn () => $this->http->queue(200, '{}')],
+            ['upstream', 'bad_body', fn () => $this->http->queue(200, '[]')],
+        ];
+        foreach ($cases as [$error, $code, $queue]) {
+            $this->ledgerRows->calls = [];
+            $queue();
+            $answer = null;
+            $lines = LogCapture::during(function () use (&$answer): void {
+                $answer = $this->client->details('ChIJN1t_tDeuEmsRUsoyG83frY4');
+            });
+            self::assertSame(['ok' => false, 'error' => $error, 'match' => null, 'place' => null], $answer, $code);
+            self::assertCount(1, $lines);
+            self::assertStringStartsWith('[tp] places lookup failed: ', $lines[0]);
+            self::assertSame($code, $this->ledgerRow()['error_message']);
+        }
+        putenv('GOOGLE_API_KEY');
+        self::assertSame('no_key', $this->client->details('ChIJN1t_tDeuEmsRUsoyG83frY4')['error']);
+    }
+
+    public function testARequestByIdIsMeteredUnderItsOwnSku(): void
+    {
+        $this->http->json(200, self::googleDetails());
+        $this->client->details('ChIJN1t_tDeuEmsRUsoyG83frY4');
+        $row = $this->ledgerRow();
+        self::assertSame('tp_places_details', $row['sku']);
+        self::assertSame(1, $row['billable_units']);
+        self::assertSame('0.02', $row['unit_cost_usd']);
+        self::assertSame('0.02', $row['total_cost_usd']);
+        self::assertSame(ApiLedger::maskHash(PlacesContactClient::DETAILS_FIELD_MASK), $row['field_mask_hash']);
+        self::assertNotSame(ApiLedger::maskHash(PlacesContactClient::FIELD_MASK), $row['field_mask_hash']);
+        self::assertSame(200, $row['http_status']);
+        self::assertNull($row['error_message']);
+    }
+
+    // ------------------------------------------------------------------------------------ nothing of an answer is kept
+
+    public function testNoTextOfAnAnswerReachesALogLineOrTheLedger(): void
+    {
+        // Every text of the place is one that cannot be mistaken for anything else.
+        $place = [
+            'id' => 'ChIJ_SENTINEL_placeid',
+            'displayName' => ['text' => 'SENTINEL-NAME Brewing', 'languageCode' => 'en'],
+            'formattedAddress' => '1 SENTINEL-ADDRESS Rd, Sterling, VA 20166, USA',
+            'location' => ['latitude' => self::LAT, 'longitude' => self::LNG],
+            'nationalPhoneNumber' => '(703) 555-SENTINEL',
+            'websiteUri' => 'https://sentinel-website.example.com/',
+            'googleMapsUri' => 'https://maps.google.com/?cid=SENTINELCID',
+        ];
+        $calls = [
+            'a search that matches' => function () use ($place): array {
+                $this->http->json(200, ['places' => [$place]]);
+                return $this->find();
+            },
+            'a search whose match is elsewhere' => function () use ($place): array {
+                $this->http->json(200, ['places' => [['location' => ['latitude' => self::LAT + 0.1, 'longitude' => self::LNG]] + $place]]);
+                return $this->find();
+            },
+            'a request by id' => function () use ($place): array {
+                $details = $place;
+                unset($details['location']);
+                $this->http->json(200, $details);
+                return $this->client->details('ChIJ_SENTINEL_placeid');
+            },
+        ];
+        foreach ($calls as $what => $call) {
+            $this->ledgerRows->calls = [];
+            $answer = [];
+            $lines = LogCapture::during(function () use (&$answer, $call): void {
+                $answer = $call();
+            });
+            self::assertTrue($answer['ok'], $what);
+            self::assertSame([], $lines, $what . ': an answered call logs nothing');
+            self::assertCount(1, $this->ledgerRows->calls, $what . ': one ledger row and no other statement');
+            $kept = json_encode($this->ledgerRows->calls);
+            // The traces are texts that no id, hash, number or time of a ledger row can hold by chance. (A
+            // row has a random id: three digits of the phone number would turn up in one now and then.)
+            self::assertStringNotContainsStringIgnoringCase('sentinel', (string) $kept, $what);
+            self::assertStringNotContainsString('(703)', (string) $kept, $what);
+            self::assertStringNotContainsString('maps.google.com', (string) $kept, $what);
+        }
+        // The class has nothing to keep an answer in: no property but its two collaborators, and no cache.
+        $properties = array_map(static fn (\ReflectionProperty $p): string => $p->getName(), (new \ReflectionClass(PlacesContactClient::class))->getProperties());
+        self::assertSame(['http', 'ledger'], $properties);
     }
 }

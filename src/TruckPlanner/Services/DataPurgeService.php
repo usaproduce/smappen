@@ -16,11 +16,14 @@ use App\TruckPlanner\Services\Support\TpInvalid;
  * else. The account and the organization stay, and so does every shared table.
  *
  * purgeGoogleCaches() is the daily sweep that keeps the 30-day promise for everyone: what was fetched from
- * Google (drive legs, looked-up contact fields, plan results computed with Google legs) is removed when its
- * lifetime ends, also for an account that sends no request. Each of the three parts belongs to the
- * repository of another package and is asked through its own purge method. A repository that is not
- * installed has written nothing, so its part is skipped. The owner's own data is never touched by the sweep:
- * corrections of drive times, typed contact details and the plans themselves stay.
+ * Google and stored (drive legs, plan results computed with Google legs) is removed when its lifetime ends,
+ * also for an account that sends no request. Each of the two parts belongs to the repository of another
+ * package and is asked through its own purge method. A repository that is not installed has written
+ * nothing, so its part is skipped. The owner's own data is never touched by the sweep: corrections of drive
+ * times, typed contact details and the plans themselves stay.
+ *
+ * A Scout lead has nothing to sweep. Of a contact lookup it keeps Google's id of the place, which may be
+ * kept for good; the looked-up name, address, phone, website and Maps link are never stored.
  */
 class DataPurgeService
 {
@@ -28,13 +31,12 @@ class DataPurgeService
 
     /**
      * Part of the sweep => [repository class, purge method, its one argument]. The argument is "no limit"
-     * for the leg cache and "every organization" for the other two.
+     * for the leg cache and "every organization" for the plan results.
      *
      * @var array<string, array{0: string, 1: string, 2: int|null}>
      */
     private const SWEEPS = [
         'drive_legs' => [self::DATA . 'DriveLegRepository', 'purgeExpired', 0],
-        'lead_contacts' => [self::DATA . 'ScoutLeadRepository', 'purgeExpiredGoogle', null],
         'plan_snapshots' => [self::DATA . 'PlanRepository', 'purgeExpiredSnapshots', null],
     ];
 
@@ -98,15 +100,14 @@ class DataPurgeService
      * again changes nothing.
      *
      * @param bool $dryRun count what would be removed and change nothing
-     * @return array{drive_legs: ?int, lead_contacts: ?int, plan_snapshots: ?int, failed: list<string>}
-     *         per part the number of rows removed (cached legs deleted, leads emptied of their looked-up
-     *         fields, plan results set to NULL), or null for a part that was skipped: its repository is
-     *         not installed, or it failed. `failed` names the parts that failed (and were logged); the
-     *         other parts still ran
+     * @return array{drive_legs: ?int, plan_snapshots: ?int, failed: list<string>}
+     *         per part the number of rows removed (cached legs deleted, plan results set to NULL), or
+     *         null for a part that was skipped: its repository is not installed, or it failed. `failed`
+     *         names the parts that failed (and were logged); the other part still ran
      */
     public function purgeGoogleCaches(bool $dryRun = false): array
     {
-        $result = ['drive_legs' => null, 'lead_contacts' => null, 'plan_snapshots' => null, 'failed' => []];
+        $result = ['drive_legs' => null, 'plan_snapshots' => null, 'failed' => []];
         if ($dryRun) {
             $counts = $this->data->expiredGoogleCounts();
             foreach (array_keys(self::SWEEPS) as $part) {

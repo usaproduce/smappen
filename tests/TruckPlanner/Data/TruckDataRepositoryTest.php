@@ -22,7 +22,11 @@ final class TruckDataRepositoryTest extends TestCase
     private const OTHER_ORG = TruckDataFixtures::OTHER_ORG;
     private const TRUCK = TruckDataFixtures::TRUCK;
 
-    /** What a page statement must never name: Google content, and what the export does not carry. */
+    /**
+     * What a page statement must never name: Google content, and what the export does not carry. The first
+     * five are the lead columns that held looked-up contact details before only the place id was kept: they
+     * are gone from the table, and no statement may bring them back.
+     */
     private const NEVER_SELECTED = [
         'g_name', 'g_address', 'g_phone', 'g_website', 'g_maps_uri', 'g_lookup_state', 'g_fetched_at',
         'context_json', 'weather_json', 'vectors_bin', 'pred_raw_basis',
@@ -535,38 +539,38 @@ final class TruckDataRepositoryTest extends TestCase
 
     // ------------------------------------------------------------------------------------ operator reads
 
-    public function testExpiredGoogleContentIsCountedWithTheThreeLifetimes(): void
+    public function testExpiredGoogleContentIsCountedWithItsTwoLifetimes(): void
     {
         $tables = TruckDataFixtures::tables();
         $tables->now = '2026-10-05 12:00:00';
         $repository = new TruckDataRepository($tables);
 
-        // The fixture holds: one leg of 31 days and one of 29; a lead looked up 40 days ago, one 3 days ago
-        // and one never; a plan result with Google legs of 35 days, one of 2 days, one old without Google legs.
-        self::assertSame(['drive_legs' => 1, 'lead_contacts' => 1, 'plan_snapshots' => 1], $repository->expiredGoogleCounts());
+        // The fixture holds: one leg of 31 days and one of 29; a plan result with Google legs of 35 days, one
+        // of 2 days, one old without Google legs. It also holds a lead whose place was matched 40 days ago:
+        // a lead keeps Google's id of the place and nothing that expires, so the leads are not counted.
+        self::assertSame(['drive_legs' => 1, 'plan_snapshots' => 1], $repository->expiredGoogleCounts());
 
         $db = new RecordingDatabase();
-        $db->queue(['drive_legs' => '4', 'lead_contacts' => '0', 'plan_snapshots' => '7']);
-        self::assertSame(['drive_legs' => 4, 'lead_contacts' => 0, 'plan_snapshots' => 7], (new TruckDataRepository($db))->expiredGoogleCounts());
+        $db->queue(['drive_legs' => '4', 'plan_snapshots' => '7']);
+        self::assertSame(['drive_legs' => 4, 'plan_snapshots' => 7], (new TruckDataRepository($db))->expiredGoogleCounts());
         $call = $db->calls[0];
         self::assertSame(
             'SELECT (SELECT COUNT(*) FROM tp_drive_legs WHERE fetched_at < NOW() - INTERVAL ? DAY) AS drive_legs, '
-            . '(SELECT COUNT(*) FROM tp_scout_leads WHERE g_fetched_at IS NOT NULL AND g_fetched_at < NOW() - INTERVAL ? DAY) AS lead_contacts, '
             . '(SELECT COUNT(*) FROM tp_plans WHERE result_has_google = 1 AND evaluated_at < NOW() - INTERVAL ? DAY) AS plan_snapshots',
             $call['sql']
         );
-        self::assertSame([30, 30, 30], $call['params']);
+        self::assertSame([30, 30], $call['params']);
+        self::assertStringNotContainsString('tp_scout_leads', $call['sql']);
 
         // Each lifetime is its own setting.
         $config = TpConfig::all();
         $config['routing']['leg_ttl_days'] = 10;
-        $config['places']['contact_ttl_days'] = 20;
         $config['plans']['snapshot_ttl_days'] = 40;
         TpConfig::replace($config);
         $db = new RecordingDatabase();
         (new TruckDataRepository($db))->expiredGoogleCounts();
-        self::assertSame([10, 20, 40], $db->calls[0]['params']);
-        self::assertSame(['drive_legs' => 2, 'lead_contacts' => 1, 'plan_snapshots' => 0], $repository->expiredGoogleCounts());
+        self::assertSame([10, 40], $db->calls[0]['params']);
+        self::assertSame(['drive_legs' => 2, 'plan_snapshots' => 0], $repository->expiredGoogleCounts());
     }
 
     public function testTheOrganizationsWithATruckAreListedByPage(): void
@@ -755,11 +759,10 @@ final class TruckTables extends Database
             return ['last_change' => $last];
         }
         if (str_contains($sql, ') AS drive_legs, ')) {
-            [$legDays, $leadDays, $planDays] = self::bound($params, 3);
+            [$legDays, $planDays] = self::bound($params, 2);
             $legs = array_filter($this->rows['tp_drive_legs'], fn (array $r): bool => $r['fetched_at'] < $this->daysAgo((int) $legDays));
-            $leads = array_filter($this->rows['tp_scout_leads'], fn (array $r): bool => $r['g_fetched_at'] !== null && $r['g_fetched_at'] < $this->daysAgo((int) $leadDays));
             $plans = array_filter($this->rows['tp_plans'], fn (array $r): bool => $this->expired($r, (int) $planDays));
-            return ['drive_legs' => count($legs), 'lead_contacts' => count($leads), 'plan_snapshots' => count($plans)];
+            return ['drive_legs' => count($legs), 'plan_snapshots' => count($plans)];
         }
         if (preg_match('~^SELECT (.+) FROM tp_trucks WHERE organization_id = \?$~s', $sql, $m) === 1) {
             [$org] = self::bound($params, 1);
@@ -1081,7 +1084,8 @@ final class TruckDataFixtures
 
     /**
      * @param array<string, mixed> $over
-     * @return array<string, mixed> a row of tp_scout_leads, with the contact fields of a lookup
+     * @return array<string, mixed> a row of tp_scout_leads after a lookup that matched: Google's id of the
+     *         place, the outcome and the time. The table has no column for anything else of a lookup
      */
     public static function lead(string $id, string $placeKey, array $over = [], string $org = self::ORG): array
     {
@@ -1089,9 +1093,7 @@ final class TruckDataFixtures
             'id' => $id, 'organization_id' => $org, 'truck_id' => $org === self::ORG ? self::TRUCK : self::OTHER_TRUCK, 'region_id' => 'dc',
             'place_key' => $placeKey, 'place_name' => 'Example Brewing', 'place_type' => 'taproom', 'lat' => 39.01, 'lng' => -77.41,
             'lead_state' => 'new', 'notes' => null, 'spot_id' => null, 'google_place_id' => 'ChIJexample',
-            'g_lookup_state' => 'found', 'g_name' => self::SENTINEL . ' name', 'g_address' => self::SENTINEL . ' address',
-            'g_phone' => self::SENTINEL . ' phone', 'g_website' => 'https://example.com/' . self::SENTINEL,
-            'g_maps_uri' => 'https://maps.google.com/?cid=' . self::SENTINEL, 'g_fetched_at' => '2026-10-02 08:00:00',
+            'g_lookup_state' => 'found', 'g_fetched_at' => '2026-10-02 08:00:00',
             'created_at' => self::STAMP, 'updated_at' => self::STAMP,
         ];
     }
@@ -1216,8 +1218,7 @@ final class TruckDataFixtures
         $t->add('tp_scout_leads', self::lead('d1', 'w264230766', ['lead_state' => 'contacted', 'notes' => 'Called Tuesday', 'spot_id' => 's1', 'g_fetched_at' => '2026-10-02 08:00:00']));
         $t->add('tp_scout_leads', self::lead('d2', 'n4100', ['place_name' => 'Example Bar', 'place_type' => 'bar', 'lead_state' => 'hidden', 'g_fetched_at' => '2026-08-26 08:00:00']));
         $t->add('tp_scout_leads', self::lead('d3', 'w5200', [
-            'place_name' => null, 'google_place_id' => null, 'g_lookup_state' => null, 'g_name' => null, 'g_address' => null,
-            'g_phone' => null, 'g_website' => null, 'g_maps_uri' => null, 'g_fetched_at' => null,
+            'place_name' => null, 'google_place_id' => null, 'g_lookup_state' => null, 'g_fetched_at' => null,
         ]));
 
         // The other organization: a row in every owner table, all of it marked.

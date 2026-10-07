@@ -659,7 +659,7 @@ checks the sum.
 | `kitchen` (three-state) | For `taproom` and `bar`, from the tags: `no` if `food=no`. `yes` if `food=yes`, or `amenity` in {restaurant, fast_food, cafe, food_court}, or a non-empty `cuisine`. Otherwise `unknown`. For every other type: the type's `kitchen_default` (`yes` or `no`). Readers resolve `unknown` with the type's `kitchen_default` |
 | `rival_kind` | Let `food` be the place type if it is one of `fast_food`, `restaurant`, `cafe`, `bar`, `convenience`, otherwise the type of the first of R02 to R06 that the element's tags also satisfy (only a `taproom` can have one), otherwise none. With a `food`: the seed `rival_kind` of that type, except none when `food` is `bar` and the resolved kitchen state is `no`. Without one: the seed `rival_kind` of the place type (none for every such type at revision 1). A place with a rival kind is a **rival** |
 | `visitor_segment`, `size_default` | The type's `visitor_segment` and `default_size`. Both become none and 0 when the size is 0, and for a `campus` whose `geom_kind` is not `area`. A place with a segment is a **visitor source** |
-| `host_fit` | The type's `host_fit`, forced to 0 when the place has no name (its `name` of 5.6 is null, so the `brand` fallback counts here). A place with `host_fit > 0` and `in_region = 1` is a **possible host**. It ranks Scout results and never enters an estimate. The model applies the same test whatever the type's `host_segment` (02_MODEL.md 4.16): a type without one, such as `farmers_market`, is a possible host ranked on its catchment alone |
+| `host_fit` | The type's `host_fit`, forced to 0 when the place has no name (its `name` of 5.6 is null, so the `brand` fallback counts here). A place with `host_fit > 0` and `in_region = 1` is a **possible host**. It ranks Scout results inside a kind of place, orders the kinds of Scout's list (`04_BACKEND.md` 5.9) and never enters an estimate. The model applies the same test whatever the type's `host_segment` (02_MODEL.md 4.16): a type without one, such as `farmers_market`, is a possible host ranked on its catchment alone |
 
 Consequences at seeds revision 1 [V]. A bar is a rival unless it is tagged as serving no food (its default is `yes`).
 A taproom is not a rival (the seed gives it no rival kind and a default of `no`) unless the same element is also tagged
@@ -711,6 +711,12 @@ own, and `opening_hours_raw` together with `hours_mask`. Roles and `tags` are ne
 Measured with the pipeline on the tile set (fetch box): step 2 removes 196, step 3 removes 87 (shopping centre 37,
 campus 31, hospital 16, stadium 3). On the extracts [run]: 165 by identity (elements on a state line), 199 by step 2,
 124 by step 3 (the same four types plus 37 station parts).
+
+The dataset keeps what these three steps leave. A site that is still several places of one type afterwards stays
+several rows: the buildings of one employer or of one apartment community, each mapped under the name of the site with
+a number or a part of its own, have no equal names for step 2, and their types are not among those of step 3. Each of
+them is a place of its own for the model. Scout folds such a site into one entry when it builds its list, by a rule of
+its own on names and a radius of 400 m (`04_BACKEND.md` 5.9 step 6). Nothing is removed from `tp_places` for it.
 
 ### 5.5 Clipping and county assignment
 
@@ -1898,35 +1904,38 @@ HTTP 200 even when refused, with a top-level `status` (`OK`, `REQUEST_DENIED`, `
 refused: the labelled straight-line estimate, and no new attempt for an hour. Every Google call is metered in
 `api_cost_events`.
 
-### 13.4 Google Places (New) Text Search - contact lookup on demand
+### 13.4 Google Places (New) - contact lookup on demand
 
-Used for one Scout candidate at a time, when the owner asks (DECISIONS 0 and 9). Checked on 2026-10-05 against Google's
-reference of `places.searchText`, its guides "Text Search (New)" and "Place Data Fields (New)", the Places API
-usage-and-billing page, the Google Maps Platform price list and the Places API policies page. No request was sent:
-this machine has no key. The client is specified in `04_BACKEND.md` 5.4.
+Used for one Scout candidate at a time, when the owner asks (DECISIONS 0 and 9): a Text Search by the place's name the
+first time, a Place Details request by the kept place id afterwards. Checked on 2026-10-05 against Google's reference
+of `places.searchText`, its guides "Text Search (New)", "Place Details (New)", "Place Data Fields (New)" and "Place
+IDs", the Places API usage-and-billing page, the Google Maps Platform price list and the Places API policies page. No
+request was sent: this machine has no key. The client and the flow are specified in `04_BACKEND.md` 5.4.
 
 | | |
 |---|---|
-| Request | `POST https://places.googleapis.com/v1/places:searchText` with `Content-Type: application/json`, `X-Goog-Api-Key: <GOOGLE_API_KEY>` and `X-Goog-FieldMask: places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri`. A field mask is mandatory, and these are the fields' exact mask names |
+| First lookup | `POST https://places.googleapis.com/v1/places:searchText` with `Content-Type: application/json`, `X-Goog-Api-Key: <GOOGLE_API_KEY>` and `X-Goog-FieldMask: places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri`. A field mask is mandatory, and these are the fields' exact mask names |
 | Body | `{"textQuery": "<place name>", "languageCode": "en", "pageSize": 1, "locationBias": {"circle": {"center": {"latitude": .., "longitude": ..}, "radius": 500.0}}}`. `textQuery` is the only required field. `pageSize` is 1 to 20 (`maxResultCount` is its deprecated name). The radius is in metres, 0.0 to 50,000.0. A bias prefers results near the point, it does not exclude others |
 | Response fields used | Of `places[0]`: `id` (the place id), `displayName.text`, `formattedAddress`, `location.latitude` and `location.longitude`, `nationalPhoneNumber`, `websiteUri`, `googleMapsUri`. A field Google does not have is absent, and with no match `places` itself is absent (`{}`) |
-| Match check | The bias cannot exclude a namesake elsewhere, so the location is asked for: a first result more than 300 m from the candidate's point, or without a location, is no confident match and is stored as not found. The location is used for that comparison only and is never stored (DECISIONS 0) |
-| Billing | Per request, at the dearest SKU the mask touches: `id` alone is Text Search Essentials (IDs Only); `displayName`, `formattedAddress`, `location` and `googleMapsUri` are Pro fields; `nationalPhoneNumber` and `websiteUri` are Enterprise fields. Every lookup is one Text Search Enterprise request: 35.00 USD per 1,000 in the first price tier, the first 1,000 of a month free |
-| Caching | No cache headers. Google's policy: Places API content must not be pre-fetched, cached or stored beyond the listed exceptions. The place id is exempt and may be kept indefinitely (refresh one that is older than 12 months; a Place Details request for the id alone is free). Latitude and longitude may be cached for up to 30 consecutive days [M: read in a summary of the service specific terms, not on the page itself]. Name, address, phone, website and Maps link are not among the exceptions |
+| Match check | The bias cannot exclude a namesake elsewhere, so the location is asked for: a first result more than 300 m from the candidate's point, or without a location, is no confident match and is answered as not found. The location is used for that comparison only and is never stored (DECISIONS 0) |
+| Later lookups | `GET https://places.googleapis.com/v1/places/<place id>?languageCode=en` with `X-Goog-Api-Key: <GOOGLE_API_KEY>` and `X-Goog-FieldMask: id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,googleMapsUri`. The mask is mandatory here too, and the names of a single place carry no `places.` prefix. The answer is the place object itself. No location is asked for: the place was matched when its id was kept. An id Google no longer knows answers the status `NOT_FOUND`, and the lookup then searches by name again |
+| Billing | Per request, at the dearest SKU the mask touches. Text Search: `id` alone is Essentials (IDs Only); `displayName`, `formattedAddress`, `location` and `googleMapsUri` are Pro fields; `nationalPhoneNumber` and `websiteUri` are Enterprise fields, so a first lookup is one Text Search Enterprise request, 35.00 USD per 1,000 in the first price tier. Place Details: `id` is Essentials (IDs Only), `formattedAddress` Essentials, `displayName` and `googleMapsUri` Pro, `nationalPhoneNumber` and `websiteUri` Enterprise, so a later lookup is one Place Details Enterprise request, 20.00 USD per 1,000. The first 1,000 requests of a month are free for each of the two |
+| Storage | No cache headers. Google's policy: Places API content must not be pre-fetched, cached or stored beyond the listed exceptions. The place id is exempt and may be kept indefinitely (Google recommends refreshing one that is older than 12 months; a Place Details request for the id alone is free). Name, address, phone, website and Maps link are not among the exceptions, so they are stored nowhere |
 
 Failure modes [M: Google's documented mapping, not observed without a key]: errors are JSON `{"error": {"code",
 "message", "status", "details"}}`. 403 `PERMISSION_DENIED` with the reason `SERVICE_DISABLED` while Places API (New) is
 not enabled for the key's project, 400 `INVALID_ARGUMENT` for a request Google cannot read (a missing field mask among
-them), 429 `RESOURCE_EXHAUSTED` for quota.
+them), 429 `RESOURCE_EXHAUSTED` for quota. For a request by id the place-id guide names the status `NOT_FOUND` for an
+id that is obsolete (the place closed or moved, or Google gave it another id) and `INVALID_REQUEST` for one that is not
+valid. The HTTP codes Places API (New) answers the two with were not on the pages read.
 
-Data rule: the result belongs to the owner's Scout lead (place id kept, other fields for 30 days at most) and is
-**never** written to `tp_places`. `tp_places.phone` and `website` hold OpenStreetMap values only. Looked-up Google
-fields are shown only on the Scout lead they belong to (with string 12 of section 14), never in the day sheet, the
-calendar file or any export, and are deleted when their 30 days end. Whether keeping name, address, phone, website and
-Maps link for those 30 days is covered by the account's agreement with Google is open: the policy page names the place
-id as the exception, the service specific terms the coordinates (`04_BACKEND.md` section 10, C21). The free
-"Open in Google Maps" link needs no call: `https://www.google.com/maps/search/?api=1&query=<lat>%2C<lng>`, and with a
-stored place id
+Data rule: of a lookup the owner's Scout lead keeps Google's id of the place, the outcome of the search and its time,
+and nothing else. The looked-up name, address, phone, website and Maps link are passed to the browser and are stored
+nowhere on the server: not on the lead, not in `tp_places` (whose `phone` and `website` hold OpenStreetMap values
+only), not in a cache, a log or an export. They are shown on the Scout card they were asked for (with string 12 of
+section 14) while the page is open, never in the day sheet or the calendar file, and the next look asks Google again.
+The free "Open in Google Maps" link needs no call: `https://www.google.com/maps/search/?api=1&query=<lat>%2C<lng>`, and
+with a stored place id
 `https://www.google.com/maps/search/?api=1&query=<name>&query_place_id=<place id>`.
 
 ## 14. Terms and the strings the UI must show
@@ -1960,8 +1969,9 @@ Exact strings (each is shown in a code span; `{...}` are placeholders, filled as
 11. Data page, traffic: `Time-of-day traffic factors: derived from the TomTom Traffic Index 2025.` TomTom's terms were
     not read. Until someone confirms the table may be used, ship `traffic.dc` and `traffic.us_mean` as all 1.0 with
     `traffic.dc_typical` and `traffic.us_mean_typical` 1.0 (02_MODEL.md 9.3 item 1). The line is then not shown.
-12. Next to any looked-up contact detail (13.4): `Phone and website from Google Maps` [M: confirm Google's wording and
-    logo rules for Places content shown without a map before release].
+12. Next to any looked-up contact detail (13.4): `Phone and website from Google Maps`. Google's policy asks for its
+    attribution beside Places content that is shown without a map: the Google Maps logo where there is room, the text
+    "Google Maps" where there is not [policy page, read 2026-10-05; M: the logo's style rules were not read].
 
 | Placeholder | Filled from |
 |---|---|
@@ -1994,8 +2004,9 @@ ODbL duties and how they are met:
    OpenStreetMap. Everything after `places.ndjson` works on place types.
 
 Census, LODES, TIGERweb, NWS and EIA data are US government works in the public domain. The Census API sentence about
-endorsement is not required because the bulk files are used. `h3-js` is Apache-2.0 (library, no data). Google content
-(route durations and distances, looked-up place details) is cached for at most 30 days. Google place ids may be kept.
+endorsement is not required because the bulk files are used. `h3-js` is Apache-2.0 (library, no data). Google route
+durations and distances are cached for at most 30 days. Looked-up place details are not stored at all (13.4). Google
+place ids may be kept.
 
 ## 15. Operator procedures
 

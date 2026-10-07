@@ -6,17 +6,17 @@ declare(strict_types=1);
  *
  *     php scripts/truck/purge-google-cache.php [--dry-run]
  *
- * What Truck Planner fetched from Google is kept for at most 30 days. Requests already remove what they
- * meet on their way; this script removes the rest, for every organization, also for an account that sends
- * no request any more:
+ * What Truck Planner fetched from Google and stored is kept for at most 30 days. Requests already remove
+ * what they meet on their way; this script removes the rest, for every organization, also for an account
+ * that sends no request any more:
  *
  *   drive_legs       cached drive legs older than 30 days are deleted
- *   lead_contacts    Scout leads whose contact lookup is older than 30 days lose the looked-up fields
- *                    (the Google place id may stay)
  *   plan_snapshots   stored plan results that were computed with Google legs more than 30 days ago are
  *                    emptied (the plan itself, its stops and notes, stays)
  *
  * The owner's own data is never touched: drive-time corrections, typed contact details and plans stay.
+ * Scout leads are not part of the sweep: of a contact lookup they keep Google's id of the place, which may
+ * be kept, and the looked-up contact details are never stored.
  * Running it again finds nothing to do. --dry-run counts what would be removed and changes nothing.
  *
  * It prints one line. A part whose package is not installed is "skipped". Exit codes: 0 success, 1 a
@@ -47,7 +47,7 @@ try {
 }
 
 $parts = [];
-foreach (['drive_legs', 'lead_contacts', 'plan_snapshots'] as $part) {
+foreach (['drive_legs', 'plan_snapshots'] as $part) {
     if (in_array($part, $result['failed'], true)) {
         $parts[] = $part . '=failed';
     } elseif ($result[$part] === null) {

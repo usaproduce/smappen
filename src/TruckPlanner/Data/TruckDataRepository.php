@@ -18,9 +18,10 @@ use App\TruckPlanner\Services\Support\TpConfig;
  * booleans for 0/1, decoded JSON, floats cast).
  *
  * What page() does not read is as much part of the contract as what it reads. No statement here selects
- * Google content: not the `g_*` contact columns of a lead, not the context of a plan (its drive legs), not
- * the stored vectors of a spot (they are derived data, recomputed from the region). The result of a plan is
- * read on its own, by planResult(), and only for the three figures of a summary.
+ * Google content: not the context of a plan (its drive legs), and not the stored vectors of a spot (they
+ * are derived data, recomputed from the region). The result of a plan is read on its own, by planResult(),
+ * and only for the three figures of a summary. A lead holds no Google content to begin with: of a contact
+ * lookup it keeps Google's id of the place, which may be kept and travels with the lead.
  *
  * Every statement on an owner table carries the organization id, with two exceptions that serve an
  * operator and return no row of any tenant: expiredGoogleCounts() (numbers only) and
@@ -221,8 +222,7 @@ class TruckDataRepository
      * How much Google content is past its lifetime right now, over every organization: what the daily
      * sweep would remove. Numbers only.
      *
-     * @return array{drive_legs: int, lead_contacts: int, plan_snapshots: int} cached legs older than
-     *         their lifetime, leads whose contact lookup (found or not) is older than its lifetime, and
+     * @return array{drive_legs: int, plan_snapshots: int} cached legs older than their lifetime, and
      *         plan results that used Google legs and are older than theirs
      */
     public function expiredGoogleCounts(): array
@@ -230,19 +230,15 @@ class TruckDataRepository
         $row = $this->db()->fetch(
             'SELECT (SELECT COUNT(*) FROM tp_drive_legs
                       WHERE fetched_at < NOW() - INTERVAL ? DAY) AS drive_legs,
-                    (SELECT COUNT(*) FROM tp_scout_leads
-                      WHERE g_fetched_at IS NOT NULL AND g_fetched_at < NOW() - INTERVAL ? DAY) AS lead_contacts,
                     (SELECT COUNT(*) FROM tp_plans
                       WHERE result_has_google = 1 AND evaluated_at < NOW() - INTERVAL ? DAY) AS plan_snapshots',
             [
                 (int) TpConfig::get('routing.leg_ttl_days'),
-                (int) TpConfig::get('places.contact_ttl_days'),
                 (int) TpConfig::get('plans.snapshot_ttl_days'),
             ]
         );
         return [
             'drive_legs' => (int) ($row['drive_legs'] ?? 0),
-            'lead_contacts' => (int) ($row['lead_contacts'] ?? 0),
             'plan_snapshots' => (int) ($row['plan_snapshots'] ?? 0),
         ];
     }

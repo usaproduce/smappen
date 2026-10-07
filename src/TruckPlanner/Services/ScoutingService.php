@@ -26,32 +26,41 @@ use App\TruckPlanner\Services\Support\TpRateLimited;
 use App\TruckPlanner\Services\Support\TpUnavailable;
 
 /**
- * Scout: the named places within reach of the truck's base that could host it, in rank order, and what the
- * owner keeps about each of them (04_BACKEND.md 4.15, 5.4, 5.9; the math is 02_MODEL.md 4.16).
+ * Scout: the named places within reach of the truck's base that could be asked to host it, the best few of
+ * every kind, and what the owner keeps about each of them (04_BACKEND.md 4.15, 5.4, 5.9; the math is
+ * 02_MODEL.md 4.16).
+ *
+ * The list is balanced by kind of place. One ranking over all places is a map of demand: around a job
+ * centre it is fifty office buildings. So every kind (the place types of the seed file that host at all:
+ * taprooms, markets, offices, apartment communities, venues, ...) gets its own short list, and a site that
+ * is mapped as several buildings is listed once.
  *
  * Ranking is a funnel of two deterministic stages, because the model's own function for one place costs a
  * few milliseconds and a region holds thousands of places:
  *
- *   1. Screen. Every possible host inside the reach of the drive limit and the licence counties is read
- *      with its stored location vector (Q6, a page at a time) and given one number by ScoutScreen: what its
- *      best three hours of a typical week might leave, weighed by how commonly that kind of place hosts
- *      trucks, less a straight-line estimate of the drive. The shortlist is the best of them whose
- *      estimated round trip is within the limit, then those estimated a little over it.
- *   2. Exact. The shortlist goes through Estimator::scoutEstimate a batch at a time, with the drive legs
- *      of the leg provider. A place whose round trip takes more than twice the limit is outside the limit.
- *      A further batch is looked at only while fewer places than the list holds have passed. The model
- *      ranks what passed.
+ *   1. Screen. Every possible host of the kinds asked for, inside the reach of the drive limit and the
+ *      licence counties, is read with its stored location vector (Q6, a page at a time) and given one
+ *      number by ScoutScreen: what its best three hours of a typical week might leave, weighed by how
+ *      commonly that kind of place hosts trucks, less a straight-line estimate of the drive. Each kind
+ *      keeps a pool of its best places whose estimated round trip is within the limit, then those
+ *      estimated a little over it, one entry for each site.
+ *   2. Exact. The pools go through Estimator::scoutEstimate a batch of each kind at a time, with the
+ *      drive legs of the leg provider. A place whose round trip takes more than twice the limit is outside
+ *      the limit. A further batch of a kind is looked at only while that kind is short of its quota. The
+ *      model ranks each kind; neighbours in its order that all fill the truck are then told apart by
+ *      demand (ScoutScreen::capacityOrder).
  *
  * Both stages are cached for a day, under keys made of everything they were computed from. What is added
  * afterwards is never cached: the place's display columns, the owner's lead, the map link, where the legs
  * came from.
  *
- * Places are OpenStreetMap rows. Phone and website come from OpenStreetMap unless the owner asks Google for
- * one place (lookupContact): that answer belongs to the lead, is served for 30 days and is never copied to
- * a spot or to the places table.
+ * Places are OpenStreetMap rows. Phone and website come from OpenStreetMap unless the owner asks Google
+ * for one place (lookupContact): that answer is passed to the browser and kept nowhere. The lead keeps
+ * Google's id of the place, which Google's terms let a customer store, and nothing else of the answer.
  *
  * Every figure is the model's range with its confidence label. Nothing here knows who owns a place or what
- * the local rules are, and nothing it returns says that a place would take the truck.
+ * the local rules are, and nothing it returns says that a place would take the truck: these are places
+ * that could be asked.
  *
  * `$truck` is the truck value of TruckBaseController::truck().
  */
@@ -65,13 +74,24 @@ class ScoutingService
     public const LOOKUP_BUSY = 'Too many lookups right now. Try again in a minute';
     public const ALREADY_SAVED = 'This place is already saved as a spot';
 
-    /** The standing line that travels with every ranked list. */
+    /** The standing line that travels with every list. */
     public const NOTICE = 'Permission to trade here and local rules are yours to check.';
 
-    // Strings 1 and 2 of 03_DATA.md section 14. String 9 (drive times) is the setting `routing.attribution`.
+    /** How a contact answer was obtained: a search by name, or a request by the stored place id. */
+    public const SOURCE_SEARCH = 'text_search';
+    public const SOURCE_DETAILS = 'place_details';
+
+    // Strings 1, 2 and 12 of 03_DATA.md section 14. String 9 (drive times) is the setting `routing.attribution`.
     private const ATTRIBUTION_PLACES = "\u{00A9} OpenStreetMap contributors";
     private const ATTRIBUTION_PLACES_SENTENCE = "Place data \u{00A9} OpenStreetMap contributors, available under the Open Database License (ODbL).";
+    private const ATTRIBUTION_CONTACT = 'Phone and website from Google Maps';
 
+    /**
+     * The version of the rules that build the list (the order inside a kind, the pools, one entry for a
+     * site). It is part of the cache keys: raise it when one of these rules changes, so that no list
+     * that was computed under the old rules is served from the cache.
+     */
+    private const LIST_RULES = 1;
 
     private const PLACE_KEY_FORM = '/^[A-Za-z0-9_.:-]{1,20}$/D';
     private const BASE_ID = 'base';
@@ -109,24 +129,29 @@ class ScoutingService
         $this->clock = $clock ?? new Clock();
     }
 
-    // ------------------------------------------------------------------------------------ the ranked list
+    // ------------------------------------------------------------------------------------ the list
 
     /**
-     * The ranked list of route 38.
+     * The list of route 38: the best few places of every kind, grouped by kind.
      *
      * @param array<string, mixed> $truck
      * @param array<string, mixed> $A the truck's Assumptions
      * @param array<int|string, mixed> $opts the query of the request: `hide` (a comma list of lead statuses
-     *        whose places leave the ranking; `hidden` when absent, none when empty) and `refresh` (1
-     *        computes both stages again)
-     * @return array<string, mixed> `candidates` (ScoutCandidate, in rank order), `screened`, `truncated`,
-     *         `limit_minutes`, `licence_counties`, `dataset_version`, `cached`, `notice`, `attribution`
+     *        whose places leave the list; `hidden` when absent, none when empty), `types` (a comma list of
+     *        place types: only these kinds are looked at, each in more depth) and `refresh` (1 computes
+     *        both stages again)
+     * @return array<string, mixed> `candidates` (ScoutCandidate, kind by kind in the order of `kinds`, inside
+     *         a kind by position), `kinds` (for each kind asked for: how many places were screened, listed
+     *         and merged), `quota`, `screened`, `truncated`, `limit_minutes`, `licence_counties`,
+     *         `dataset_version`, `cached`, `notice`, `attribution`
      * @throws TpConflict while the truck's region has no data, or data that does not fit this server
      */
     public function rank(string $orgId, array $truck, array $A, array $opts): array
     {
         $in = Input::query($opts);
         $hide = self::hideInput($in);
+        $hostable = self::kinds($A);
+        $types = self::typesInput($in, $hostable);
         $refresh = $in->bool('refresh') ?? false;
 
         $active = $this->regions->active(self::regionId($truck));
@@ -146,17 +171,20 @@ class ScoutingService
         $counties = self::counties($profile);
         $base = ['lat' => (float) $profile['base']['lat'], 'lng' => (float) $profile['base']['lng']];
 
-        // Google contact details are not kept past their 30 days, also for an owner who only reads.
-        $this->leads->purgeExpiredGoogle($orgId);
         $leads = $this->leads->forTruck($orgId, $truckId, $regionId);
         [$only, $keys] = self::statusFilter($leads, $hide);
+        $kinds = $types ?? $hostable;
+        $plan = self::plan($A, count($kinds), $types !== null, $only);
+        // A place the owner has a lead for is listed in its own right: it is never merged into another.
+        $touched = $plan['merge'] ? array_map('strval', array_keys($leads)) : [];
 
         $fuel = Registry::fuel()->resolve($truck);
         $fuelPrice = (float) $fuel['price_per_gal'];
         $cal = Registry::calibration()->state($orgId, $truck, $A, $this->clock->today(Clock::zoneOf($truck)));
 
-        // ---- stage 1: the screen, and the shortlist it leaves
+        // ---- stage 1: the screen, and the pool it leaves for every kind
         $shortHash = sha1(JsonSafe::canonical([
+            'rules' => self::LIST_RULES,
             'region' => $regionId,
             'dataset' => $version,
             'model' => (string) $A['model_version'],
@@ -167,8 +195,11 @@ class ScoutingService
             'base_key' => LegKey::of($base['lat'], $base['lng']),
             'limit' => $limit,
             'counties' => $counties,
+            'kinds' => $kinds,
+            'plan' => $plan,
             'only_listed' => $only,
             'keys' => $keys,
+            'touched' => $touched,
             'truck_factor' => (float) $cal['truck_factor'],
             'fuel_price' => $fuelPrice,
             'settings' => TpConfig::get('scout'),
@@ -178,81 +209,143 @@ class ScoutingService
         $short = $refresh ? null : TpCache::get($shortKey);
         $cached = self::isShortlist($short);
         if (!$cached) {
-            $short = $this->screen($A, $profile, $cal, $fuelPrice, $base, $regionId, $version, $limit, $counties, $only, $keys);
+            $short = $this->screen($A, $profile, $cal, $fuelPrice, $base, $regionId, $version, $limit, $counties, $only, $keys, $kinds, $plan, $touched);
             TpCache::put($shortKey, $short, $ttl);
         }
 
-        // ---- stage 2: the model on the shortlist, a batch at a time, with the legs of the leg provider
-        $maxResults = (int) Estimator::seed($A, 'scout.max_results');
-        $batches = array_chunk($short['places'], self::batchSize($A));
+        // ---- stage 2: the model on the pools, a batch of each kind at a time, with the legs of the leg provider
         // What a range and its label take from the owner's logged services.
         $evidence = Estimator::evidenceFrom($cal, null);
-        $results = [];
+        $quota = $plan['quota'];
+        $passed = [];
         $legSources = [];
-        $cached = $cached && $batches !== [];
-        foreach ($batches as $n => $batch) {
+        $rounds = 0;
+        for ($round = 0; $round < $plan['batches']; $round++) {
+            // Only the kinds that are still short of their quota are asked about again.
+            $batch = [];
+            foreach ($kinds as $kind) {
+                if (count($passed[$kind] ?? []) >= $quota) {
+                    continue;
+                }
+                foreach (array_slice($short['pools'][$kind] ?? [], $round * $plan['batch'], $plan['batch']) as $entry) {
+                    $batch[] = $entry;
+                }
+            }
+            if ($batch === []) {
+                break;
+            }
+            $rounds++;
             [$legInputs, $sources] = $this->legs($orgId, $truck, $base, $batch);
             $legSources += $sources;
             $batchKey = 'tp:scout:r:' . $orgId . ':'
-                . sha1($shortHash . ':' . $n . ':' . JsonSafe::canonical(['legs' => $legInputs, 'evidence' => $evidence]));
+                . sha1($shortHash . ':' . $round . ':' . JsonSafe::canonical(['legs' => $legInputs, 'evidence' => $evidence]));
             $stored = $refresh ? null : TpCache::get($batchKey);
             if (is_array($stored) && is_array($stored['results'] ?? null) && array_is_list($stored['results'])) {
-                $passed = $stored['results'];
+                $results = $stored['results'];
             } else {
                 $cached = false;
-                $passed = [];
+                $results = [];
                 foreach ($batch as $entry) {
                     $key = (string) $entry['key'];
                     $legs = array_intersect_key($legInputs, [self::BASE_ID . '>' . $key => true, $key . '>' . self::BASE_ID => true]);
                     $result = Estimator::scoutEstimate($A, $profile, self::placeInput($entry, $regionId, $version), $legs, $cal, $fuelPrice);
                     // "Inside the drive limit" is decided here, on the legs a plan would drive.
                     if ($result !== null && (int) $result['round_trip']['minutes'] <= 2 * $limit) {
-                        $passed[] = $result;
+                        $results[] = $result;
                     }
                 }
-                TpCache::put($batchKey, ['results' => $passed], $ttl);
+                TpCache::put($batchKey, ['results' => $results], $ttl);
             }
-            foreach ($passed as $result) {
-                $results[] = $result;
-            }
-            if (count($results) >= $maxResults) {
-                break;
+            foreach ($results as $result) {
+                $passed[(string) $result['place_type']][] = $result;
             }
         }
-        $ranked = Estimator::scoutRank($results);
+        $cached = $cached && $rounds > 0;
+
+        // ---- the list of every kind: the model's order, neighbours at capacity by demand, the quota
+        $entries = [];
+        foreach ($short['pools'] as $pool) {
+            foreach ($pool as $entry) {
+                $entries[(string) $entry['key']] = $entry;
+            }
+        }
+        $capacityKey = ScoutScreen::capacityKey($A, $profile);
+        $lists = [];
+        $full = [];
+        foreach ($kinds as $kind) {
+            $byKey = [];
+            $order = [];
+            $atCapacity = [];
+            $demand = [];
+            foreach (Estimator::scoutRank($passed[$kind] ?? []) as $result) {
+                $key = (string) $result['place_id'];
+                $byKey[$key] = $result;
+                $order[] = $key;
+                if ($capacityKey > 0 && Estimator::qkey((float) $result['orders']['value']) >= $capacityKey) {
+                    $atCapacity[$key] = true;
+                    $demand[$key] = (float) ($entries[$key]['demand'] ?? 0.0);
+                }
+            }
+            $list = [];
+            foreach (array_slice(ScoutScreen::capacityOrder($order, $atCapacity, $demand), 0, $quota) as $n => $key) {
+                $result = $byKey[(string) $key];
+                $result['position'] = $n + 1;
+                $list[] = $result;
+                $full[(string) $key] = isset($atCapacity[$key]);
+            }
+            $lists[$kind] = $list;
+        }
+        $lists = self::capped($lists, (int) TpConfig::get('scout.max_listed'));
 
         // ---- what is never cached: the place as it is listed, the owner's lead, the links
-        $rankedKeys = [];
-        foreach ($ranked as $result) {
-            $rankedKeys[] = (string) $result['place_id'];
+        $listedKeys = [];
+        foreach ($lists as $list) {
+            foreach ($list as $result) {
+                $listedKeys[] = (string) $result['place_id'];
+            }
         }
-        $display = $rankedKeys === [] ? [] : $this->places->byKeys($regionId, $version, $rankedKeys);
-        $entries = [];
-        foreach ($short['places'] as $entry) {
-            $entries[(string) $entry['key']] = $entry;
-        }
-        $shownLeads = array_intersect_key($leads, array_flip($rankedKeys));
+        $display = $listedKeys === [] ? [] : $this->places->byKeys($regionId, $version, $listedKeys);
+        $shownLeads = array_intersect_key($leads, array_flip($listedKeys));
         $liveSpots = $this->liveSpots($orgId, $shownLeads);
 
         $candidates = [];
-        foreach ($ranked as $result) {
-            $key = (string) $result['place_id'];
-            $place = self::placeOf($key, $display[$key] ?? null, $entries[$key] ?? []);
-            $lead = $leads[$key] ?? null;
-            $candidates[] = [
-                'result' => $result,
-                'place' => $place,
-                'lead' => self::lead($lead, $key, $liveSpots),
-                'maps_url' => self::mapsUrl($place, $lead),
-                'leg_sources' => [
-                    'out' => $legSources[$key]['out'] ?? 'straight_line',
-                    'back' => $legSources[$key]['back'] ?? 'straight_line',
-                ],
+        $summary = [];
+        foreach ($kinds as $kind) {
+            $merged = 0;
+            foreach ($lists[$kind] as $result) {
+                $key = (string) $result['place_id'];
+                $entry = $entries[$key] ?? [];
+                $place = self::placeOf($key, $display[$key] ?? null, $entry);
+                $lead = $leads[$key] ?? null;
+                $merged += (int) ($entry['merged'] ?? 0);
+                $candidates[] = [
+                    'kind' => $kind,
+                    'result' => $result,
+                    'place' => $place,
+                    'lead' => self::lead($lead, $key, $liveSpots),
+                    'maps_url' => self::mapsUrl($place, $lead),
+                    'leg_sources' => [
+                        'out' => $legSources[$key]['out'] ?? 'straight_line',
+                        'back' => $legSources[$key]['back'] ?? 'straight_line',
+                    ],
+                    'at_capacity' => $full[$key] ?? false,
+                    // The key that orders neighbours at capacity. It ranks; it is not an estimate.
+                    'demand_key' => ($full[$key] ?? false) ? (float) ($entry['demand'] ?? 0.0) : null,
+                    'merged' => (int) ($entry['merged'] ?? 0),
+                ];
+            }
+            $summary[] = [
+                'kind' => $kind,
+                'screened' => (int) ($short['kinds'][$kind] ?? 0),
+                'listed' => count($lists[$kind]),
+                'merged' => $merged,
             ];
         }
 
         return [
             'candidates' => $candidates,
+            'kinds' => $summary,
+            'quota' => $quota,
             'screened' => (int) $short['screened'],
             'truncated' => (bool) $short['truncated'],
             'limit_minutes' => $limit,
@@ -266,6 +359,26 @@ class ScoutingService
                 (string) TpConfig::get('routing.attribution'),
             ],
         ];
+    }
+
+    /**
+     * The kinds of place Scout lists: the place types of the seed file that host at all, those that host
+     * most commonly first (the seed's `host_fit`), equal ones in the order of the seed vocabulary.
+     *
+     * @param array<string, mixed> $A
+     * @return list<string> place types
+     */
+    public static function kinds(array $A): array
+    {
+        $rows = [];
+        foreach (array_values(Estimator::seed($A, 'vocabulary.place_types')) as $n => $type) {
+            $fit = (float) Estimator::seed($A, 'place_types.rows.' . $type)['host_fit'];
+            if ($fit > 0.0) {
+                $rows[] = [Estimator::qkey($fit), $n, (string) $type];
+            }
+        }
+        usort($rows, static fn (array $a, array $b): int => ($b[0] <=> $a[0]) ?: ($a[1] <=> $b[1]));
+        return array_column($rows, 2);
     }
 
     // ------------------------------------------------------------------------------------ leads
@@ -299,13 +412,20 @@ class ScoutingService
     /**
      * Phone and website of one place from Google, when the owner asks (route 40).
      *
-     * A lookup that is younger than 30 days is answered from the lead (`lookup: "cached"`), a found one and
-     * a not-found one alike; `$force` asks again once it is older than a day. Otherwise Google is asked
-     * once. Its match is kept on the lead only when it lies at the place; anything else is stored as
-     * `not_found`, so the owner is never shown the details of another place.
+     * Google is asked on every call and its answer goes to the browser: nothing of it is written to a
+     * column, a cache entry or a log line. What stays on the lead is Google's id of the place, whether
+     * the search found the place, and when.
+     *
+     * The first lookup of a place searches for it by name. The match is taken only when it lies at the
+     * place; anything else is answered as not found, so the owner is never shown the details of another
+     * place. A later lookup asks for the place by the id that was kept and writes nothing at all. `$force`
+     * searches by name again although an id is kept (for a match that turned out to be another place), and
+     * so does a lookup whose id Google no longer knows.
      *
      * @param array<string, mixed> $truck
-     * @return array{lead: array<string, mixed>, lookup: string} `lookup` is "found", "not_found" or "cached"
+     * @return array{lead: array<string, mixed>, contact: array<string, mixed>} `contact` is the answer as
+     *         it is passed on: `found`, the matched `name` and `address`, `phone`, `website`, `maps_uri`,
+     *         `fetched_at`, `source`, `saved` (always false) and `attribution`
      * @throws TpNotFound for a key that is not a possible host of the truck's region
      * @throws TpUnavailable when this server has no Google key, or Google refused or failed lately
      * @throws TpRateLimited when the shared bucket of lookups is empty
@@ -314,41 +434,32 @@ class ScoutingService
     {
         [$regionId, , $place] = $this->place($truck, $placeKey);
         $truckId = (string) $truck['id'];
-
         $lead = $this->leads->find($orgId, $truckId, $regionId, $placeKey);
-        if ($lead !== null && is_array($lead['google'])) {
-            $mayAskAgain = $force && (int) $lead['google']['age_hours'] >= (int) TpConfig::get('places.force_min_age_hours');
-            if (!$mayAskAgain) {
-                return ['lead' => self::lead($lead, $placeKey, $this->liveSpots($orgId, [$lead])), 'lookup' => 'cached'];
+        $client = $this->contacts ??= new PlacesContactClient();
+
+        $placeId = $lead['google_place_id'] ?? null;
+        if ($lead !== null && is_string($placeId) && $placeId !== '' && !$force) {
+            $this->admit();
+            $answer = $this->settled($client->details($placeId));
+            if (is_array($answer['place'])) {
+                // Nothing is written: the lead keeps the id it has.
+                return [
+                    'lead' => self::lead($lead, $placeKey, $this->liveSpots($orgId, [$lead])),
+                    'contact' => $this->contact($answer['place'], self::SOURCE_DETAILS),
+                ];
             }
+            // Google no longer knows the id: the place is searched for by name again.
         }
 
-        $guard = $this->guard ??= new UpstreamGuard($this->clock);
-        if (!$guard->hasGoogleKey() || $guard->refused('places') || $guard->inBackoff('places')) {
-            throw new TpUnavailable(self::LOOKUP_UNAVAILABLE);
-        }
-        if (!$guard->takeTokens((string) TpConfig::get('places.bucket'), 1, (int) TpConfig::get('places.bucket_wait_s'))) {
-            throw new TpRateLimited(self::LOOKUP_BUSY);
-        }
-
-        $answer = ($this->contacts ??= new PlacesContactClient())->find((string) ($place['name'] ?? ''), (float) $place['lat'], (float) $place['lng']);
-        if (!$answer['ok']) {
-            if ($answer['error'] === PlacesContactClient::ERROR_REFUSED) {
-                $guard->markRefused('places');
-            } elseif ($answer['error'] !== PlacesContactClient::ERROR_NO_KEY) {
-                $reason = $answer['error'] === PlacesContactClient::ERROR_QUOTA ? 'quota' : 'upstream';
-                $guard->backoff('places', (int) TpConfig::get('places.backoff_s'), $reason);
-            }
-            throw new TpUnavailable(self::LOOKUP_UNAVAILABLE);
-        }
-
-        $found = is_array($answer['place']);
+        $this->admit();
+        $answer = $this->settled($client->find((string) ($place['name'] ?? ''), (float) $place['lat'], (float) $place['lng']));
+        $match = is_array($answer['place']) ? $answer['place'] : null;
         $leadId = $this->leads->upsert($orgId, $truckId, $regionId, $placeKey, self::snapshot($place));
-        // A lookup that matched nothing leaves the place id of an earlier match as it is.
-        $this->leads->setGoogle($leadId, $orgId, $found ? ['lookup_state' => 'found'] + $answer['place'] : ['lookup_state' => 'not_found']);
+        // Of the answer the lead takes the id of the place and nothing else.
+        $this->leads->setMatch($leadId, $orgId, $match !== null, $match['place_id'] ?? null);
         return [
             'lead' => $this->leadOfPlace($orgId, $truckId, $regionId, $placeKey),
-            'lookup' => $found ? 'found' : 'not_found',
+            'contact' => $this->contact($match, self::SOURCE_SEARCH),
         ];
     }
 
@@ -357,9 +468,8 @@ class ScoutingService
      * (route 41). The host is the one the place's type describes; the owner may give its size, whether the
      * truck is the only food there, the visibility and another name. A new lead becomes `shortlisted`.
      *
-     * The spot takes its name, address, phone and website from the OpenStreetMap columns. Of what Google
-     * said only the place id travels (as the last argument of SpotService::create): looked-up phone,
-     * website and address stay on the lead.
+     * The spot takes its name, address, phone and website from the OpenStreetMap columns. Of Google only
+     * the place id that the lead keeps travels (as the last argument of SpotService::create).
      *
      * @param array<string, mixed> $truck
      * @param array<int|string, mixed> $body optional `name`, `visibility`, `host_size`, `only_food`
@@ -430,7 +540,48 @@ class ScoutingService
     // ------------------------------------------------------------------------------------ stage 1
 
     /**
-     * Reads the possible hosts within reach, screens them and keeps the best for the model.
+     * How long the list of one request is: the quota of a kind, and what the two stages take to fill it.
+     *
+     * The quota is `scout.kind_quota` places of every kind, `scout.kind_quota_deep` when the request names
+     * its kinds, and in both cases no more than an even share of `scout.max_listed`. When only the owner's
+     * own places are listed (`new` is hidden) there is no balance to keep: every kind may fill the list.
+     * The model ranks at most `scout.max_results` places at a time (a fixed seed), so no quota and no pool
+     * is longer than that.
+     *
+     * @param array<string, mixed> $A
+     * @param int $kinds how many kinds the request asks for
+     * @param bool $deep the request names its kinds
+     * @param bool $own only places the owner has a lead for are listed
+     * @return array{quota: int, batch: int, batches: int, pool: int, scan: int, merge: bool} `batch` places
+     *         of a kind go through the model at a time, at most `batches` times; `pool` is the most places
+     *         of a kind the screen keeps for that; `scan` the most places of a kind that are looked at to
+     *         find them; `merge` says whether a site is listed once
+     */
+    private static function plan(array $A, int $kinds, bool $deep, bool $own): array
+    {
+        $most = max(1, (int) Estimator::seed($A, 'scout.max_results'));
+        $maxListed = max(1, (int) TpConfig::get('scout.max_listed'));
+        if ($own) {
+            $quota = min($most, $maxListed);
+        } else {
+            $share = (int) ceil($maxListed / max(1, $kinds));
+            $quota = max(1, min((int) TpConfig::get($deep ? 'scout.kind_quota_deep' : 'scout.kind_quota'), $most, $share));
+        }
+        $batch = $quota + max(0, (int) TpConfig::get('scout.shortlist_extra'));
+        $batches = max(1, (int) TpConfig::get('scout.max_batches'));
+        $pool = min($most, $batch * $batches);
+        return [
+            'quota' => $quota,
+            'batch' => $batch,
+            'batches' => $batches,
+            'pool' => $pool,
+            'scan' => $own ? $pool : $pool * max(1, (int) TpConfig::get('scout.site_scan')),
+            'merge' => !$own,
+        ];
+    }
+
+    /**
+     * Reads the possible hosts within reach, screens them and keeps a pool of every kind for the model.
      *
      * @param array<string, mixed> $A
      * @param array<string, mixed> $profile
@@ -439,10 +590,14 @@ class ScoutingService
      * @param list<string> $counties
      * @param bool $only true: `$keys` are the only places to look at; false: `$keys` are left out
      * @param list<string> $keys
-     * @return array{screened: int, truncated: bool, places: list<array<string, mixed>>} the shortlist in the
-     *         order stage 2 takes it (ScoutScreen::shortlist), at most `scout.max_batches` batches long: each place
-     *         with what stage 2 needs (`key`, `type`, `lat`, `lng`, `county`, `kitchen`, `segment`, `size`
-     *         and `vec`, the hexadecimal text of its stored vector)
+     * @param list<string> $kinds the place types to look at
+     * @param array<string, mixed> $plan what plan() answered
+     * @param list<string> $touched the keys of the places that are never merged into another
+     * @return array{screened: int, truncated: bool, kinds: array<string, int>, pools: array<string, list<array<string, mixed>>>}
+     *         `kinds`: how many places of each kind were screened. `pools`: for each kind its places in the
+     *         order stage 2 takes them, each with what stage 2 needs (`key`, `type`, `lat`, `lng`, `county`,
+     *         `kitchen`, `segment`, `size` and `vec`, the hexadecimal text of its stored vector), its
+     *         `demand` and how many places of the same site were `merged` into it
      */
     private function screen(
         array $A,
@@ -455,14 +610,17 @@ class ScoutingService
         int $limit,
         array $counties,
         bool $only,
-        array $keys
+        array $keys,
+        array $kinds,
+        array $plan,
+        array $touched
     ): array {
         $slack = (float) TpConfig::get('scout.reach_slack');
         $timeFactor = (float) $profile['truck_time_factor'];
         $reachMinutes = $slack * $limit;
         $box = PointRepository::box($base['lat'], $base['lng'], self::reachMetres($A, $reachMinutes / $timeFactor));
         $listed = array_flip($keys);
-        $hostTypes = self::hostTypes($A);
+        $asked = array_flip($kinds);
 
         $rows = [];
         $pageRows = PlaceRepository::pageRows();
@@ -475,7 +633,8 @@ class ScoutingService
                 if (isset($listed[$key]) !== $only) {
                     continue;
                 }
-                if (!isset($hostTypes[$row[PlaceRepository::VEC_TYPE]])
+                // The kinds are chosen before anything is screened.
+                if (!isset($asked[$row[PlaceRepository::VEC_TYPE]])
                     || strlen((string) $row[PlaceRepository::VEC_BYTES]) !== VectorCodec::BLOCK_BYTES) {
                     continue;
                 }
@@ -522,69 +681,116 @@ class ScoutingService
         }
 
         $scores = ScoutScreen::scores($A, $profile, $cal, $fuelPrice, $base, $rows);
-        // `scout.max_batches`: how many batches of the shortlist the model may be asked about in one request.
-        // A batch is the length of the list plus `scout.shortlist_extra` places, two drive legs for each.
-        $picked = ScoutScreen::shortlist($A, $profile, $base, $rows, $scores, $limit, $slack, self::batchSize($A) * (int) TpConfig::get('scout.max_batches'));
+        $orders = ScoutScreen::kindOrders($rows, $scores, ScoutScreen::capacityKey($A, $profile));
+        $reachable = ScoutScreen::reachable($A, $profile, $base, $rows, $scores, $orders, $limit, $slack, $plan['scan']);
 
-        $places = [];
-        foreach ($picked as $i) {
-            $row = $rows[$i];
-            $places[] = [
-                'key' => (string) $row[PlaceRepository::VEC_KEY],
-                'type' => (string) $row[PlaceRepository::VEC_TYPE],
-                'lat' => (float) $row[PlaceRepository::VEC_LAT],
-                'lng' => (float) $row[PlaceRepository::VEC_LNG],
-                'county' => $row[PlaceRepository::VEC_COUNTY],
-                'kitchen' => (string) $row[PlaceRepository::VEC_KITCHEN],
-                'segment' => $row[PlaceRepository::VEC_SEGMENT],
-                'size' => (float) $row[PlaceRepository::VEC_SIZE],
-                'vec' => bin2hex((string) $row[PlaceRepository::VEC_BYTES]),
-            ];
+        // Of each kind: the places inside the limit, and places near it only as far as the pool has room.
+        $walks = [];
+        $named = [];
+        foreach ($kinds as $kind) {
+            $taken = $reachable[$kind] ?? [];
+            $inside = 0;
+            foreach ($taken as [, $isInside]) {
+                $inside += $isInside ? 1 : 0;
+            }
+            $room = max(0, $plan['pool'] - $inside) * ($plan['merge'] ? max(1, (int) TpConfig::get('scout.site_scan')) : 1);
+            $walk = [];
+            foreach ($taken as [$i, $isInside]) {
+                if (!$isInside && $room-- <= 0) {
+                    continue;
+                }
+                $walk[] = [$i, $isInside];
+                $named[] = (string) $rows[$i][PlaceRepository::VEC_KEY];
+            }
+            $walks[$kind] = $walk;
         }
-        return ['screened' => count($rows), 'truncated' => $truncated, 'places' => $places];
-    }
 
-    /**
-     * The places stage 2 looks at in one go: the length of the ranked list (seed `scout.max_results`) plus
-     * `scout.shortlist_extra`, so that real legs can move a place up or down a few ranks without loss.
-     *
-     * @param array<string, mixed> $A
-     */
-    private static function batchSize(array $A): int
-    {
-        return max(1, (int) Estimator::seed($A, 'scout.max_results') + (int) TpConfig::get('scout.shortlist_extra'));
+        // A site that is mapped as several places is one entry: the names say which places are one site.
+        $names = $plan['merge'] && $named !== [] ? $this->places->byKeys($regionId, $version, $named) : [];
+        $exempt = array_flip($touched);
+        $radius = (float) TpConfig::get('scout.same_site_m');
+        $screened = [];
+        $pools = [];
+        foreach ($kinds as $kind) {
+            $screened[$kind] = count($orders[$kind] ?? []);
+            $walk = $walks[$kind];
+            $sites = [];
+            foreach ($walk as [$i]) {
+                $key = (string) $rows[$i][PlaceRepository::VEC_KEY];
+                $sites[] = [
+                    'site' => ScoutScreen::siteName((string) ($names[$key]['name'] ?? '')),
+                    'lat' => (float) $rows[$i][PlaceRepository::VEC_LAT],
+                    'lng' => (float) $rows[$i][PlaceRepository::VEC_LNG],
+                    'exempt' => isset($exempt[$key]),
+                ];
+            }
+            $kept = ScoutScreen::sameSites($sites, $radius);
+            // The places inside the limit lead the pool; those near it follow while there is room.
+            $pool = [];
+            foreach ([true, false] as $wanted) {
+                foreach ($kept as [$n, $merged]) {
+                    if (count($pool) >= $plan['pool']) {
+                        break 2;
+                    }
+                    [$i, $isInside] = $walk[$n];
+                    if ($isInside !== $wanted) {
+                        continue;
+                    }
+                    $row = $rows[$i];
+                    $pool[] = [
+                        'key' => (string) $row[PlaceRepository::VEC_KEY],
+                        'type' => (string) $row[PlaceRepository::VEC_TYPE],
+                        'lat' => (float) $row[PlaceRepository::VEC_LAT],
+                        'lng' => (float) $row[PlaceRepository::VEC_LNG],
+                        'county' => $row[PlaceRepository::VEC_COUNTY],
+                        'kitchen' => (string) $row[PlaceRepository::VEC_KITCHEN],
+                        'segment' => $row[PlaceRepository::VEC_SEGMENT],
+                        'size' => (float) $row[PlaceRepository::VEC_SIZE],
+                        'vec' => bin2hex((string) $row[PlaceRepository::VEC_BYTES]),
+                        'demand' => (float) $scores['demand'][$i],
+                        'merged' => count($merged),
+                    ];
+                }
+            }
+            $pools[$kind] = $pool;
+        }
+        return ['screened' => count($rows), 'truncated' => $truncated, 'kinds' => $screened, 'pools' => $pools];
     }
 
     /**
      * The drive legs of a batch, there and back for each place, from the leg provider. Tolls are not asked
-     * for: a scouting round trip is compared on time, miles and fuel.
+     * for: a scouting round trip is compared on time, miles and fuel. A batch that would ask for more
+     * elements than one call may fetch is asked for in several calls.
      *
      * @param array<string, mixed> $truck
      * @param array{lat: float, lng: float} $base
-     * @param list<array<string, mixed>> $batch places of the shortlist
+     * @param list<array<string, mixed>> $batch places of the pools
      * @return array{0: array<string, array<string, mixed>>, 1: array<string, array{out?: string, back?: string}>}
      *         [LegInput by "base><key>" and "<key>>base", the DriveLeg source of each leg by place key]
      */
     private function legs(string $orgId, array $truck, array $base, array $batch): array
     {
-        $points = [['id' => self::BASE_ID, 'lat' => $base['lat'], 'lng' => $base['lng']]];
-        $pairs = [];
-        foreach ($batch as $entry) {
-            $key = (string) $entry['key'];
-            $points[] = ['id' => $key, 'lat' => (float) $entry['lat'], 'lng' => (float) $entry['lng']];
-            $pairs[] = [self::BASE_ID, $key];
-            $pairs[] = [$key, self::BASE_ID];
-        }
+        $perCall = (int) TpConfig::get('routing.max_elements_per_call');
         $inputs = [];
         $sources = [];
-        foreach (Registry::legs()->legs($orgId, $truck, $points, $pairs, ['tolls' => false]) as $leg) {
-            $from = (string) $leg['from_id'];
-            $to = (string) $leg['to_id'];
-            $inputs[$from . '>' . $to] = $leg['leg_input'];
-            if ($from === self::BASE_ID) {
-                $sources[$to]['out'] = (string) $leg['source'];
-            } else {
-                $sources[$from]['back'] = (string) $leg['source'];
+        foreach (array_chunk($batch, max(1, (int) (($perCall - $perCall % 2) / 2))) as $part) {
+            $points = [['id' => self::BASE_ID, 'lat' => $base['lat'], 'lng' => $base['lng']]];
+            $pairs = [];
+            foreach ($part as $entry) {
+                $key = (string) $entry['key'];
+                $points[] = ['id' => $key, 'lat' => (float) $entry['lat'], 'lng' => (float) $entry['lng']];
+                $pairs[] = [self::BASE_ID, $key];
+                $pairs[] = [$key, self::BASE_ID];
+            }
+            foreach (Registry::legs()->legs($orgId, $truck, $points, $pairs, ['tolls' => false]) as $leg) {
+                $from = (string) $leg['from_id'];
+                $to = (string) $leg['to_id'];
+                $inputs[$from . '>' . $to] = $leg['leg_input'];
+                if ($from === self::BASE_ID) {
+                    $sources[$to]['out'] = (string) $leg['source'];
+                } else {
+                    $sources[$from]['back'] = (string) $leg['source'];
+                }
             }
         }
         return [$inputs, $sources];
@@ -609,38 +815,21 @@ class ScoutingService
     }
 
     /**
-     * The place types the model scores: those of the seed file with a host fit above zero.
-     *
-     * @param array<string, mixed> $A
-     * @return array<string, true>
-     */
-    private static function hostTypes(array $A): array
-    {
-        $types = [];
-        foreach (Estimator::seed($A, 'vocabulary.place_types') as $type) {
-            if ((float) Estimator::seed($A, 'place_types.rows.' . $type)['host_fit'] > 0.0) {
-                $types[(string) $type] = true;
-            }
-        }
-        return $types;
-    }
-
-    /**
      * @param array<int|string, mixed>|null $value what the cache holds
      */
     private static function isShortlist(?array $value): bool
     {
         return $value !== null && is_int($value['screened'] ?? null) && is_bool($value['truncated'] ?? null)
-            && is_array($value['places'] ?? null) && array_is_list($value['places']);
+            && is_array($value['kinds'] ?? null) && is_array($value['pools'] ?? null);
     }
 
     // ------------------------------------------------------------------------------------ stage 2
 
     /**
-     * The PlaceInput of the model for a shortlisted place. Its vectors are the stored ones: computed by the
+     * The PlaceInput of the model for a place of a pool. Its vectors are the stored ones: computed by the
      * region loader at the place's point, visibility normal, the place's own source point left out.
      *
-     * @param array<string, mixed> $entry a place of the shortlist
+     * @param array<string, mixed> $entry a place of a pool
      * @return array<string, mixed>
      */
     private static function placeInput(array $entry, string $regionId, string $version): array
@@ -648,7 +837,7 @@ class ScoutingService
         $key = (string) $entry['key'];
         $bytes = hex2bin((string) $entry['vec']);
         if ($bytes === false || strlen($bytes) !== VectorCodec::BLOCK_BYTES) {
-            throw new \UnexpectedValueException('a shortlisted place has no usable vector');
+            throw new \UnexpectedValueException('a place of a pool has no usable vector');
         }
         $pointId = ($entry['segment'] ?? null) === null ? null : 'p' . $key;
         $vectors = VectorCodec::fromFlat(VectorCodec::fromBytes($bytes)) + [
@@ -673,13 +862,51 @@ class ScoutingService
         ];
     }
 
+    /**
+     * The overall cap. When the lists of the kinds hold more places than one answer may, places are taken
+     * a round at a time (the first of every kind, then the second of every kind, and so on, kinds in their
+     * order) until the answer is full, so that no kind loses its best places to another.
+     *
+     * @param array<string, list<array<string, mixed>>> $lists the list of every kind
+     * @return array<string, list<array<string, mixed>>>
+     */
+    private static function capped(array $lists, int $max): array
+    {
+        $total = 0;
+        foreach ($lists as $list) {
+            $total += count($list);
+        }
+        if ($total <= $max) {
+            return $lists;
+        }
+        $keep = [];
+        $left = max(0, $max);
+        for ($depth = 0; $left > 0; $depth++) {
+            $any = false;
+            foreach ($lists as $kind => $list) {
+                if ($left > 0 && isset($list[$depth])) {
+                    $keep[$kind] = $depth + 1;
+                    $left--;
+                    $any = true;
+                }
+            }
+            if (!$any) {
+                break;
+            }
+        }
+        foreach ($lists as $kind => $list) {
+            $lists[$kind] = array_slice($list, 0, $keep[$kind] ?? 0);
+        }
+        return $lists;
+    }
+
     // ------------------------------------------------------------------------------------ shapes
 
     /**
      * The `place` of a ScoutCandidate: the OpenStreetMap columns the list shows.
      *
      * @param array<string, mixed>|null $display the Q7 row of the place
-     * @param array<string, mixed> $entry its shortlist entry, used where the Q7 row is missing
+     * @param array<string, mixed> $entry its pool entry, used where the Q7 row is missing
      * @return array<string, mixed>
      */
     private static function placeOf(string $key, ?array $display, array $entry): array
@@ -716,6 +943,10 @@ class ScoutingService
      * `spot_id` is the spot that was saved from the lead while that spot is live: once it is archived the
      * lead reads as not saved, and the place can be saved again.
      *
+     * `google` is what a contact lookup left on the lead, and null before any lookup: Google's id of the
+     * place, whether the search by name found it, when, and a link that opens the place in Google Maps.
+     * The link is built here from the id; it is not something Google answered.
+     *
      * @param array<string, mixed>|null $row a read row of ScoutLeadRepository
      * @param array<string, true> $liveSpots the ids of the spots that are not archived
      * @return array<string, mixed>
@@ -726,16 +957,16 @@ class ScoutingService
             return ['id' => null, 'place_key' => $placeKey, 'status' => 'new', 'notes' => null, 'spot_id' => null, 'google' => null];
         }
         $google = null;
-        if (is_array($row['google'])) {
+        if ($row['lookup_state'] !== null) {
+            $placeId = $row['google_place_id'];
+            $name = $row['place_name'];
             $google = [
-                'place_id' => $row['google_place_id'],
-                'lookup_state' => (string) $row['google']['lookup_state'],
-                'name' => $row['google']['name'],
-                'address' => $row['google']['address'],
-                'phone' => $row['google']['phone'],
-                'website' => $row['google']['website'],
-                'maps_uri' => $row['google']['maps_uri'],
-                'fetched_on' => (string) $row['google']['fetched_on'],
+                'place_id' => $placeId,
+                'lookup_state' => (string) $row['lookup_state'],
+                'matched_at' => $row['matched_at'],
+                'maps_url' => is_string($placeId) && $placeId !== '' && is_string($name) && $name !== ''
+                    ? MapsUrl::place($name, $placeId)
+                    : null,
             ];
         }
         $spotId = $row['spot_id'];
@@ -801,6 +1032,30 @@ class ScoutingService
     }
 
     /**
+     * What Google answered about a place, as the browser is told it: found or not, what was matched, when,
+     * and that it is not saved. This is the only place the texts of an answer go.
+     *
+     * @param array<string, ?string>|null $place the place of PlacesContactClient, null when none was matched
+     * @param string $source SOURCE_SEARCH or SOURCE_DETAILS
+     * @return array<string, mixed>
+     */
+    private function contact(?array $place, string $source): array
+    {
+        return [
+            'found' => $place !== null,
+            'name' => $place['name'] ?? null,
+            'address' => $place['address'] ?? null,
+            'phone' => $place['phone'] ?? null,
+            'website' => $place['website'] ?? null,
+            'maps_uri' => $place['maps_uri'] ?? null,
+            'fetched_at' => $this->clock->nowUtc()->format('Y-m-d\TH:i:s\Z'),
+            'source' => $source,
+            'saved' => false,
+            'attribution' => self::ATTRIBUTION_CONTACT,
+        ];
+    }
+
+    /**
      * The snapshot of a place that a lead keeps, so that it outlives a switch of the dataset.
      *
      * @param array<string, mixed> $place a Q7 row
@@ -838,6 +1093,48 @@ class ScoutingService
         return mb_substr(implode(', ', $parts), 0, self::MAX_ADDRESS, 'UTF-8');
     }
 
+    // ------------------------------------------------------------------------------------ Google
+
+    /**
+     * May Google be asked now? One token of the shared bucket is taken for the call that follows.
+     *
+     * @throws TpUnavailable without a key, and while Google refuses the key or a back-off runs
+     * @throws TpRateLimited when the bucket is empty
+     */
+    private function admit(): void
+    {
+        $guard = $this->guard ??= new UpstreamGuard($this->clock);
+        if (!$guard->hasGoogleKey() || $guard->refused('places') || $guard->inBackoff('places')) {
+            throw new TpUnavailable(self::LOOKUP_UNAVAILABLE);
+        }
+        if (!$guard->takeTokens((string) TpConfig::get('places.bucket'), 1, (int) TpConfig::get('places.bucket_wait_s'))) {
+            throw new TpRateLimited(self::LOOKUP_BUSY);
+        }
+    }
+
+    /**
+     * An answer of the Places client, or the refusal its failure stands for: a refused key is remembered
+     * for an hour, anything else backs off for a minute.
+     *
+     * @param array{ok: bool, error: ?string, match: ?string, place: array<string, ?string>|null} $answer
+     * @return array{ok: bool, error: ?string, match: ?string, place: array<string, ?string>|null}
+     * @throws TpUnavailable
+     */
+    private function settled(array $answer): array
+    {
+        if ($answer['ok']) {
+            return $answer;
+        }
+        $guard = $this->guard ??= new UpstreamGuard($this->clock);
+        if ($answer['error'] === PlacesContactClient::ERROR_REFUSED) {
+            $guard->markRefused('places');
+        } elseif ($answer['error'] !== PlacesContactClient::ERROR_NO_KEY) {
+            $reason = $answer['error'] === PlacesContactClient::ERROR_QUOTA ? 'quota' : 'upstream';
+            $guard->backoff('places', (int) TpConfig::get('places.backoff_s'), $reason);
+        }
+        throw new TpUnavailable(self::LOOKUP_UNAVAILABLE);
+    }
+
     // ------------------------------------------------------------------------------------ helpers
 
     /**
@@ -865,7 +1162,7 @@ class ScoutingService
     }
 
     /**
-     * `hide`: the lead statuses whose places leave the ranking, in the order of STATUSES.
+     * `hide`: the lead statuses whose places leave the list, in the order of STATUSES.
      *
      * @return list<string>
      */
@@ -888,14 +1185,35 @@ class ScoutingService
     }
 
     /**
-     * Which places the hidden statuses take out of the ranking.
+     * `types`: the kinds the request asks for, in the order of the list, or null when it names none.
+     *
+     * @param list<string> $hostable every kind there is (kinds())
+     * @return list<string>|null
+     */
+    private static function typesInput(Input $in, array $hostable): ?array
+    {
+        if (!$in->has('types')) {
+            return null;
+        }
+        $raw = $in->all()['types'];
+        $items = is_string($raw) ? array_map('trim', explode(',', $raw)) : [null];
+        foreach ($items as $item) {
+            if (!in_array($item, $hostable, true)) {
+                throw $in->error('types', 'must be one of: ' . implode(', ', $hostable), 'V4');
+            }
+        }
+        return array_values(array_intersect($hostable, $items));
+    }
+
+    /**
+     * Which places the hidden statuses take out of the list.
      *
      * A place the owner has not touched has the status `new`. So when `new` is hidden only the touched
      * places with a status that is shown stay; otherwise the touched places with a hidden status go.
      *
      * @param array<string, array<string, mixed>> $leads read rows keyed by place_key
      * @param list<string> $hide
-     * @return array{0: bool, 1: list<string>} [true: the keys are the only places to rank; false: the keys
+     * @return array{0: bool, 1: list<string>} [true: the keys are the only places to list; false: the keys
      *         are left out, the keys in ascending order]
      */
     private static function statusFilter(array $leads, array $hide): array

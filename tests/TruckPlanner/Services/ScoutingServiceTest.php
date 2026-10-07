@@ -47,7 +47,9 @@ require_once __DIR__ . '/SpotServiceTest.php';
  *
  * The places: a taproom 890 m from the base (a visitor source with a phone and a website), a bar, a
  * farmers market and an office park beside the worked example of 02_MODEL.md 4.4, plus a restaurant
- * (hosts nothing) and an office outside the counties.
+ * (hosts nothing) and an office outside the counties. Each of the four that host is of another kind, so
+ * the plain list holds one place of each of four kinds; the tests that need many places of one kind add
+ * offices north of the base.
  */
 final class ScoutingServiceTest extends TestCase
 {
@@ -66,6 +68,19 @@ final class ScoutingServiceTest extends TestCase
 
     private const NOTICE = 'Permission to trade here and local rules are yours to check.';
     private const LEGALITY_WORDS = ['legal', 'permitted', 'allowed to park', 'approved', 'permit'];
+
+    /** What would read as a statement that a place takes trucks. No payload says any of it. */
+    private const HOSTING_CLAIMS = ['allows trucks', 'allowed to', 'trucks allowed', 'trucks welcome', 'welcomes', 'accepts trucks',
+        'takes trucks', 'hosts trucks', 'truck friendly', 'authorised', 'authorized', 'eligible', 'cleared for', 'available for'];
+
+    /** The kinds of place, those that host most commonly first (the seed file's host_fit, then its order). */
+    private const KINDS = ['taproom', 'farmers_market', 'office_park', 'apartment_community', 'events_venue', 'industrial_site',
+        'big_box', 'car_dealership', 'gym', 'park', 'shopping_centre', 'campus', 'hospital', 'bar', 'stadium', 'hotel',
+        'attraction', 'transit_station'];
+
+    private const PLACE_ID = 'ChIJN1t_tDeuEmsRUsoyG83frY4';
+    /** What Google says about the taproom: no part of these texts may be found in anything that is kept. */
+    private const GOOGLE_TRACES = ['555-0199', 'google-says', 'Google Way', '(Google)', 'cid=424242', 'maps.google.com'];
 
     private FixedClock $clock;
     private MemoryCache $cache;
@@ -230,25 +245,40 @@ final class ScoutingServiceTest extends TestCase
     }
 
     /**
-     * Office parks north of the base, the better the nearer: `g001` has the most workers around it.
+     * A place `$metres` north of the base whose only people are `$workers` office workers around it.
+     */
+    private function addNorth(string $key, string $name, float $metres, float $workers, string $county = '51061', string $type = 'office_park'): void
+    {
+        $base = SpotServiceTest::truck()['profile']['base'];
+        $capture = array_fill(0, 16, 0.0);
+        $capture[1] = $workers;
+        $vectors = ['capture' => ['day' => $capture, 'eve' => $capture], 'nearby' => $capture, 'rivals' => ['day' => 0.0, 'eve' => 0.0]];
+        $this->places->add([
+            'place_key' => $key, 'place_type' => $type, 'name' => $name,
+            'lat' => FixtureRegion::north($base['lat'], $metres), 'lng' => $base['lng'],
+            'county_fips' => $county, 'host_fit' => 0.8, 'kitchen' => 'no',
+            'host_vec' => pack('e50', ...VectorCodec::flat($vectors)),
+        ]);
+    }
+
+    /**
+     * Office parks north of the base, the better the nearer: `g001` has the most workers around it. Each
+     * has a name of its own ("Plaza 001 Offices"), so each is a site of its own.
      *
      * @return list<string> their keys, best first
      */
-    private function addOffices(int $count, float $firstMetres = 500.0, float $stepMetres = 20.0, string $county = '51061'): array
-    {
+    private function addOffices(
+        int $count,
+        float $firstMetres = 500.0,
+        float $stepMetres = 20.0,
+        string $county = '51061',
+        string $prefix = 'g',
+        string $type = 'office_park'
+    ): array {
         $keys = [];
-        $base = SpotServiceTest::truck()['profile']['base'];
         for ($i = 1; $i <= $count; $i++) {
-            $key = sprintf('g%03d', $i);
-            $capture = array_fill(0, 16, 0.0);
-            $capture[1] = 400.0 - $i;
-            $vectors = ['capture' => ['day' => $capture, 'eve' => $capture], 'nearby' => $capture, 'rivals' => ['day' => 0.0, 'eve' => 0.0]];
-            $this->places->add([
-                'place_key' => $key, 'place_type' => 'office_park', 'name' => 'Office ' . $i,
-                'lat' => FixtureRegion::north($base['lat'], $firstMetres + $stepMetres * $i), 'lng' => $base['lng'],
-                'county_fips' => $county, 'host_fit' => 0.8, 'kitchen' => 'no',
-                'host_vec' => pack('e50', ...VectorCodec::flat($vectors)),
-            ]);
+            $key = sprintf('%s%03d', $prefix, $i);
+            $this->addNorth($key, sprintf('Plaza %03d Offices', $i), $firstMetres + $stepMetres * $i, 400.0 - $i, $county, $type);
             $keys[] = $key;
         }
         return $keys;
@@ -266,11 +296,56 @@ final class ScoutingServiceTest extends TestCase
 
     /**
      * @param array<string, mixed> $answer the answer of rank()
-     * @return list<string> the place keys in rank order
+     * @return list<string> the place keys in the order of the list
      */
-    private static function keys(array $answer): array
+    private static function keys(array $answer, ?string $kind = null): array
     {
-        return array_map(static fn (array $c): string => $c['place']['place_key'], $answer['candidates']);
+        $keys = [];
+        foreach ($answer['candidates'] as $candidate) {
+            if ($kind === null || $candidate['kind'] === $kind) {
+                $keys[] = $candidate['place']['place_key'];
+            }
+        }
+        return $keys;
+    }
+
+    /**
+     * @param array<string, mixed> $answer the answer of rank()
+     * @return array<string, mixed> the candidate of a place that is listed
+     */
+    private static function candidate(array $answer, string $key): array
+    {
+        foreach ($answer['candidates'] as $candidate) {
+            if ($candidate['place']['place_key'] === $key) {
+                return $candidate;
+            }
+        }
+        self::fail($key . ' is not listed');
+    }
+
+    /**
+     * @param array<string, mixed> $answer the answer of rank()
+     * @return array<string, mixed> the counts of one kind
+     */
+    private static function kind(array $answer, string $kind): array
+    {
+        foreach ($answer['kinds'] as $row) {
+            if ($row['kind'] === $kind) {
+                return $row;
+            }
+        }
+        self::fail($kind . ' was not asked for');
+    }
+
+    /**
+     * The model's own result for one place, as the best of its kind.
+     *
+     * @param array<string, mixed> $truck
+     * @return array<string, mixed>|null ScoutResult with position 1; null for a place outside the limit
+     */
+    private function modelResult(string $key, array $truck, ?array $cal = null): ?array
+    {
+        return $this->modelRanking([$key], $truck, $cal)[0] ?? null;
     }
 
     /**
@@ -315,10 +390,10 @@ final class ScoutingServiceTest extends TestCase
     }
 
     /** A place as Google answers it, `$metres` north of the fixture taproom. */
-    private static function googlePlace(float $metres = 35.0): array
+    private static function googlePlace(float $metres = 35.0, string $id = self::PLACE_ID): array
     {
         return [
-            'id' => 'ChIJN1t_tDeuEmsRUsoyG83frY4',
+            'id' => $id,
             'displayName' => ['text' => 'Example Brewing Co (Google)', 'languageCode' => 'en'],
             'formattedAddress' => '99 Google Way, Sterling, VA 20166, USA',
             'location' => ['latitude' => FixtureRegion::north(FixtureRegion::TAPROOM['lat'], $metres), 'longitude' => FixtureRegion::TAPROOM['lng']],
@@ -328,9 +403,31 @@ final class ScoutingServiceTest extends TestCase
         ];
     }
 
-    private function found(float $metres = 35.0): void
+    /** Google answers a search by name with the place. */
+    private function found(float $metres = 35.0, string $id = self::PLACE_ID): void
     {
-        $this->http->json(200, ['places' => [self::googlePlace($metres)]]);
+        $this->http->json(200, ['places' => [self::googlePlace($metres, $id)]]);
+    }
+
+    /** Google answers a request by id with the place: the place itself, without a location. */
+    private function detailed(string $phone = '(703) 555-0199'): void
+    {
+        $place = ['nationalPhoneNumber' => $phone] + self::googlePlace();
+        unset($place['location']);
+        $this->http->json(200, $place);
+    }
+
+    /**
+     * The statements the lead table has seen since `$from`, by their first word.
+     *
+     * @return list<string>
+     */
+    private function leadStatementsSince(int $from): array
+    {
+        return array_map(
+            static fn (string $sql): string => (string) strtok($sql, ' '),
+            array_slice($this->leadTable->statements, $from)
+        );
     }
 
     private static function assertInvalid(string $message, ?string $field, ?string $code, callable $fn): void
@@ -359,14 +456,14 @@ final class ScoutingServiceTest extends TestCase
         }
     }
 
-    // ------------------------------------------------------------------------------------ the ranked list
+    // ------------------------------------------------------------------------------------ the list
 
-    public function testTheListIsTheModelsRankingOfThePossibleHostsWithinReach(): void
+    public function testTheListIsTheBestOfEveryKindEachResultTheModels(): void
     {
         $answer = $this->rank();
 
         self::assertSame(
-            ['candidates', 'screened', 'truncated', 'limit_minutes', 'licence_counties', 'dataset_version', 'cached', 'notice', 'attribution'],
+            ['candidates', 'kinds', 'quota', 'screened', 'truncated', 'limit_minutes', 'licence_counties', 'dataset_version', 'cached', 'notice', 'attribution'],
             array_keys($answer)
         );
         // the four possible hosts; the restaurant and the office outside the counties are no candidates
@@ -376,34 +473,50 @@ final class ScoutingServiceTest extends TestCase
         self::assertSame([], $answer['licence_counties']);
         self::assertSame(FixtureRegion::VERSION, $answer['dataset_version']);
         self::assertFalse($answer['cached']);
+        self::assertSame(8, $answer['quota'], 'eight places of every kind');
 
-        $expected = $this->modelRanking([self::TAPROOM, self::BAR, self::MARKET, self::OFFICE], self::truck());
-        self::assertCount(4, $expected);
-        self::assertSame($expected, array_column($answer['candidates'], 'result'), 'each result is the model\'s, in the model\'s order');
-        self::assertSame([1, 2, 3, 4], array_map(static fn (array $c): int => $c['result']['position'], $answer['candidates']));
+        // Kind by kind, the kinds that host most commonly first: a taproom, a market, an office park, a bar.
+        self::assertSame([self::TAPROOM, self::MARKET, self::OFFICE, self::BAR], self::keys($answer));
+        self::assertSame(['taproom', 'farmers_market', 'office_park', 'bar'], array_column($answer['candidates'], 'kind'));
+        foreach (self::keys($answer) as $key) {
+            // each is the best of its kind, and its result is the model's own
+            self::assertSame($this->modelResult($key, self::truck()), self::candidate($answer, $key)['result'], $key);
+            self::assertSame(1, self::candidate($answer, $key)['result']['position']);
+        }
+
+        // every kind there is is counted, also those the region has nothing of
+        self::assertSame(self::KINDS, array_column($answer['kinds'], 'kind'));
+        self::assertSame(self::KINDS, ScoutingService::kinds(self::A()));
+        foreach ($answer['kinds'] as $row) {
+            $has = in_array($row['kind'], ['taproom', 'farmers_market', 'office_park', 'bar'], true) ? 1 : 0;
+            self::assertSame(['kind' => $row['kind'], 'screened' => $has, 'listed' => $has, 'merged' => 0], $row);
+        }
 
         // The office park 20 m from the worked example of 02_MODEL.md 4.4: Tuesday lunch, about 70 orders.
-        $office = $answer['candidates'][0];
-        self::assertSame(self::OFFICE, $office['result']['place_id']);
+        $office = self::candidate($answer, self::OFFICE);
         self::assertSame(['dow' => 1, 'open_minute' => 660, 'close_minute' => 840], $office['result']['best_window']);
         self::assertGreaterThan(60.0, $office['result']['orders']['value']);
         self::assertLessThan(75.0, $office['result']['orders']['value']);
         self::assertSame('rough', $office['result']['orders']['confidence']);
         self::assertSame(0.0, $office['result']['host_size'], 'an office park has no size of its own');
         // The taproom: its own 40 guests on Saturday evening, the truck being the only food.
-        $taproom = $answer['candidates'][1];
-        self::assertSame(self::TAPROOM, $taproom['result']['place_id']);
+        $taproom = self::candidate($answer, self::TAPROOM);
         self::assertSame(['dow' => 5, 'open_minute' => 1020, 'close_minute' => 1200], $taproom['result']['best_window']);
         self::assertEqualsWithDelta(21.516, $taproom['result']['orders']['value'], 1e-9);
         self::assertSame('very_rough', $taproom['result']['orders']['confidence']);
         self::assertSame('no', $taproom['result']['kitchen']);
-        // The market has no hour of its own and nobody around it: no window, and it ranks last but one or last.
-        $market = $answer['candidates'][array_search(self::MARKET, self::keys($answer), true)];
+        // The market has no hour of its own and nobody around it: no window. It is still the one market.
+        $market = self::candidate($answer, self::MARKET);
         self::assertNull($market['result']['best_window']);
         self::assertSame(0.0, $market['result']['orders']['value']);
 
         foreach ($answer['candidates'] as $candidate) {
-            self::assertSame(['result', 'place', 'lead', 'maps_url', 'leg_sources'], array_keys($candidate));
+            self::assertSame(
+                ['kind', 'result', 'place', 'lead', 'maps_url', 'leg_sources', 'at_capacity', 'demand_key', 'merged'],
+                array_keys($candidate)
+            );
+            self::assertSame($candidate['kind'], $candidate['result']['place_type']);
+            self::assertSame($candidate['kind'], $candidate['place']['place_type']);
             self::assertSame(
                 ['place_id', 'place_type', 'position', 'host_fit', 'kitchen', 'host_segment', 'host_size', 'size_source', 'best_window',
                     'orders', 'contribution', 'round_trip', 'score'],
@@ -427,6 +540,10 @@ final class ScoutingServiceTest extends TestCase
                 $candidate['lead']
             );
             self::assertSame(['out' => 'straight_line', 'back' => 'straight_line'], $candidate['leg_sources']);
+            // none of them fills the truck, and none stands for a second place
+            self::assertFalse($candidate['at_capacity']);
+            self::assertNull($candidate['demand_key']);
+            self::assertSame(0, $candidate['merged']);
         }
         self::assertSame(
             [
@@ -438,6 +555,7 @@ final class ScoutingServiceTest extends TestCase
             $taproom['place']
         );
         self::assertSame([], $this->leadTable->rows, 'reading the list creates no lead');
+        self::assertSame(['SELECT'], array_values(array_unique($this->leadStatementsSince(0))), 'and writes nothing: there is nothing to sweep');
     }
 
     public function testAStoredZoneThisServerDoesNotKnowDoesNotTakeTheListDown(): void
@@ -468,59 +586,72 @@ final class ScoutingServiceTest extends TestCase
         }
         self::assertSame([], $this->http->requests);
 
-        // Once Google's id of the place is stored on the lead, the link names the place.
+        // Once Google's id of the place is kept on the lead, the link names the place ...
         $this->found();
         $this->service->lookupContact(self::ORG, self::truck(), self::TAPROOM, false);
-        $taproom = $this->rank()['candidates'][1];
-        self::assertSame(self::TAPROOM, $taproom['place']['place_key']);
-        self::assertSame(
-            'https://www.google.com/maps/search/?api=1&query=Example%20Brewing&query_place_id=ChIJN1t_tDeuEmsRUsoyG83frY4',
-            $taproom['maps_url']
-        );
-        // ... and still does after the looked-up details have expired: the id may be kept.
-        $this->clock->advance(31 * 86400);
-        $later = $this->rank()['candidates'][1];
-        self::assertNull($later['lead']['google']);
-        self::assertSame($taproom['maps_url'], $later['maps_url']);
+        $taproom = self::candidate($this->rank(), self::TAPROOM);
+        $link = 'https://www.google.com/maps/search/?api=1&query=Example%20Brewing&query_place_id=' . self::PLACE_ID;
+        self::assertSame($link, $taproom['maps_url']);
+        self::assertSame($link, $taproom['lead']['google']['maps_url']);
+        // ... and goes on doing so: a place id may be kept, and nothing about it runs out.
+        $this->clock->advance(400 * 86400);
+        $later = self::candidate($this->rank(), self::TAPROOM);
+        self::assertSame($link, $later['maps_url']);
+        self::assertSame($taproom['lead'], $later['lead']);
+        self::assertCount(1, $this->http->requests, 'a link is built, not asked for');
     }
 
     public function testTheStandingReminderAndTheSourcesTravelWithTheList(): void
     {
-        $answer = $this->rank();
-        self::assertSame(self::NOTICE, $answer['notice']);
-        self::assertSame(ScoutingService::NOTICE, $answer['notice']);
-        self::assertSame(
-            [
-                "\u{00A9} OpenStreetMap contributors",
-                "Place data \u{00A9} OpenStreetMap contributors, available under the Open Database License (ODbL).",
-                'Drive times and distances: Google Maps Platform. Kept for at most 30 days.',
-            ],
-            $answer['attribution']
-        );
+        foreach ([[], ['types' => 'taproom'], ['hide' => 'new']] as $query) {
+            $answer = $this->rank($query);
+            self::assertSame(self::NOTICE, $answer['notice']);
+            self::assertSame(ScoutingService::NOTICE, $answer['notice']);
+            self::assertSame(
+                [
+                    "\u{00A9} OpenStreetMap contributors",
+                    "Place data \u{00A9} OpenStreetMap contributors, available under the Open Database License (ODbL).",
+                    'Drive times and distances: Google Maps Platform. Kept for at most 30 days.',
+                ],
+                $answer['attribution']
+            );
+        }
     }
 
-    public function testNothingInAScoutPayloadReadsAsAStatementAboutRules(): void
+    public function testNothingInAScoutPayloadReadsAsAStatementAboutRulesOrAboutAPlaceTakingTrucks(): void
     {
+        $this->addOffices(20);
         $this->found();
+        $this->detailed();
         $payloads = [
             $this->rank(),
+            $this->rank(['types' => 'office_park,taproom']),
             $this->service->saveLead(self::ORG, self::truck(), self::TAPROOM, ['status' => 'contacted', 'notes' => 'Call back Tuesday']),
+            $this->service->lookupContact(self::ORG, self::truck(), self::TAPROOM, false),
             $this->service->lookupContact(self::ORG, self::truck(), self::TAPROOM, false),
             $this->service->saveAsSpot(self::ORG, self::truck(), self::USER, self::TAPROOM, []),
             $this->rank(['hide' => '']),
+            $this->rank(['hide' => 'new']),
         ];
-        foreach ($payloads as $payload) {
+        foreach ($payloads as $n => $payload) {
             $text = (string) json_encode($payload);
-            foreach (self::LEGALITY_WORDS as $word) {
-                self::assertStringNotContainsStringIgnoringCase($word, $text);
+            foreach (array_merge(self::LEGALITY_WORDS, self::HOSTING_CLAIMS) as $word) {
+                self::assertStringNotContainsStringIgnoringCase($word, $text, 'payload ' . $n);
             }
         }
         foreach ([ScoutingService::NO_REGION, ScoutingService::PLACE_NOT_FOUND, ScoutingService::LOOKUP_UNAVAILABLE,
             ScoutingService::LOOKUP_BUSY, ScoutingService::ALREADY_SAVED, ScoutingService::NOTICE] as $sentence) {
-            foreach (self::LEGALITY_WORDS as $word) {
+            foreach (array_merge(self::LEGALITY_WORDS, self::HOSTING_CLAIMS) as $word) {
                 self::assertStringNotContainsStringIgnoringCase($word, $sentence);
             }
         }
+        // What the list adds to a candidate is its kind and three facts about its place in the list.
+        $listed = $payloads[0]['candidates'][0];
+        self::assertSame(
+            ['kind', 'at_capacity', 'demand_key', 'merged'],
+            array_values(array_diff(array_keys($listed), ['result', 'place', 'lead', 'maps_url', 'leg_sources']))
+        );
+        self::assertSame(['kind', 'screened', 'listed', 'merged'], array_keys($payloads[0]['kinds'][0]));
     }
 
     public function testTheScreenReadsEveryPageOfThePossibleHosts(): void
@@ -560,6 +691,370 @@ final class ScoutingServiceTest extends TestCase
         self::assertEqualsWithDelta(39.003 + rad2deg($short / 6371008.8) * 1.01, $this->places->pages[0]['box']['lat_max'], 1e-12);
     }
 
+    // ------------------------------------------------------------------------------------ balanced by kind
+
+    public function testOneKindDoesNotCrowdOutTheOthers(): void
+    {
+        // 130 office parks close to the base, each with more people around it than the taproom or the bar has.
+        $this->addOffices(130);
+        $answer = $this->rank();
+        self::assertSame(134, $answer['screened']);
+        self::assertSame(['kind' => 'office_park', 'screened' => 131, 'listed' => 8, 'merged' => 0], self::kind($answer, 'office_park'));
+        // The other kinds are all still there, each with its best place, before and after the offices.
+        self::assertSame(['taproom', 'farmers_market', 'office_park', 'bar'], array_values(array_unique(array_column($answer['candidates'], 'kind'))));
+        self::assertSame([self::TAPROOM], self::keys($answer, 'taproom'));
+        self::assertSame([self::MARKET], self::keys($answer, 'farmers_market'));
+        self::assertSame([self::BAR], self::keys($answer, 'bar'));
+        self::assertCount(11, $answer['candidates']);
+        // Inside the kind the order is the model's, numbered from 1.
+        $offices = array_values(array_filter($answer['candidates'], static fn (array $c): bool => $c['kind'] === 'office_park'));
+        self::assertSame(range(1, 8), array_map(static fn (array $c): int => $c['result']['position'], $offices));
+        for ($i = 1; $i < 8; $i++) {
+            self::assertGreaterThanOrEqual(
+                Estimator::qkey($offices[$i]['result']['score']),
+                Estimator::qkey($offices[$i - 1]['result']['score'])
+            );
+        }
+        // One global ranking would have been offices only: every one of them outranks the taproom.
+        $taproomScore = self::candidate($answer, self::TAPROOM)['result']['score'];
+        foreach ($offices as $office) {
+            self::assertGreaterThan($taproomScore, $office['result']['score']);
+        }
+    }
+
+    public function testAKindIsFilledFromItsBestScreensAndAnotherBatchIsReadOnlyWhenNeeded(): void
+    {
+        $offices = $this->addOffices(130);
+        $truck = self::truck(['licence_counties' => ['51061'], 'scout_drive_minutes_limit' => 30]);
+
+        // All of them are close: the first batch of the kind (its quota of 8 and 4 more) is enough.
+        $answer = $this->rank([], $truck);
+        self::assertSame(130, $answer['screened']);
+        self::assertSame(array_slice($offices, 0, 8), self::keys($answer));
+        self::assertSame(['kind' => 'office_park', 'screened' => 130, 'listed' => 8, 'merged' => 0], self::kind($answer, 'office_park'));
+        self::assertCount(1, $this->legs->calls);
+        self::assertCount(24, $this->legs->calls[0]['pairs']);
+        self::assertSame(13, $this->legs->calls[0]['points'], 'the base and twelve places');
+        self::assertSame($this->modelRanking(array_slice($offices, 0, 8), $truck), array_column($answer['candidates'], 'result'));
+
+        // Routed legs put the best six outside the limit: the next batch fills the kind.
+        foreach (array_slice($offices, 0, 6) as $key) {
+            $this->legs->route('base', $key, 7200.0, 50000.0);
+            $this->legs->route($key, 'base', 7200.0, 50000.0);
+        }
+        $this->legs->calls = [];
+        $answer = $this->rank([], $truck);
+        self::assertSame(array_slice($offices, 6, 8), self::keys($answer));
+        self::assertCount(2, $this->legs->calls, 'a second batch, and no third');
+        self::assertSame([['base', 'g013'], ['g013', 'base']], array_slice($this->legs->calls[1]['pairs'], 0, 2));
+        self::assertCount(24, $this->legs->calls[1]['pairs']);
+        self::assertSame(range(1, 8), array_map(static fn (array $c): int => $c['result']['position'], $answer['candidates']));
+        foreach ($answer['candidates'] as $candidate) {
+            self::assertStringStartsWith('https://www.google.com/maps/search/?api=1&query=', $candidate['maps_url']);
+        }
+    }
+
+    public function testOnlyAKindThatIsShortIsAskedAboutAgain(): void
+    {
+        $offices = $this->addOffices(40);
+        $sites = $this->addOffices(40, 5000.0, 20.0, '51061', 'i', 'industrial_site');
+        $truck = self::truck(['licence_counties' => ['51061'], 'scout_drive_minutes_limit' => 30]);
+        // The best six offices are outside the limit on their routed legs; the industrial sites are fine.
+        foreach (array_slice($offices, 0, 6) as $key) {
+            $this->legs->route('base', $key, 7200.0, 50000.0);
+            $this->legs->route($key, 'base', 7200.0, 50000.0);
+        }
+        $answer = $this->rank([], $truck);
+        self::assertSame(array_slice($offices, 6, 8), self::keys($answer, 'office_park'));
+        self::assertSame(array_slice($sites, 0, 8), self::keys($answer, 'industrial_site'));
+        self::assertCount(2, $this->legs->calls);
+        self::assertCount(48, $this->legs->calls[0]['pairs'], 'twelve places of each of the two kinds');
+        self::assertCount(24, $this->legs->calls[1]['pairs'], 'then twelve more offices, and no industrial site');
+        foreach ($this->legs->calls[1]['pairs'] as [$from, $to]) {
+            self::assertStringStartsWith('g', $from === 'base' ? $to : $from);
+        }
+    }
+
+    public function testAtMostThreeBatchesOfAKindAreAskedAbout(): void
+    {
+        $offices = $this->addOffices(260, 300.0, 10.0);
+        foreach ($offices as $key) {
+            $this->legs->route('base', $key, 7200.0, 50000.0);
+            $this->legs->route($key, 'base', 7200.0, 50000.0);
+        }
+        $answer = $this->rank([], self::truck(['licence_counties' => ['51061'], 'scout_drive_minutes_limit' => 30]));
+        self::assertSame(260, $answer['screened']);
+        self::assertSame(3, TpConfig::get('scout.max_batches'));
+        self::assertCount(3, $this->legs->calls);
+        self::assertSame([24, 24, 24], array_map(static fn (array $call): int => count($call['pairs']), $this->legs->calls));
+        self::assertSame([], $answer['candidates'], 'every place that was asked about is outside the limit on its routed legs');
+        self::assertSame(['kind' => 'office_park', 'screened' => 260, 'listed' => 0, 'merged' => 0], self::kind($answer, 'office_park'));
+        self::assertFalse($answer['cached']);
+        // the three batches are cached like any other
+        $this->legs->calls = [];
+        self::assertTrue($this->rank([], self::truck(['licence_counties' => ['51061'], 'scout_drive_minutes_limit' => 30]))['cached']);
+        self::assertCount(3, $this->legs->calls);
+    }
+
+    public function testTypesChoosesTheKindsBeforeTheScreenAndLooksDeeperIntoThem(): void
+    {
+        $offices = $this->addOffices(130);
+        $truck = self::truck(['scout_drive_minutes_limit' => 30, 'licence_counties' => ['51061', '51107']]);
+
+        // Every kind: the 130 offices, and the taproom, the bar and the market of the other county.
+        $all = $this->rank([], $truck);
+        self::assertSame(133, $all['screened']);
+        self::assertSame(8, $all['quota']);
+        self::assertSame(array_slice($offices, 0, 8), self::keys($all, 'office_park'));
+
+        // Offices only: nothing else is screened, and the kind is listed thirty deep.
+        $this->legs->calls = [];
+        $deep = $this->rank(['types' => 'office_park'], $truck);
+        self::assertSame(130, $deep['screened'], 'the other kinds were left out before the screen');
+        self::assertSame([['kind' => 'office_park', 'screened' => 130, 'listed' => 30, 'merged' => 0]], $deep['kinds']);
+        self::assertSame(30, $deep['quota']);
+        self::assertSame(array_slice($offices, 0, 30), self::keys($deep));
+        self::assertSame(range(1, 30), array_map(static fn (array $c): int => $c['result']['position'], $deep['candidates']));
+        self::assertCount(68, $this->legs->calls[0]['pairs'], 'thirty and four more, there and back');
+        self::assertFalse($deep['cached'], 'another choice of kinds is another list');
+
+        // Two kinds, in the order of the list whatever the order of the request; blanks and repeats do no harm.
+        $two = $this->rank(['types' => ' bar , taproom,bar'], $truck);
+        self::assertSame(['taproom', 'bar'], array_column($two['kinds'], 'kind'));
+        self::assertSame(2, $two['screened']);
+        self::assertSame(30, $two['quota']);
+        self::assertSame([self::TAPROOM, self::BAR], self::keys($two));
+        // a kind the reach holds nothing of is counted with zeros
+        $none = $this->rank(['types' => 'hospital,stadium'], $truck);
+        self::assertSame(0, $none['screened']);
+        self::assertSame([], $none['candidates']);
+        self::assertSame(
+            [['kind' => 'hospital', 'screened' => 0, 'listed' => 0, 'merged' => 0], ['kind' => 'stadium', 'screened' => 0, 'listed' => 0, 'merged' => 0]],
+            $none['kinds']
+        );
+        self::assertFalse($none['cached']);
+    }
+
+    public function testNoAnswerHoldsMoreThanTheOverallCap(): void
+    {
+        $offices = $this->addOffices(40);
+        $sites = $this->addOffices(40, 5000.0, 20.0, '51061', 'i', 'industrial_site');
+        $truck = self::truck(['licence_counties' => ['51061']]);
+        $config = TpConfig::all();
+
+        // Two kinds asked for in depth share a cap of 20: ten of each, not thirty.
+        $config['scout']['max_listed'] = 20;
+        TpConfig::replace($config);
+        $answer = $this->rank(['types' => 'office_park,industrial_site'], $truck);
+        self::assertSame(10, $answer['quota']);
+        self::assertSame(array_slice($offices, 0, 10), self::keys($answer, 'office_park'));
+        self::assertSame(array_slice($sites, 0, 10), self::keys($answer, 'industrial_site'));
+
+        // A cap that does not divide: the quota is the share rounded up, and the last round is cut, the
+        // first kind of the list keeping its place.
+        $config['scout']['max_listed'] = 7;
+        TpConfig::replace($config);
+        $answer = $this->rank(['types' => 'office_park,industrial_site'], $truck);
+        self::assertSame(4, $answer['quota']);
+        self::assertCount(7, $answer['candidates']);
+        self::assertSame(array_slice($offices, 0, 4), self::keys($answer, 'office_park'));
+        self::assertSame(array_slice($sites, 0, 3), self::keys($answer, 'industrial_site'));
+        self::assertSame(3, self::kind($answer, 'industrial_site')['listed']);
+
+        // Every kind under a cap of 3: one place each, and the kinds that come first in the list keep theirs.
+        $config['scout']['max_listed'] = 3;
+        TpConfig::replace($config);
+        $answer = $this->rank();
+        self::assertSame(1, $answer['quota']);
+        self::assertSame(['taproom', 'farmers_market', 'office_park'], array_column($answer['candidates'], 'kind'));
+
+        // The quota of a kind is a setting, and never more than the model ranks at a time.
+        $config['scout']['max_listed'] = 150;
+        $config['scout']['kind_quota'] = 3;
+        $config['scout']['kind_quota_deep'] = 500;
+        TpConfig::replace($config);
+        self::assertSame(3, $this->rank([], $truck)['quota']);
+        $deep = $this->rank(['types' => 'office_park'], $truck);
+        self::assertSame(50, $deep['quota'], 'the seed scout.max_results');
+        self::assertSame($offices, self::keys($deep), 'all forty of them');
+    }
+
+    public function testASiteThatIsMappedAsSeveralBuildingsIsListedOnce(): void
+    {
+        // Four buildings of one employer in a row, 90 to 180 m apart, the first with the most people around it;
+        // another employer among them, and a namesake of the first 3 km away.
+        $names = ['h001' => 'Freddie Mac - HQ 1', 'h002' => 'Vencore', 'h003' => 'Freddie Mac - HQ 3', 'h004' => 'Freddie Mac - HQ 4',
+            'h005' => 'Freddie Mac - Westbranch', 'h006' => 'Vencore', 'h007' => 'Freddie Mac - HQ 2'];
+        $n = 0;
+        foreach ($names as $key => $name) {
+            $this->addNorth($key, $name, $key === 'h007' ? 3600.0 : 600.0 + 90.0 * $n, 400.0 - $n);
+            $n++;
+        }
+        $truck = self::truck(['licence_counties' => ['51061']]);
+        $answer = $this->rank([], $truck);
+
+        // One entry for the employer's four buildings, one for the other employer's two, one for the namesake.
+        self::assertSame(['h001', 'h002', 'h007'], self::keys($answer));
+        self::assertSame(3, self::candidate($answer, 'h001')['merged'], 'HQ 3, HQ 4 and Westbranch stand for the same site');
+        self::assertSame(1, self::candidate($answer, 'h002')['merged']);
+        self::assertSame(0, self::candidate($answer, 'h007')['merged'], 'the same name three kilometres away is another site');
+        self::assertSame(['kind' => 'office_park', 'screened' => 7, 'listed' => 3, 'merged' => 4], self::kind($answer, 'office_park'));
+        self::assertSame(range(1, 3), array_map(static fn (array $c): int => $c['result']['position'], $answer['candidates']));
+        // The place that is kept is the best of its site, with its own numbers.
+        self::assertSame($this->modelRanking(['h001', 'h002', 'h007'], $truck), array_column($answer['candidates'], 'result'));
+        // The model was asked about the three that are kept, not about the four that were merged.
+        self::assertCount(1, $this->legs->calls);
+        self::assertSame(4, $this->legs->calls[0]['points']);
+        // Kinds are kept apart: a market of the same name beside the offices is another kind of place.
+        $this->addNorth('h008', 'Freddie Mac - HQ 5', 650.0, 500.0, '51061', 'farmers_market');
+        $with = $this->rank(['refresh' => '1'], $truck);
+        self::assertSame(['h008', 'h001', 'h002', 'h007'], self::keys($with));
+        self::assertSame(0, self::candidate($with, 'h008')['merged']);
+        self::assertSame(3, self::candidate($with, 'h001')['merged']);
+
+        // How far apart two places of one site may stand is a setting.
+        $config = TpConfig::all();
+        $config['scout']['same_site_m'] = 50.0;
+        TpConfig::replace($config);
+        self::assertSame(['h001', 'h002', 'h003', 'h004', 'h005', 'h006', 'h007'], self::keys($this->rank([], $truck), 'office_park'));
+    }
+
+    public function testAPlaceTheOwnerHasALeadForIsNeverMergedAway(): void
+    {
+        foreach (['h001' => 'Rotunda Building I', 'h002' => 'Rotunda Building II', 'h003' => 'Rotunda Building III', 'h004' => 'Rotunda Building IV'] as $key => $name) {
+            $this->addNorth($key, $name, 600.0 + 50.0 * (int) substr($key, -1), 400.0 - (int) substr($key, -1));
+        }
+        $truck = self::truck(['licence_counties' => ['51061']]);
+        self::assertSame(['h001'], self::keys($this->rank([], $truck)));
+        self::assertSame(3, self::candidate($this->rank([], $truck), 'h001')['merged']);
+
+        // The owner has spoken to the third building: it is listed in its own right, with its lead.
+        $this->service->saveLead(self::ORG, $truck, 'h003', ['status' => 'contacted', 'notes' => 'The manager of III']);
+        $answer = $this->rank([], $truck);
+        self::assertSame(['h001', 'h003'], self::keys($answer));
+        self::assertSame(2, self::candidate($answer, 'h001')['merged'], 'the two untouched buildings');
+        self::assertSame(0, self::candidate($answer, 'h003')['merged']);
+        self::assertSame('contacted', self::candidate($answer, 'h003')['lead']['status']);
+        self::assertSame(['kind' => 'office_park', 'screened' => 4, 'listed' => 2, 'merged' => 2], self::kind($answer, 'office_park'));
+
+        // Only the owner's own places: every one of them is listed, whatever site it belongs to.
+        $this->service->saveLead(self::ORG, $truck, 'h002', ['status' => 'shortlisted']);
+        $own = $this->rank(['hide' => 'new'], $truck);
+        self::assertSame(['h002', 'h003'], self::keys($own));
+        self::assertSame(50, $own['quota'], 'and no quota of eight keeps one of them back');
+        self::assertSame(['kind' => 'office_park', 'screened' => 2, 'listed' => 2, 'merged' => 0], self::kind($own, 'office_park'));
+        // A hidden place leaves the list like any other; the building beside it takes its place.
+        $this->service->saveLead(self::ORG, $truck, 'h001', ['status' => 'hidden']);
+        self::assertSame(['h002', 'h003', 'h004'], self::keys($this->rank([], $truck)));
+    }
+
+    public function testEveryOneOfTheOwnersPlacesIsListedWhenOnlyThoseAreAskedFor(): void
+    {
+        $offices = $this->addOffices(20);
+        $truck = self::truck(['licence_counties' => ['51061']]);
+        foreach (array_slice($offices, 0, 15) as $key) {
+            $this->service->saveLead(self::ORG, $truck, $key, ['status' => 'shortlisted']);
+        }
+        $own = $this->rank(['hide' => 'new'], $truck);
+        self::assertSame(array_slice($offices, 0, 15), self::keys($own), 'fifteen offices, not the eight of the balanced list');
+        self::assertSame(15, $own['screened']);
+        // The balanced list holds eight offices as before, the owner's among them where they rank.
+        self::assertCount(8, $this->rank([], $truck)['candidates']);
+    }
+
+    // ------------------------------------------------------------------------------------ places that fill the truck
+
+    public function testPlacesThatFillTheTruckAreOrderedByDemandThenByTheModel(): void
+    {
+        // Five offices with so many workers around them that every hour of the best window fills the truck:
+        // the farther, the more workers. One office is quiet.
+        $full = [];
+        for ($i = 1; $i <= 5; $i++) {
+            $full[] = $key = 'c00' . $i;
+            $this->addNorth($key, sprintf('Summit %d Square', $i), 500.0 + 400.0 * $i, 2500.0 + 500.0 * $i, '51063');
+        }
+        $this->addNorth('c900', 'Quiet Court', 400.0, 200.0, '51063');
+        $truck = self::truck(['licence_counties' => ['51063']]);
+
+        // The model on its own: the five are tied on orders, so the nearest is first, and the quiet one last.
+        $model = $this->modelRanking(array_merge($full, ['c900']), $truck);
+        self::assertSame(['c001', 'c002', 'c003', 'c004', 'c005', 'c900'], array_column($model, 'place_id'));
+        foreach (array_slice($model, 0, 5) as $result) {
+            self::assertSame(135.0, $result['orders']['value'], 'three hours at the truck\'s capacity of 45');
+        }
+        self::assertLessThan(135.0, $model[5]['orders']['value']);
+
+        // The list: the same five positions, taken in the order of demand; the quiet one where it was.
+        $answer = $this->rank([], $truck);
+        self::assertSame(['c005', 'c004', 'c003', 'c002', 'c001', 'c900'], self::keys($answer));
+        self::assertSame(range(1, 6), array_map(static fn (array $c): int => $c['result']['position'], $answer['candidates']));
+        $demand = [];
+        foreach ($answer['candidates'] as $n => $candidate) {
+            $key = $candidate['place']['place_key'];
+            // the numbers of each place are the model's own; only the position is the list's
+            $own = $this->modelResult($key, $truck);
+            self::assertSame(['position' => $n + 1] + $own, ['position' => $n + 1] + $candidate['result'], $key);
+            if ($key === 'c900') {
+                self::assertFalse($candidate['at_capacity']);
+                self::assertNull($candidate['demand_key']);
+                continue;
+            }
+            self::assertTrue($candidate['at_capacity']);
+            self::assertGreaterThan(135.0, $candidate['demand_key']);
+            $demand[] = $candidate['demand_key'];
+        }
+        $sorted = $demand;
+        rsort($sorted);
+        self::assertSame($sorted, $demand, 'largest demand first');
+        self::assertCount(5, array_unique($demand));
+
+        // Equal demand: the model's order decides, which is the nearer place.
+        $this->addNorth('c006', 'Twin A Square', 3000.0, 9000.0, '51063');
+        $this->addNorth('c007', 'Twin B Square', 2900.0, 9000.0, '51063');
+        self::assertSame(['c007', 'c006', 'c005'], array_slice(self::keys($this->rank(['refresh' => '1'], $truck)), 0, 3));
+    }
+
+    public function testAPlaceAtCapacityNeverPassesAPlaceTheModelRanksBetween(): void
+    {
+        // Two offices fill the truck, one of them 20 km away. A third, close by, stays just under capacity:
+        // the model puts it between them, because the long drive costs more than its few orders less.
+        $truck = self::truck(['licence_counties' => ['51063']]);
+        $this->addNorth('d001', 'Near Full Court', 600.0, 3000.0, '51063');
+        $this->addNorth('d003', 'Far Full Court', 20000.0, 9000.0, '51063');
+        // How many workers leave the best three hours half an order short of 135: found by halving.
+        $few = 300.0;
+        $many = 3000.0;
+        for ($i = 0; $i < 40; $i++) {
+            $workers = ($few + $many) / 2.0;
+            $this->addNorth('d002', 'Almost Full Court', 700.0, $workers, '51063');
+            if ($this->modelResult('d002', $truck)['orders']['value'] < 134.5) {
+                $few = $workers;
+            } else {
+                $many = $workers;
+            }
+        }
+        $this->addNorth('d002', 'Almost Full Court', 700.0, $few, '51063');
+        $model = $this->modelRanking(['d001', 'd002', 'd003'], $truck);
+        self::assertSame(['d001', 'd002', 'd003'], array_column($model, 'place_id'));
+        self::assertSame(135.0, $model[0]['orders']['value']);
+        self::assertGreaterThan(134.0, $model[1]['orders']['value']);
+        self::assertLessThan(135.0, $model[1]['orders']['value']);
+        self::assertSame(135.0, $model[2]['orders']['value']);
+
+        // The two at capacity are not neighbours in the model's order, so there is no tie to break: the far
+        // one has the larger demand and still stays third. Moving it up would put it ahead of a place the
+        // model ranks above it, and the full truck nearby behind a place the model ranks below it.
+        $answer = $this->rank([], $truck);
+        self::assertSame(['d001', 'd002', 'd003'], self::keys($answer));
+        self::assertSame([true, false, true], array_column($answer['candidates'], 'at_capacity'));
+        self::assertGreaterThan($answer['candidates'][0]['demand_key'], $answer['candidates'][2]['demand_key']);
+        self::assertSame(array_column($model, 'score'), array_map(static fn (array $c): float => $c['result']['score'], $answer['candidates']));
+
+        // Once the owner hides the place between them the two are neighbours, and the larger demand is first.
+        $this->service->saveLead(self::ORG, $truck, 'd002', ['status' => 'hidden']);
+        self::assertSame(['d003', 'd001'], self::keys($this->rank([], $truck)));
+    }
+
     // ------------------------------------------------------------------------------------ licence counties and the drive limit
 
     public function testLicenceCountiesFilterThePlaces(): void
@@ -571,7 +1066,7 @@ final class ScoutingServiceTest extends TestCase
         self::assertSame(['51059'], $this->places->pages[0]['counties'], 'the county list is part of the query');
 
         $loudoun = $this->rank([], self::truck(['licence_counties' => ['51107', '51107']]));
-        self::assertEqualsCanonicalizing([self::TAPROOM, self::BAR, self::MARKET], self::keys($loudoun));
+        self::assertSame([self::TAPROOM, self::MARKET, self::BAR], self::keys($loudoun));
         self::assertSame(['51107'], $loudoun['licence_counties']);
 
         self::assertSame([], self::keys($this->rank([], self::truck(['licence_counties' => ['24031']]))));
@@ -599,17 +1094,13 @@ final class ScoutingServiceTest extends TestCase
             $answer = $this->rank([], $truck);
             self::assertSame($limit, $answer['limit_minutes']);
             $listed = self::keys($answer);
-            $expected = [];
             foreach ($minutes as $key => $roundTrip) {
                 self::assertSame($roundTrip <= 2 * $limit, in_array($key, $listed, true), $key . ' at a limit of ' . $limit . ' minutes');
-                if ($roundTrip <= 2 * $limit) {
-                    $expected[] = $key;
-                }
             }
             foreach ($answer['candidates'] as $candidate) {
                 self::assertLessThanOrEqual(2 * $limit, $candidate['result']['round_trip']['minutes']);
+                self::assertSame($this->modelResult($candidate['place']['place_key'], $truck), $candidate['result']);
             }
-            self::assertSame(array_column($this->modelRanking($expected, $truck), 'place_id'), $listed);
         }
     }
 
@@ -630,13 +1121,14 @@ final class ScoutingServiceTest extends TestCase
         $after = self::keys($answer);
         self::assertNotContains(self::TAPROOM, $after);
         self::assertContains(self::OFFICE, $after);
-        $office = $answer['candidates'][array_search(self::OFFICE, $after, true)];
+        $office = self::candidate($answer, self::OFFICE);
         self::assertSame(['out' => 'google_routes', 'back' => 'google_routes'], $office['leg_sources']);
         self::assertLessThanOrEqual(20, $office['result']['round_trip']['minutes']);
         self::assertSame([self::OFFICE], $after, 'the bar and the market are far over the limit and are not asked about');
         self::assertSame($this->modelRanking([self::OFFICE], $truck), array_column($answer['candidates'], 'result'));
+        self::assertSame(['kind' => 'taproom', 'screened' => 1, 'listed' => 0, 'merged' => 0], self::kind($answer, 'taproom'));
 
-        // Tolls are not asked for, and both directions of every shortlisted place are.
+        // Tolls are not asked for, and both directions of every place of a pool are.
         $call = end($this->legs->calls);
         self::assertSame(['tolls' => false], $call['options']);
         self::assertSame(self::ORG, $call['org']);
@@ -659,53 +1151,15 @@ final class ScoutingServiceTest extends TestCase
         self::assertArrayNotHasKey(self::BAR, $asked);
     }
 
-    public function testAFullListComesFromTheBestScreensAndAnotherBatchIsReadOnlyWhenNeeded(): void
+    public function testALegCallNeverAsksForMoreElementsThanOneCallMayFetch(): void
     {
-        $offices = $this->addOffices(130);
-        $truck = self::truck(['licence_counties' => ['51061'], 'scout_drive_minutes_limit' => 30]);
-
-        // All of them are close: the first batch (the list of 50 and 10 more) is enough.
-        $answer = $this->rank([], $truck);
-        self::assertSame(130, $answer['screened']);
-        self::assertSame(array_slice($offices, 0, 50), self::keys($answer));
-        self::assertCount(1, $this->legs->calls);
-        self::assertCount(120, $this->legs->calls[0]['pairs']);
-        self::assertSame(61, $this->legs->calls[0]['points'], 'the base and sixty places');
-
-        // Routed legs put the best twenty outside the limit: the next batch fills the list.
-        foreach (array_slice($offices, 0, 20) as $key) {
-            $this->legs->route('base', $key, 7200.0, 50000.0);
-            $this->legs->route($key, 'base', 7200.0, 50000.0);
-        }
-        $this->legs->calls = [];
-        $answer = $this->rank([], $truck);
-        self::assertSame(array_slice($offices, 20, 50), self::keys($answer));
-        self::assertCount(2, $this->legs->calls, 'a second batch, and no third');
-        self::assertSame([['base', 'g061'], ['g061', 'base']], array_slice($this->legs->calls[1]['pairs'], 0, 2));
-        self::assertSame(range(1, 50), array_map(static fn (array $c): int => $c['result']['position'], $answer['candidates']));
-        foreach ($answer['candidates'] as $candidate) {
-            self::assertStringStartsWith('https://www.google.com/maps/search/?api=1&query=', $candidate['maps_url']);
-        }
-    }
-
-    public function testAtMostThreeBatchesAreAskedAbout(): void
-    {
-        $offices = $this->addOffices(260, 300.0, 10.0);
-        foreach ($offices as $key) {
-            $this->legs->route('base', $key, 7200.0, 50000.0);
-            $this->legs->route($key, 'base', 7200.0, 50000.0);
-        }
-        $answer = $this->rank([], self::truck(['licence_counties' => ['51061'], 'scout_drive_minutes_limit' => 30]));
-        self::assertSame(260, $answer['screened']);
-        self::assertSame(3, TpConfig::get('scout.max_batches'));
-        self::assertCount(3, $this->legs->calls);
-        self::assertSame([120, 120, 120], array_map(static fn (array $call): int => count($call['pairs']), $this->legs->calls));
-        self::assertSame([], $answer['candidates'], 'every place that was asked about is outside the limit on its routed legs');
-        self::assertFalse($answer['cached']);
-        // the three batches are cached like any other
-        $this->legs->calls = [];
-        self::assertTrue($this->rank([], self::truck(['licence_counties' => ['51061'], 'scout_drive_minutes_limit' => 30]))['cached']);
-        self::assertCount(3, $this->legs->calls);
+        $this->addOffices(40);
+        $config = TpConfig::all();
+        $config['routing']['max_elements_per_call'] = 10;
+        TpConfig::replace($config);
+        $this->rank([], self::truck(['licence_counties' => ['51061'], 'scout_drive_minutes_limit' => 30]));
+        // twelve places of the one kind, five to a call
+        self::assertSame([10, 10, 4], array_map(static fn (array $call): int => count($call['pairs']), $this->legs->calls));
     }
 
     public function testTooManyPlacesAreCutToTheNearest(): void
@@ -717,8 +1171,10 @@ final class ScoutingServiceTest extends TestCase
         $answer = $this->rank([], self::truck(['licence_counties' => ['51107']]));
         self::assertTrue($answer['truncated']);
         self::assertSame(10, $answer['screened']);
-        // the taproom is 890 m away: it and the nine nearest offices stay (g001 at 400 m ... g009 at 1,200 m)
-        self::assertEqualsCanonicalizing(array_merge([self::TAPROOM], array_slice($offices, 0, 9)), self::keys($answer));
+        // the taproom is 890 m away: it and the nine nearest offices are screened (g001 at 400 m ... g009 at
+        // 1,200 m), and eight of the nine make the list of their kind
+        self::assertSame(array_merge([self::TAPROOM], array_slice($offices, 0, 8)), self::keys($answer));
+        self::assertSame(['kind' => 'office_park', 'screened' => 9, 'listed' => 8, 'merged' => 0], self::kind($answer, 'office_park'));
         // without the cut every place of the county is screened
         TpConfig::replace(null);
         $all = $this->rank([], self::truck(['licence_counties' => ['51107']]));
@@ -726,38 +1182,72 @@ final class ScoutingServiceTest extends TestCase
         self::assertSame(33, $all['screened']);
     }
 
+    public function testTheSameInputsGiveTheSameList(): void
+    {
+        $this->addOffices(60);
+        $this->addOffices(30, 4000.0, 30.0, '51061', 'i', 'industrial_site');
+        foreach (['h001' => 'Rotunda Building I', 'h002' => 'Rotunda Building II'] as $key => $name) {
+            $this->addNorth($key, $name, 700.0, 5000.0);
+        }
+        $first = $this->rank();
+        $warm = $this->rank();
+        $again = $this->rank(['refresh' => '1']);
+        self::assertTrue($warm['cached']);
+        self::assertFalse($again['cached']);
+        foreach ([$warm, $again] as $other) {
+            self::assertSame(json_encode(array_diff_key($first, ['cached' => 1])), json_encode(array_diff_key($other, ['cached' => 1])));
+        }
+        // a second service with caches of its own, the places read in another order of insertion
+        $this->cache->values = [];
+        $rows = $this->places->rows;
+        $this->places->rows = array_reverse($rows, true);
+        $fresh = $this->rank();
+        self::assertFalse($fresh['cached']);
+        self::assertSame(json_encode(array_diff_key($first, ['cached' => 1])), json_encode(array_diff_key($fresh, ['cached' => 1])));
+    }
+
     // ------------------------------------------------------------------------------------ hidden leads
 
-    public function testHiddenLeadsLeaveTheRanking(): void
+    public function testHiddenLeadsLeaveTheList(): void
     {
         $truck = self::truck();
         $this->service->saveLead(self::ORG, $truck, self::OFFICE, ['status' => 'hidden']);
         $this->service->saveLead(self::ORG, $truck, self::BAR, ['status' => 'declined']);
         $this->service->saveLead(self::ORG, $truck, self::TAPROOM, ['status' => 'contacted']);
 
-        // by default the hidden ones go, and the others move up
+        // by default the hidden ones go
         $answer = $this->rank();
-        self::assertNotContains(self::OFFICE, self::keys($answer));
+        self::assertSame([self::TAPROOM, self::MARKET, self::BAR], self::keys($answer));
         self::assertSame(3, $answer['screened']);
-        self::assertSame(self::TAPROOM, $answer['candidates'][0]['place']['place_key']);
-        self::assertSame(1, $answer['candidates'][0]['result']['position']);
-        self::assertSame(range(1, 3), array_map(static fn (array $c): int => $c['result']['position'], $answer['candidates']));
+        self::assertSame(['kind' => 'office_park', 'screened' => 0, 'listed' => 0, 'merged' => 0], self::kind($answer, 'office_park'));
 
         // an empty value hides nothing
         self::assertCount(4, $this->rank(['hide' => ''])['candidates']);
         // several statuses
-        self::assertEqualsCanonicalizing([self::TAPROOM, self::MARKET], self::keys($this->rank(['hide' => 'declined,hidden'])));
-        self::assertEqualsCanonicalizing([self::TAPROOM, self::MARKET], self::keys($this->rank(['hide' => ' hidden , declined '])));
-        self::assertEqualsCanonicalizing([self::BAR, self::MARKET, self::OFFICE], self::keys($this->rank(['hide' => 'contacted'])));
+        self::assertSame([self::TAPROOM, self::MARKET], self::keys($this->rank(['hide' => 'declined,hidden'])));
+        self::assertSame([self::TAPROOM, self::MARKET], self::keys($this->rank(['hide' => ' hidden , declined '])));
+        self::assertSame([self::MARKET, self::OFFICE, self::BAR], self::keys($this->rank(['hide' => 'contacted'])));
         // a place the owner has not touched is new: hiding `new` leaves the touched places that are shown
-        self::assertEqualsCanonicalizing([self::TAPROOM, self::BAR, self::OFFICE], self::keys($this->rank(['hide' => 'new'])));
+        self::assertSame([self::TAPROOM, self::OFFICE, self::BAR], self::keys($this->rank(['hide' => 'new'])));
         self::assertSame([self::TAPROOM], self::keys($this->rank(['hide' => 'new,declined,hidden'])));
         self::assertSame([], self::keys($this->rank(['hide' => 'new,shortlisted,contacted,booked,declined,hidden'])));
 
         // the lead of a listed place comes with it
-        $taproom = $this->rank()['candidates'][0]['lead'];
+        $taproom = self::candidate($this->rank(), self::TAPROOM)['lead'];
         self::assertSame('contacted', $taproom['status']);
         self::assertSame(36, strlen((string) $taproom['id']));
+    }
+
+    public function testAHiddenPlaceMakesRoomForTheNextOfItsKind(): void
+    {
+        $offices = $this->addOffices(12);
+        $truck = self::truck(['licence_counties' => ['51061']]);
+        self::assertSame(array_slice($offices, 0, 8), self::keys($this->rank([], $truck)));
+        $this->service->saveLead(self::ORG, $truck, 'g001', ['status' => 'hidden']);
+        $answer = $this->rank([], $truck);
+        self::assertSame(array_slice($offices, 1, 8), self::keys($answer), 'the others move up, and the ninth comes in');
+        self::assertSame(range(1, 8), array_map(static fn (array $c): int => $c['result']['position'], $answer['candidates']));
+        self::assertSame(11, $answer['screened']);
     }
 
     public function testTheQueryIsValidated(): void
@@ -768,6 +1258,13 @@ final class ScoutingServiceTest extends TestCase
         }
         self::assertInvalid('hide must be one of: ' . $statuses, 'hide', 'V4', fn () => $this->rank(['hide' => ['hidden']]));
         self::assertInvalid('refresh must be true or false', 'refresh', 'V6', fn () => $this->rank(['refresh' => 'yes']));
+        // `types` takes the kinds of the list and nothing else: not a type that hosts nothing, not an empty value
+        $kinds = implode(', ', self::KINDS);
+        foreach (['restaurant', 'taproom,restaurant', 'taproom,', '', ',', 'Taproom', 'offices', 'taproom;bar'] as $types) {
+            self::assertInvalid('types must be one of: ' . $kinds, 'types', 'V4', fn () => $this->rank(['types' => $types]));
+        }
+        self::assertInvalid('types must be one of: ' . $kinds, 'types', 'V4', fn () => $this->rank(['types' => ['taproom']]));
+        self::assertSame([], $this->places->pages, 'a query that is refused reads nothing');
         self::assertCount(4, $this->rank(['refresh' => '0', 'unknown' => 'x'])['candidates']);
         self::assertSame([], $this->places->rows[self::TAPROOM]['touched'] ?? []);
     }
@@ -791,6 +1288,8 @@ final class ScoutingServiceTest extends TestCase
 
     public function testBothStagesAreCachedForADayAndTheLeadsAreNot(): void
     {
+        // The owner has touched the taproom before.
+        $this->service->saveLead(self::ORG, self::truck(), self::TAPROOM, ['status' => 'shortlisted']);
         $first = $this->rank();
         self::assertFalse($first['cached']);
         self::assertCount(1, $this->places->pages);
@@ -801,18 +1300,20 @@ final class ScoutingServiceTest extends TestCase
         self::assertSame([86400 + 93600, 86400 + 93600], array_values($this->cache->ttls));
 
         // warm: no place is read again, and the answer is the same
+        $reads = count($this->places->keyReads);
         $second = $this->rank();
         self::assertTrue($second['cached']);
         self::assertCount(1, $this->places->pages);
         self::assertSame(array_diff_key($first, ['cached' => 1]), array_diff_key($second, ['cached' => 1]));
         self::assertCount(2, $this->cache->values);
+        self::assertCount($reads + 1, $this->places->keyReads, 'the display columns of the listed places, and no names for the screen');
 
-        // a lead is the owner's and is read fresh on a warm call
+        // a lead is the owner's and is read fresh on a warm call: a new status or note recomputes nothing
         $this->service->saveLead(self::ORG, self::truck(), self::TAPROOM, ['status' => 'booked', 'notes' => 'Friday']);
         $third = $this->rank();
         self::assertTrue($third['cached']);
-        self::assertSame('booked', $third['candidates'][1]['lead']['status']);
-        self::assertSame('Friday', $third['candidates'][1]['lead']['notes']);
+        self::assertSame('booked', self::candidate($third, self::TAPROOM)['lead']['status']);
+        self::assertSame('Friday', self::candidate($third, self::TAPROOM)['lead']['notes']);
 
         // refresh computes both stages again
         $fourth = $this->rank(['refresh' => '1']);
@@ -830,14 +1331,13 @@ final class ScoutingServiceTest extends TestCase
     {
         $this->rank();
         self::assertCount(2, $this->cache->values);
-        // The owner corrected a drive time: the leg input differs, the shortlist does not.
+        // The owner corrected a drive time: the leg input differs, the pools do not.
         $this->legs->override('base', self::TAPROOM, 9);
         $answer = $this->rank();
         self::assertFalse($answer['cached']);
         self::assertCount(1, $this->places->pages, 'the screen was not run again');
         self::assertCount(3, $this->cache->values);
-        $taproom = $answer['candidates'][array_search(self::TAPROOM, self::keys($answer), true)];
-        self::assertGreaterThanOrEqual(9, $taproom['result']['round_trip']['minutes']);
+        self::assertGreaterThanOrEqual(9, self::candidate($answer, self::TAPROOM)['result']['round_trip']['minutes']);
         self::assertTrue($this->rank()['cached']);
     }
 
@@ -850,6 +1350,13 @@ final class ScoutingServiceTest extends TestCase
             fn () => $this->rank([], self::truck(['licence_counties' => ['51107']])),
             fn () => $this->rank([], self::truck(['fuel_price_override' => 5.0])),
             fn () => $this->rank([], self::truck(['base' => ['lat' => 39.004, 'lng' => -77.405, 'address' => '']])),
+            fn () => $this->rank(['types' => 'taproom,bar']),
+            function () {
+                $config = TpConfig::all();
+                $config['scout']['kind_quota'] = 5;
+                TpConfig::replace($config);
+                return $this->rank();
+            },
             function () {
                 $this->calibration->factor = 0.5;
                 return $this->rank();
@@ -866,13 +1373,19 @@ final class ScoutingServiceTest extends TestCase
             self::assertFalse($answer['cached'], 'change ' . $i);
             self::assertCount(++$pages, $this->places->pages, 'change ' . $i . ' runs the screen again');
         }
-        // a status that is not hidden changes nothing that is cached
+        $overridden = fn () => $this->service->rank(self::ORG, self::truck(), Seeds::assumptions(['host.captive_share' => 0.5], self::A()['region']), []);
+        // A place the owner touches for the first time is kept apart from its site from then on, so the
+        // screen runs once more ...
         $this->service->saveLead(self::ORG, self::truck(), self::BAR, ['status' => 'shortlisted']);
-        $this->service->rank(self::ORG, self::truck(), Seeds::assumptions(['host.captive_share' => 0.5], self::A()['region']), []);
+        self::assertFalse($overridden()['cached']);
+        self::assertCount(++$pages, $this->places->pages);
+        // ... and a later status that hides nothing changes nothing that is cached
+        $this->service->saveLead(self::ORG, self::truck(), self::BAR, ['status' => 'contacted', 'notes' => 'rang twice']);
+        self::assertTrue($overridden()['cached']);
         self::assertCount($pages, $this->places->pages);
         // a hidden one does
         $this->service->saveLead(self::ORG, self::truck(), self::BAR, ['status' => 'hidden']);
-        $this->service->rank(self::ORG, self::truck(), Seeds::assumptions(['host.captive_share' => 0.5], self::A()['region']), []);
+        self::assertFalse($overridden()['cached']);
         self::assertCount($pages + 1, $this->places->pages);
     }
 
@@ -884,14 +1397,14 @@ final class ScoutingServiceTest extends TestCase
 
         $this->calibration->factor = 0.5;
         $halved = $this->rank();
-        $before = $plain['candidates'][1]['result'];
-        $after = $halved['candidates'][array_search(self::TAPROOM, self::keys($halved), true)]['result'];
-        self::assertSame(self::TAPROOM, $before['place_id']);
+        $before = self::candidate($plain, self::TAPROOM)['result'];
+        $after = self::candidate($halved, self::TAPROOM)['result'];
         self::assertEqualsWithDelta($before['orders']['value'] * 0.5, $after['orders']['value'], 1e-9);
-        self::assertSame(
-            array_column($this->modelRanking([self::TAPROOM, self::BAR, self::MARKET, self::OFFICE], self::truck(), ['truck_factor' => 0.5] + Estimator::calibrate(self::A(), [], '2026-10-07')), 'place_id'),
-            self::keys($halved)
-        );
+        $cal = ['truck_factor' => 0.5] + Estimator::calibrate(self::A(), [], '2026-10-07');
+        foreach (self::keys($halved) as $key) {
+            self::assertSame($this->modelResult($key, self::truck(), $cal), self::candidate($halved, $key)['result'], $key);
+        }
+        self::assertSame(self::keys($plain), self::keys($halved));
     }
 
     // ------------------------------------------------------------------------------------ regions
@@ -908,29 +1421,7 @@ final class ScoutingServiceTest extends TestCase
         self::assertSame([], $this->places->pages, 'nothing was read');
         // the query is looked at first
         self::assertInvalid('refresh must be true or false', 'refresh', 'V6', fn () => $this->rank(['refresh' => 'x']));
-    }
-
-    public function testEveryListFirstEmptiesGoogleDetailsThatAreOlderThanThirtyDays(): void
-    {
-        $this->found();
-        $this->service->lookupContact(self::ORG, self::truck(), self::TAPROOM, false);
-        $id = array_key_first($this->leadTable->rows);
-        self::assertSame('(703) 555-0199', $this->leadTable->rows[$id]['g_phone']);
-
-        $this->clock->advance(30 * 86400 - 60);
-        $this->rank();
-        self::assertSame('(703) 555-0199', $this->leadTable->rows[$id]['g_phone'], 'still inside its 30 days');
-
-        $this->clock->advance(120);
-        $answer = $this->rank(['hide' => '']);
-        $row = $this->leadTable->rows[$id];
-        foreach (['g_lookup_state', 'g_name', 'g_address', 'g_phone', 'g_website', 'g_maps_uri', 'g_fetched_at'] as $column) {
-            self::assertNull($row[$column], $column);
-        }
-        self::assertSame('ChIJN1t_tDeuEmsRUsoyG83frY4', $row['google_place_id'], 'the place id may stay');
-        $lead = $answer['candidates'][array_search(self::TAPROOM, self::keys($answer), true)]['lead'];
-        self::assertNull($lead['google']);
-        self::assertStringNotContainsString('555-0199', (string) json_encode($answer));
+        self::assertInvalid('types must be one of: ' . implode(', ', self::KINDS), 'types', 'V4', fn () => $this->rank(['types' => 'x']));
     }
 
     // ------------------------------------------------------------------------------------ leads
@@ -996,6 +1487,23 @@ final class ScoutingServiceTest extends TestCase
         self::assertSame(4000, mb_strlen((string) $this->service->saveLead(self::ORG, $truck, self::TAPROOM, ['notes' => str_repeat('é', 4000)])['lead']['notes']));
     }
 
+    public function testALeadBodyCannotSetWhatALookupLeaves(): void
+    {
+        // A body is read for `status` and `notes` and nothing else: no key of it reaches the columns of a lookup.
+        $lead = $this->service->saveLead(self::ORG, self::truck(), self::TAPROOM, [
+            'status' => 'contacted', 'google_place_id' => 'ChIJforged', 'g_lookup_state' => 'found', 'google' => ['place_id' => 'ChIJforged'],
+            'phone' => '(703) 555-0199', 'website' => 'https://google-says.example.com/',
+        ])['lead'];
+        self::assertNull($lead['google']);
+        $row = $this->leadTable->rows[$lead['id']];
+        self::assertNull($row['google_place_id']);
+        self::assertNull($row['g_lookup_state']);
+        self::assertNull($row['g_fetched_at']);
+        foreach (['ChIJforged', '555-0199', 'google-says'] as $trace) {
+            self::assertStringNotContainsString($trace, (string) json_encode($row));
+        }
+    }
+
     public function testOnlyAPossibleHostOfTheTrucksRegionHasALead(): void
     {
         $truck = self::truck();
@@ -1028,18 +1536,20 @@ final class ScoutingServiceTest extends TestCase
     public function testWithoutAKeyTheLookupIsNotAvailableAndNothingIsWritten(): void
     {
         $this->guard->key = false;
-        self::assertRefused(
-            TpUnavailable::class,
-            'Contact lookup is not available on this server',
-            fn () => $this->service->lookupContact(self::ORG, self::truck(), self::TAPROOM, false)
-        );
+        foreach ([false, true] as $force) {
+            self::assertRefused(
+                TpUnavailable::class,
+                'Contact lookup is not available on this server',
+                fn () => $this->service->lookupContact(self::ORG, self::truck(), self::TAPROOM, $force)
+            );
+        }
         self::assertSame([], $this->http->requests);
         self::assertSame([], $this->leadTable->rows);
         self::assertSame([], $this->bucketCalls, 'no token is taken for a lookup that cannot be made');
         self::assertSame([], $this->ledgerRows->calls);
     }
 
-    public function testALookupAsksGoogleOnceAndKeepsTheMatchOnTheLead(): void
+    public function testTheFirstLookupSearchesByNameAndKeepsOnlyThePlaceId(): void
     {
         $this->found();
         $answer = $this->service->lookupContact(self::ORG, self::truck(), self::TAPROOM, false);
@@ -1065,32 +1575,52 @@ final class ScoutingServiceTest extends TestCase
         );
         self::assertSame([['tp_places_lookup', 1, 2]], $this->bucketCalls);
 
-        // the answer
-        self::assertSame(['lead', 'lookup'], array_keys($answer));
-        self::assertSame('found', $answer['lookup']);
-        self::assertSame('new', $answer['lead']['status'], 'a lookup creates the lead as new');
+        // the answer says plainly what it is: found, what was matched, when, from where, and not saved
+        self::assertSame(['lead', 'contact'], array_keys($answer));
         self::assertSame(
             [
-                'place_id' => 'ChIJN1t_tDeuEmsRUsoyG83frY4',
-                'lookup_state' => 'found',
+                'found' => true,
                 'name' => 'Example Brewing Co (Google)',
                 'address' => '99 Google Way, Sterling, VA 20166, USA',
                 'phone' => '(703) 555-0199',
                 'website' => 'https://google-says.example.com/',
                 'maps_uri' => 'https://maps.google.com/?cid=424242',
-                'fetched_on' => '2026-10-08',
+                'fetched_at' => '2026-10-08T03:30:00Z',
+                'source' => 'text_search',
+                'saved' => false,
+                'attribution' => 'Phone and website from Google Maps',
+            ],
+            $answer['contact']
+        );
+        // the lead: created as new, with Google's id of the place, the outcome, the time and a link
+        self::assertSame('new', $answer['lead']['status'], 'a lookup creates the lead as new');
+        self::assertSame(
+            [
+                'place_id' => self::PLACE_ID,
+                'lookup_state' => 'found',
+                'matched_at' => '2026-10-08 03:30:00',
+                'maps_url' => 'https://www.google.com/maps/search/?api=1&query=Example%20Brewing&query_place_id=' . self::PLACE_ID,
             ],
             $answer['lead']['google']
         );
 
-        // the row: the place id and the texts, stamped by the database, and no coordinate of Google's
+        // the row: the id, the outcome and the database's time; the place's own name and point; nothing of Google's
         $row = $this->leadTable->rows[$answer['lead']['id']];
-        self::assertSame('ChIJN1t_tDeuEmsRUsoyG83frY4', $row['google_place_id']);
+        self::assertSame(
+            ['id', 'organization_id', 'truck_id', 'region_id', 'place_key', 'place_name', 'place_type', 'lat', 'lng', 'lead_state', 'notes',
+                'spot_id', 'google_place_id', 'g_lookup_state', 'g_fetched_at', 'created_at', 'updated_at'],
+            array_keys($row)
+        );
+        self::assertSame(self::PLACE_ID, $row['google_place_id']);
         self::assertSame('found', $row['g_lookup_state']);
-        self::assertSame('(703) 555-0199', $row['g_phone']);
-        self::assertSame($this->clock->epoch(), $row['g_fetched_at']);
-        self::assertSame('39.01', $row['lat'], 'the point of the lead is the place\'s own');
-        self::assertStringNotContainsString('39.0103', (string) json_encode($row));
+        self::assertSame('2026-10-08 03:30:00', $row['g_fetched_at']);
+        self::assertSame('Example Brewing', $row['place_name'], 'the name of the lead is the place\'s own');
+        self::assertSame('39.01', $row['lat'], 'and so is its point');
+        $kept = (string) json_encode($this->leadTable->rows) . json_encode($this->cache->values) . json_encode($this->ledgerRows->calls);
+        foreach (array_merge(self::GOOGLE_TRACES, ['39.0103']) as $trace) {
+            self::assertStringNotContainsString($trace, $kept);
+        }
+        self::assertSame(['SELECT', 'SELECT', 'INSERT', 'UPDATE', 'SELECT'], $this->leadStatementsSince(0));
 
         // one ledger row, and nothing of Google's was written to a spot
         self::assertCount(1, $this->ledgerRows->find('INSERT INTO api_cost_events'));
@@ -1098,97 +1628,187 @@ final class ScoutingServiceTest extends TestCase
         self::assertSame([], $this->spotTable->rows);
     }
 
-    public function testAFoundLookupIsServedFromTheLeadForThirtyDays(): void
+    public function testALaterLookupAsksByTheIdThatWasKeptAndWritesNothing(): void
     {
         $truck = self::truck();
         $this->found();
         $first = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
+        $rows = $this->leadTable->rows;
+        $statements = count($this->leadTable->statements);
+        $cache = $this->cache->values;
 
-        $again = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
-        self::assertSame('cached', $again['lookup']);
-        self::assertSame($first['lead'], $again['lead']);
-        // asking again by force is honoured once the answer is a day old
-        $this->clock->advance(23 * 3600);
-        self::assertSame('cached', $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, true)['lookup']);
-        $this->clock->advance(29 * 86400);
-        self::assertSame('cached', $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false)['lookup']);
-        self::assertCount(1, $this->http->requests, 'one call in thirty days');
-        self::assertCount(1, $this->bucketCalls);
-
-        // the cached answer is served without a key as well
-        $this->guard->key = false;
-        self::assertSame('cached', $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false)['lookup']);
-        $this->guard->key = true;
-
-        // after thirty days the details are gone from the lead, and the next lookup asks again
-        $this->clock->advance(3601);
-        $this->found();
+        // Two days later the place has another phone number. Nothing was kept, so Google is asked again.
+        $this->clock->advance(2 * 86400);
+        $this->detailed('(703) 555-0111');
         $later = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
-        self::assertSame('found', $later['lookup']);
+
         self::assertCount(2, $this->http->requests);
-        self::assertSame('2026-11-07', $later['lead']['google']['fetched_on']);
+        $request = $this->http->requests[1];
+        self::assertSame('GET', $request['method']);
+        self::assertSame('https://places.googleapis.com/v1/places/' . self::PLACE_ID . '?languageCode=en', $request['url']);
+        self::assertSame(
+            ['X-Goog-Api-Key: ' . self::KEY, 'X-Goog-FieldMask: id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,googleMapsUri'],
+            $request['headers']
+        );
+        self::assertNull($request['body']);
+        self::assertSame([['tp_places_lookup', 1, 2], ['tp_places_lookup', 1, 2]], $this->bucketCalls, 'a token for every call');
+
+        self::assertSame(
+            [
+                'found' => true,
+                'name' => 'Example Brewing Co (Google)',
+                'address' => '99 Google Way, Sterling, VA 20166, USA',
+                'phone' => '(703) 555-0111',
+                'website' => 'https://google-says.example.com/',
+                'maps_uri' => 'https://maps.google.com/?cid=424242',
+                'fetched_at' => '2026-10-10T03:30:00Z',
+                'source' => 'place_details',
+                'saved' => false,
+                'attribution' => 'Phone and website from Google Maps',
+            ],
+            $later['contact']
+        );
+        // The lead is as the first lookup left it: the same id, and the time of the match, not of this call.
+        self::assertSame($first['lead'], $later['lead']);
+        self::assertSame($rows, $this->leadTable->rows);
+        self::assertSame(['SELECT'], $this->leadStatementsSince($statements), 'the lead is read and nothing is written');
+        self::assertSame($cache, $this->cache->values, 'no cache entry either');
+        // metered under its own SKU
+        $skus = array_map(static fn (array $call): string => (string) $call['params'][1], $this->ledgerRows->find('INSERT INTO api_cost_events'));
+        self::assertSame(['tp_places_text', 'tp_places_details'], $skus);
+
+        // and again, as often as the owner asks: there is no answer on the server to hand out
+        $this->detailed();
+        $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
+        self::assertCount(3, $this->http->requests);
+        self::assertSame($rows, $this->leadTable->rows);
     }
 
-    public function testForceAsksAgainOnceTheAnswerIsADayOld(): void
+    public function testAnIdGoogleNoLongerKnowsIsSearchedForByNameAgain(): void
     {
         $truck = self::truck();
         $this->found();
         $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
-        $this->clock->advance(24 * 3600);
-        self::assertSame('cached', $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false)['lookup']);
+        $this->clock->advance(86400);
+
+        // Google gave the place another id: the request by the old one answers "not found", and the search
+        // by name that follows brings the new one.
+        $this->http->json(404, ['error' => ['code' => 404, 'message' => 'Place ID is no longer valid', 'status' => 'NOT_FOUND']]);
+        $this->found(35.0, 'ChIJnewPlaceId_42');
+        $lines = [];
+        $answer = [];
+        $lines = LogCapture::during(function () use (&$answer, $truck): void {
+            $answer = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
+        });
+        self::assertSame([], $lines);
+        self::assertSame(['POST', 'GET', 'POST'], array_column($this->http->requests, 'method'));
+        self::assertCount(3, $this->bucketCalls);
+        self::assertTrue($answer['contact']['found']);
+        self::assertSame('text_search', $answer['contact']['source']);
+        self::assertSame('ChIJnewPlaceId_42', $answer['lead']['google']['place_id']);
+        self::assertSame('2026-10-09 03:30:00', $answer['lead']['google']['matched_at']);
+        self::assertSame('ChIJnewPlaceId_42', array_values($this->leadTable->rows)[0]['google_place_id']);
+
+        // The place has gone altogether: no id is left on the lead, and the link is the pin again.
+        $this->http->json(404, ['error' => ['code' => 404, 'message' => 'Place ID is no longer valid', 'status' => 'NOT_FOUND']]);
         $this->http->queue(200, '{}');
-        $forced = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, true);
-        self::assertSame('not_found', $forced['lookup']);
-        self::assertCount(2, $this->http->requests);
-        // the id of the earlier match stays, the details of it do not
+        $gone = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
+        self::assertFalse($gone['contact']['found']);
         self::assertSame(
-            ['place_id' => 'ChIJN1t_tDeuEmsRUsoyG83frY4', 'lookup_state' => 'not_found', 'name' => null, 'address' => null, 'phone' => null,
-                'website' => null, 'maps_uri' => null, 'fetched_on' => '2026-10-09'],
-            $forced['lead']['google']
+            ['place_id' => null, 'lookup_state' => 'not_found', 'matched_at' => '2026-10-09 03:30:00', 'maps_url' => null],
+            $gone['lead']['google']
+        );
+        self::assertNull(array_values($this->leadTable->rows)[0]['google_place_id']);
+        self::assertSame(
+            'https://www.google.com/maps/search/?api=1&query=39.010000%2C-77.410000',
+            self::candidate($this->rank(), self::TAPROOM)['maps_url']
         );
     }
 
-    public function testNoMatchIsStoredAndCachedLikeAMatch(): void
+    public function testForceSearchesByNameAgainAlthoughAnIdIsKept(): void
+    {
+        $truck = self::truck();
+        $this->found();
+        $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
+        // The match turned out to be another business in the same building: the owner asks for a new match.
+        $this->clock->advance(3600);
+        $this->found(20.0, 'ChIJtheRightOne');
+        $forced = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, true);
+        self::assertSame(['POST', 'POST'], array_column($this->http->requests, 'method'));
+        self::assertSame('text_search', $forced['contact']['source']);
+        self::assertSame('ChIJtheRightOne', $forced['lead']['google']['place_id']);
+        self::assertSame('2026-10-08 04:30:00', $forced['lead']['google']['matched_at']);
+        self::assertCount(1, $this->leadTable->rows);
+        // a place that has no id yet is searched for by name with or without it
+        $this->found();
+        self::assertSame('text_search', $this->service->lookupContact(self::ORG, $truck, self::BAR, true)['contact']['source']);
+    }
+
+    public function testNoMatchKeepsNoIdAndTheNextLookupSearchesAgain(): void
     {
         $truck = self::truck();
         $this->http->queue(200, '{}');
         $answer = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
-        self::assertSame('not_found', $answer['lookup']);
         self::assertSame(
-            ['place_id' => null, 'lookup_state' => 'not_found', 'name' => null, 'address' => null, 'phone' => null, 'website' => null,
-                'maps_uri' => null, 'fetched_on' => '2026-10-08'],
+            [
+                'found' => false, 'name' => null, 'address' => null, 'phone' => null, 'website' => null, 'maps_uri' => null,
+                'fetched_at' => '2026-10-08T03:30:00Z', 'source' => 'text_search', 'saved' => false,
+                'attribution' => 'Phone and website from Google Maps',
+            ],
+            $answer['contact']
+        );
+        self::assertSame(
+            ['place_id' => null, 'lookup_state' => 'not_found', 'matched_at' => '2026-10-08 03:30:00', 'maps_url' => null],
             $answer['lead']['google']
         );
         $row = $this->leadTable->rows[$answer['lead']['id']];
         self::assertSame('not_found', $row['g_lookup_state']);
         self::assertNull($row['google_place_id']);
 
-        $this->clock->advance(29 * 86400);
-        $cached = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
-        self::assertSame('cached', $cached['lookup']);
-        self::assertSame('not_found', $cached['lead']['google']['lookup_state']);
-        self::assertCount(1, $this->http->requests);
-
-        $this->clock->advance(2 * 86400);
+        // Nothing stands in the way of asking again, at once or later: each time it is a search by name.
+        $this->http->queue(200, '{}');
+        $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
+        $this->clock->advance(40 * 86400);
         $this->found();
-        self::assertSame('found', $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false)['lookup']);
-        self::assertCount(2, $this->http->requests);
+        $found = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
+        self::assertTrue($found['contact']['found']);
+        self::assertSame(['POST', 'POST', 'POST'], array_column($this->http->requests, 'method'));
+        self::assertSame(self::PLACE_ID, $found['lead']['google']['place_id']);
+        self::assertSame('2026-11-17 03:30:00', $found['lead']['google']['matched_at']);
     }
 
-    public function testAMatchSomewhereElseIsNoConfidentMatchAndNothingOfItIsKept(): void
+    public function testAMatchSomewhereElseIsNoConfidentMatchAndNothingOfItIsShownOrKept(): void
     {
         $this->found(450.0);
         $answer = $this->service->lookupContact(self::ORG, self::truck(), self::TAPROOM, false);
-        self::assertSame('not_found', $answer['lookup']);
+        self::assertFalse($answer['contact']['found']);
         self::assertSame('not_found', $answer['lead']['google']['lookup_state']);
         self::assertNull($answer['lead']['google']['place_id']);
-        $stored = (string) json_encode($this->leadTable->rows);
-        foreach (['ChIJ', '555-0199', 'google-says', 'Google Way', '(Google)', 'cid=424242'] as $trace) {
-            self::assertStringNotContainsString($trace, $stored);
+        $out = (string) json_encode($answer) . json_encode($this->leadTable->rows);
+        foreach (array_merge(self::GOOGLE_TRACES, ['ChIJ']) as $trace) {
+            self::assertStringNotContainsString($trace, $out, 'the owner is not shown the details of another place');
         }
         // the map link stays the pin at the place's own point
-        $taproom = $this->rank()['candidates'][1];
-        self::assertSame('https://www.google.com/maps/search/?api=1&query=39.010000%2C-77.410000', $taproom['maps_url']);
+        self::assertSame(
+            'https://www.google.com/maps/search/?api=1&query=39.010000%2C-77.410000',
+            self::candidate($this->rank(), self::TAPROOM)['maps_url']
+        );
+    }
+
+    public function testAPlaceFoundWithoutAUsableIdIsShownAndSearchedForAgainNextTime(): void
+    {
+        $truck = self::truck();
+        $this->http->json(200, ['places' => [['id' => 'not an id!'] + self::googlePlace()]]);
+        $answer = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
+        self::assertTrue($answer['contact']['found']);
+        self::assertSame('(703) 555-0199', $answer['contact']['phone']);
+        self::assertSame(
+            ['place_id' => null, 'lookup_state' => 'found', 'matched_at' => '2026-10-08 03:30:00', 'maps_url' => null],
+            $answer['lead']['google']
+        );
+        $this->found();
+        $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
+        self::assertSame(['POST', 'POST'], array_column($this->http->requests, 'method'));
     }
 
     public function testAnEmptyBucketAnswersTooManyLookups(): void
@@ -1202,6 +1822,20 @@ final class ScoutingServiceTest extends TestCase
         self::assertSame([['tp_places_lookup', 1, 2]], $this->bucketCalls);
         self::assertSame([], $this->http->requests);
         self::assertSame([], $this->leadTable->rows);
+
+        // the same for a lookup by a stored id: the id stays where it is
+        $this->bucketAnswer = true;
+        $this->found();
+        $this->service->lookupContact(self::ORG, self::truck(), self::TAPROOM, false);
+        $rows = $this->leadTable->rows;
+        $this->bucketAnswer = false;
+        self::assertRefused(
+            TpRateLimited::class,
+            'Too many lookups right now. Try again in a minute',
+            fn () => $this->service->lookupContact(self::ORG, self::truck(), self::TAPROOM, false)
+        );
+        self::assertCount(1, $this->http->requests);
+        self::assertSame($rows, $this->leadTable->rows);
     }
 
     public function testARefusalIsRememberedForAnHour(): void
@@ -1223,7 +1857,7 @@ final class ScoutingServiceTest extends TestCase
         // after it, it is
         $this->clock->advance(2);
         $this->found();
-        self::assertSame('found', $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false)['lookup']);
+        self::assertTrue($this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false)['contact']['found']);
         self::assertCount(2, $this->http->requests);
     }
 
@@ -1255,6 +1889,28 @@ final class ScoutingServiceTest extends TestCase
         }
         self::assertSame([], $this->leadTable->rows, 'a failed lookup stores nothing');
         self::assertArrayNotHasKey('tp:places:refused:places', $this->cache->values);
+    }
+
+    public function testAFailedLookupByIdLeavesTheLeadAsItWas(): void
+    {
+        $truck = self::truck();
+        $this->found();
+        $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
+        $rows = $this->leadTable->rows;
+        $this->clock->advance(600);
+        foreach ([fn () => $this->http->queue(500, 'oops'), fn () => $this->http->queue(200, '{}'), fn () => $this->http->fail('timeout')] as $queue) {
+            $queue();
+            LogCapture::during(function () use ($truck): void {
+                self::assertRefused(
+                    TpUnavailable::class,
+                    'Contact lookup is not available on this server',
+                    fn () => $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false)
+                );
+            });
+            self::assertSame($rows, $this->leadTable->rows, 'the id that was kept stays, and no search by name follows a failure');
+            $this->clock->advance(61);
+        }
+        self::assertSame(['POST', 'GET', 'GET', 'GET'], array_column($this->http->requests, 'method'));
     }
 
     // ------------------------------------------------------------------------------------ save as spot
@@ -1297,8 +1953,7 @@ final class ScoutingServiceTest extends TestCase
         self::assertSame('Example Brewing', $this->leadTable->rows[$saved['lead']['id']]['place_name']);
 
         // the list shows it as saved
-        $listed = $this->rank()['candidates'][1]['lead'];
-        self::assertSame($spot['id'], $listed['spot_id']);
+        self::assertSame($spot['id'], self::candidate($this->rank(), self::TAPROOM)['lead']['spot_id']);
     }
 
     public function testTheOwnersFiguresGoIntoTheSpot(): void
@@ -1371,7 +2026,7 @@ final class ScoutingServiceTest extends TestCase
         $truck = self::truck();
         $this->found();
         $looked = $this->service->lookupContact(self::ORG, $truck, self::TAPROOM, false);
-        self::assertSame('(703) 555-0199', $looked['lead']['google']['phone']);
+        self::assertSame('(703) 555-0199', $looked['contact']['phone'], 'the browser was told');
 
         $saved = $this->service->saveAsSpot(self::ORG, $truck, self::USER, self::TAPROOM, []);
         $spot = $saved['spot'];
@@ -1379,20 +2034,19 @@ final class ScoutingServiceTest extends TestCase
         self::assertSame('+17035550100', $spot['host_details']['phone']);
         self::assertSame('https://example.com', $spot['host_details']['website']);
         self::assertSame('Example Brewing', $spot['host_details']['name']);
-        self::assertSame('ChIJN1t_tDeuEmsRUsoyG83frY4', $spot['host_details']['google_place_id']);
+        self::assertSame(self::PLACE_ID, $spot['host_details']['google_place_id']);
         self::assertSame('1 Example Rd, Sterling, VA 20166', $spot['address']);
 
-        // nothing else of Google's reached the spot: not in the answer, not in the row
+        // nothing else of Google's reached the spot or stayed on the lead: not in the answer, not in a row
         $row = $this->spotTable->rows[$spot['id']];
-        self::assertSame('ChIJN1t_tDeuEmsRUsoyG83frY4', $row['google_place_id']);
+        self::assertSame(self::PLACE_ID, $row['google_place_id']);
         unset($row['vectors_bin'], $spot['vectors']);
-        foreach ([(string) json_encode($row), (string) json_encode($spot)] as $text) {
-            foreach (['555-0199', 'google-says', 'Google Way', '(Google)', 'cid=424242', 'maps.google.com'] as $trace) {
+        foreach ([(string) json_encode($row), (string) json_encode($spot), (string) json_encode($saved['lead']), (string) json_encode($this->leadTable->rows)] as $text) {
+            foreach (self::GOOGLE_TRACES as $trace) {
                 self::assertStringNotContainsString($trace, $text);
             }
         }
-        // the lead keeps what was looked up
-        self::assertSame('(703) 555-0199', $saved['lead']['google']['phone']);
+        self::assertSame(self::PLACE_ID, $saved['lead']['google']['place_id']);
         // and the places themselves were only read
         self::assertSame([], $this->places->writes);
     }
@@ -1410,7 +2064,7 @@ final class ScoutingServiceTest extends TestCase
 
         // Archiving the spot frees the place: the lead reads as not saved, and it can be saved again.
         $this->spotTable->rows[$first['spot']['id']]['archived_at'] = '2026-10-08 09:00:00';
-        self::assertNull($this->rank()['candidates'][1]['lead']['spot_id']);
+        self::assertNull(self::candidate($this->rank(), self::TAPROOM)['lead']['spot_id']);
         self::assertNull($this->service->saveLead(self::ORG, $truck, self::TAPROOM, ['notes' => 'moved'])['lead']['spot_id']);
         $second = $this->service->saveAsSpot(self::ORG, $truck, self::USER, self::TAPROOM, []);
         self::assertNotSame($first['spot']['id'], $second['spot']['id']);
@@ -1548,11 +2202,19 @@ final class ScoutPlaces extends PlaceRepository
 
 /**
  * An in-memory `tp_scout_leads` behind the Database interface: it runs the statements ScoutLeadRepository
- * writes and answers its reads the way MySQL would, with NOW() taken from the test's clock (the table keeps
- * `g_fetched_at` as that clock's epoch). The repository under test is the real one.
+ * writes and answers its reads the way MySQL would, with NOW() taken from the test's clock. It has the
+ * columns of the migration and no other, so a statement that named a column for Google's name, address,
+ * phone, website or Maps link would fail here as it would in MySQL. The repository under test is the real one.
  */
 final class ScoutLeadTable extends Database
 {
+    /** The columns of the table as migration 043 creates it. A statement that names another one fails. */
+    public const COLUMNS = ['id', 'organization_id', 'truck_id', 'region_id', 'place_key', 'place_name', 'place_type', 'lat', 'lng',
+        'lead_state', 'notes', 'spot_id', 'google_place_id', 'g_lookup_state', 'g_fetched_at', 'created_at', 'updated_at'];
+
+    private const READ = 'SELECT id, organization_id, truck_id, region_id, place_key, place_name, place_type, lat, lng, lead_state, notes, '
+        . 'spot_id, google_place_id, g_lookup_state, g_fetched_at, created_at, updated_at FROM tp_scout_leads ';
+
     /** @var array<string, array<string, mixed>> rows by id */
     public array $rows = [];
 
@@ -1560,7 +2222,6 @@ final class ScoutLeadTable extends Database
     public array $statements = [];
 
     private FixedClock $clock;
-    private bool $inTransaction = false;
 
     public function __construct(FixedClock $clock)
     {
@@ -1569,32 +2230,28 @@ final class ScoutLeadTable extends Database
 
     public function beginTransaction(): void
     {
-        if ($this->inTransaction) {
-            throw new \LogicException('ScoutLeadTable: there is already an active transaction');
-        }
-        $this->inTransaction = true;
+        throw new \LogicException('ScoutLeadTable: no statement of a lead needs a transaction');
     }
 
     public function commit(): void
     {
-        $this->inTransaction = false;
+        throw new \LogicException('ScoutLeadTable: no statement of a lead needs a transaction');
     }
 
     public function rollback(): void
     {
-        $this->inTransaction = false;
+        throw new \LogicException('ScoutLeadTable: no statement of a lead needs a transaction');
     }
 
     public function fetchAll(string $sql, array $params = []): array
     {
         $sql = $this->record($sql);
-        if (str_starts_with($sql, 'SELECT id, organization_id, truck_id,')
-            && str_ends_with($sql, 'FROM tp_scout_leads WHERE organization_id = ? AND truck_id = ? AND region_id = ? ORDER BY place_key')) {
-            [$ttl, $org, $truck, $region] = self::bound($params);
+        if ($sql === self::READ . 'WHERE organization_id = ? AND truck_id = ? AND region_id = ? ORDER BY place_key') {
+            [$org, $truck, $region] = self::bound($params);
             $out = [];
             foreach ($this->rows as $row) {
                 if ($row['organization_id'] === $org && $row['truck_id'] === $truck && $row['region_id'] === $region) {
-                    $out[] = $this->read($row, (int) $ttl);
+                    $out[] = $row;
                 }
             }
             usort($out, static fn (array $a, array $b): int => strcmp((string) $a['place_key'], (string) $b['place_key']));
@@ -1607,18 +2264,13 @@ final class ScoutLeadTable extends Database
     {
         $sql = $this->record($sql);
         $params = self::bound($params);
-        $onePlace = 'FROM tp_scout_leads WHERE organization_id = ? AND truck_id = ? AND region_id = ? AND place_key = ?';
-        if (str_starts_with($sql, 'SELECT id, organization_id, truck_id,') && str_ends_with($sql, $onePlace)) {
-            $ttl = (int) array_shift($params);
-            $row = $this->one($params);
-            return $row === null ? null : $this->read($row, $ttl);
+        $onePlace = 'WHERE organization_id = ? AND truck_id = ? AND region_id = ? AND place_key = ?';
+        if ($sql === self::READ . $onePlace) {
+            return $this->one($params);
         }
-        if ($sql === 'SELECT id ' . $onePlace) {
+        if ($sql === 'SELECT id FROM tp_scout_leads ' . $onePlace) {
             $row = $this->one($params);
             return $row === null ? null : ['id' => $row['id']];
-        }
-        if (preg_match('/^SELECT COUNT\(\*\) AS lead_count FROM tp_scout_leads WHERE (organization_id = \? AND )?g_fetched_at IS NOT NULL AND g_fetched_at < NOW\(\) - INTERVAL \? DAY$/', $sql, $m) === 1) {
-            return ['lead_count' => count($this->expired($params, ($m[1] ?? '') !== ''))];
         }
         throw new \LogicException('ScoutLeadTable: unexpected statement: ' . $sql);
     }
@@ -1633,11 +2285,9 @@ final class ScoutLeadTable extends Database
             if (count($columns) !== count($expressions)) {
                 throw new \LogicException('ScoutLeadTable: columns and values differ in number');
             }
-            $row = [
-                'google_place_id' => null, 'g_lookup_state' => null, 'g_name' => null, 'g_address' => null, 'g_phone' => null,
-                'g_website' => null, 'g_maps_uri' => null, 'g_fetched_at' => null,
-            ];
+            $row = array_fill_keys(self::COLUMNS, null);
             foreach ($columns as $i => $column) {
+                self::known($column);
                 $row[$column] = $expressions[$i] === 'NOW()' ? $this->now() : array_shift($params);
             }
             if ($params !== []) {
@@ -1666,16 +2316,6 @@ final class ScoutLeadTable extends Database
             }
             return new \PDOStatement();
         }
-        if (preg_match('/^UPDATE tp_scout_leads SET (.+) WHERE (organization_id = \? AND )?g_fetched_at IS NOT NULL AND g_fetched_at < NOW\(\) - INTERVAL \? DAY$/', $sql, $m) === 1) {
-            if (!$this->inTransaction) {
-                throw new \LogicException('ScoutLeadTable: the purge counts and empties in one transaction');
-            }
-            $changes = $this->assignments($m[1], $params);
-            foreach ($this->expired($params, ($m[2] ?? '') !== '') as $id) {
-                $this->rows[$id] = array_merge($this->rows[$id], $changes, ['updated_at' => $this->now()]);
-            }
-            return new \PDOStatement();
-        }
         throw new \LogicException('ScoutLeadTable: unexpected statement: ' . $sql);
     }
 
@@ -1690,6 +2330,7 @@ final class ScoutLeadTable extends Database
         $changes = [];
         foreach (explode(', ', $list) as $assignment) {
             [$column, $expression] = explode(' = ', $assignment, 2);
+            self::known($column);
             switch ($expression) {
                 case '?':
                     if ($params === []) {
@@ -1701,7 +2342,7 @@ final class ScoutLeadTable extends Database
                     $changes[$column] = null;
                     break;
                 case 'NOW()':
-                    $changes[$column] = $column === 'g_fetched_at' ? $this->clock->epoch() : $this->now();
+                    $changes[$column] = $this->now();
                     break;
                 default:
                     throw new \LogicException('ScoutLeadTable: unexpected value expression: ' . $expression);
@@ -1710,26 +2351,12 @@ final class ScoutLeadTable extends Database
         return $changes;
     }
 
-    /**
-     * The ids of the rows whose lookup is older than the lifetime: [organization, days] or [days].
-     *
-     * @param list<mixed> $params
-     * @return list<string>
-     */
-    private function expired(array $params, bool $oneOrganization): array
+    /** What MySQL answers for a column the table does not have. */
+    private static function known(string $column): void
     {
-        $org = $oneOrganization ? array_shift($params) : null;
-        $days = (int) array_shift($params);
-        $ids = [];
-        foreach ($this->rows as $id => $row) {
-            if ($oneOrganization && $row['organization_id'] !== $org) {
-                continue;
-            }
-            if ($row['g_fetched_at'] !== null && $row['g_fetched_at'] < $this->clock->epoch() - $days * 86400) {
-                $ids[] = (string) $id;
-            }
+        if (!in_array($column, self::COLUMNS, true)) {
+            throw new \PDOException("SQLSTATE[42S22]: Column not found: 1054 Unknown column '" . $column . "' in 'field list'");
         }
-        return $ids;
     }
 
     /**
@@ -1745,24 +2372,6 @@ final class ScoutLeadTable extends Database
             }
         }
         return null;
-    }
-
-    /**
-     * A row as the read statement of the repository returns it.
-     *
-     * @param array<string, mixed> $row
-     * @return array<string, mixed>
-     */
-    private function read(array $row, int $ttlDays): array
-    {
-        $fetched = $row['g_fetched_at'];
-        $now = $this->clock->epoch();
-        unset($row['g_fetched_at']);
-        return $row + [
-            'g_fetched_on' => $fetched === null ? null : gmdate('Y-m-d', $fetched),
-            'g_age_hours' => $fetched === null ? null : intdiv($now - $fetched, 3600),
-            'g_fresh' => $fetched !== null && $fetched >= $now - $ttlDays * 86400 ? 1 : 0,
-        ];
     }
 
     /**

@@ -438,13 +438,14 @@ final class ExportServiceTest extends TestCase
 
     public function testNoGoogleContentLeavesThroughTheExport(): void
     {
-        // The fixture marks every stored piece of Google content: the looked-up contact fields of the
-        // leads, the legs in the context and in the result of each plan, the shared leg cache.
+        // The fixture marks every stored piece of Google content: the legs in the context and in the result of
+        // each plan, and the shared leg cache. (A lead stores none: of a contact lookup it keeps the place id.)
         $marked = 0;
         foreach ($this->tables->rows as $rows) {
             $marked += substr_count((string) json_encode($rows), TruckDataFixtures::SENTINEL);
         }
-        self::assertGreaterThan(20, $marked, 'the fixture holds Google content to leak');
+        self::assertGreaterThanOrEqual(8, $marked, 'the fixture holds Google content to leak');
+        self::assertStringNotContainsString(TruckDataFixtures::SENTINEL, (string) json_encode($this->tables->rows['tp_scout_leads']));
 
         $text = $this->export();
 

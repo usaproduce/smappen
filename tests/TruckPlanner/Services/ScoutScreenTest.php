@@ -299,16 +299,181 @@ final class ScoutScreenTest extends TestCase
             $first = $group[0];
             $rows = array_column($group, 'row');
             $scores = ScoutScreen::scores($first['A'], $first['profile'], $first['cal'], $first['fuel'], $first['profile']['base'], $rows);
-            self::assertSame(['screen', 'start'], array_keys($scores));
-            self::assertCount(count($group), $scores['screen']);
-            self::assertCount(count($group), $scores['start']);
+            self::assertSame(['screen', 'start', 'best', 'demand'], array_keys($scores));
+            foreach ($scores as $list) {
+                self::assertCount(count($group), $list);
+            }
             foreach ($group as $i => $f) {
                 $detail = self::detailOf($f);
                 self::assertSame($detail['screen'], $scores['screen'][$i], $f['name']);
                 self::assertSame($detail['start'], $scores['start'][$i], $f['name']);
+                self::assertSame($detail['best'], $scores['best'][$i], $f['name']);
+                self::assertSame($detail['demand'], $scores['demand'][$i], $f['name']);
             }
         }
-        self::assertSame(['screen' => [], 'start' => []], ScoutScreen::scores(Seeds::defaults(), self::profile(), null, self::FUEL, self::BASE, []));
+        self::assertSame(
+            ['screen' => [], 'start' => [], 'best' => [], 'demand' => []],
+            ScoutScreen::scores(Seeds::defaults(), self::profile(), null, self::FUEL, self::BASE, [])
+        );
+    }
+
+    // ------------------------------------------------------------------------------------ places that fill the truck
+
+    public function testDemandIsTheBestRunBeforeCapacityForAPlaceThatFillsTheTruck(): void
+    {
+        $A = Seeds::assumptions([], ['id' => 'dc', 'traffic_matrix' => 'dc', 'flags' => ['inauguration_day' => false]]);
+        $profile = self::profile();
+        self::assertSame(45.0, (float) $profile['capacity_orders_per_hour']);
+        self::assertSame(135000000, ScoutScreen::capacityKey($A, $profile), 'three hours at 45 an hour, in millionths');
+        self::assertSame(60000000, ScoutScreen::capacityKey($A, ['capacity_orders_per_hour' => 20] + $profile));
+
+        // The same truck without a limit to what it can serve: its best run is the demand of the place.
+        $unlimited = ['capacity_orders_per_hour' => 1.0e9] + $profile;
+        $checked = 0;
+        foreach ([[3000.0, true], [2000.0, true], [100.0, false], [0.0, false]] as [$workers, $fills]) {
+            $row = self::officeAt('w01', 1500.0, $workers);
+            $detail = ScoutScreen::detail($A, $profile, null, self::FUEL, self::BASE, $row);
+            $free = ScoutScreen::detail($A, $unlimited, null, self::FUEL, self::BASE, $row);
+            self::assertSame($fills, Estimator::qkey($detail['best']) >= ScoutScreen::capacityKey($A, $profile), $workers . ' workers');
+            if ($fills) {
+                self::assertSame(135.0, $detail['best'], 'every hour of the window is capped');
+                self::assertClose($free['best'], $detail['demand'], $workers . ' workers: demand is the best run without the cap');
+                self::assertGreaterThan(135.0, $detail['demand']);
+                $checked++;
+            } else {
+                self::assertSame($detail['best'], $detail['demand'], 'below capacity demand is the best run itself');
+                self::assertSame($free['best'], $detail['best']);
+            }
+        }
+        self::assertSame(2, $checked);
+        // more people, more demand: it is what tells two full trucks apart
+        $big = ScoutScreen::detail($A, $profile, null, self::FUEL, self::BASE, self::officeAt('w01', 1500.0, 3000.0));
+        $small = ScoutScreen::detail($A, $profile, null, self::FUEL, self::BASE, self::officeAt('w02', 1500.0, 2000.0));
+        self::assertSame($big['best'], $small['best']);
+        self::assertGreaterThan($small['demand'], $big['demand']);
+        // The cap leaves the orders, the window and the model's numbers as they were.
+        $model = Estimator::stripFromRows(
+            $A,
+            $profile,
+            ['spot_id' => null, 'visibility' => 'normal', 'host' => null, 'fee_flat' => 0.0, 'fee_pct' => 0.0, 'fee_min' => 0.0, 'allowed' => null],
+            self::vectors(static fn (int $s): float => $s === 1 ? 3000.0 : 0.0, static fn (int $s): float => $s === 1 ? 3000.0 : 0.0, 0.0, 0.0),
+            Estimator::mapWeightRows($A, $profile, null)
+        );
+        foreach ($model as $how => $expected) {
+            self::assertClose($expected, $big['strip'][$how], 'hour ' . $how);
+        }
+        self::assertSame(45.0, max($big['strip']));
+    }
+
+    public function testNeighboursAtCapacityAreOrderedByDemandAndNothingElseMoves(): void
+    {
+        // The model's order a, b, c, d, e, f; a and b fill the truck, c does not, d, e and f do.
+        $ranked = ['a', 'b', 'c', 'd', 'e', 'f'];
+        $full = ['a' => true, 'b' => true, 'd' => true, 'e' => true, 'f' => true];
+        self::assertSame(
+            ['b', 'a', 'c', 'f', 'd', 'e'],
+            ScoutScreen::capacityOrder($ranked, $full, ['a' => 200.0, 'b' => 250.0, 'd' => 400.0, 'e' => 300.0, 'f' => 900.0]),
+            'a and b are neighbours, and so are d, e and f; c stays third and nothing passes it, although f has the largest demand of all'
+        );
+        // Places at capacity that are not neighbours keep the model's order, whatever their demand.
+        $five = ['a', 'b', 'c', 'd', 'e'];
+        self::assertSame($five, ScoutScreen::capacityOrder($five, ['a' => true, 'c' => true, 'e' => true], ['a' => 200.0, 'c' => 500.0, 'e' => 300.0]));
+        // equal demand (to the millionth): the model's order decides
+        $pair = ['a' => true, 'b' => true];
+        self::assertSame($five, ScoutScreen::capacityOrder($five, $pair, ['a' => 300.0, 'b' => 300.0000001]));
+        self::assertSame(['b', 'a', 'c', 'd', 'e'], ScoutScreen::capacityOrder($five, $pair, ['a' => 300.0, 'b' => 300.000001]));
+        // nobody, one place, everybody
+        self::assertSame($five, ScoutScreen::capacityOrder($five, [], []));
+        self::assertSame($five, ScoutScreen::capacityOrder($five, ['c' => true], ['c' => 9000.0]));
+        self::assertSame($five, ScoutScreen::capacityOrder($five, ['b' => false, 'd' => false], ['b' => 9000.0, 'd' => 1.0]));
+        $all = array_fill_keys($five, true);
+        self::assertSame(['e', 'd', 'c', 'b', 'a'], ScoutScreen::capacityOrder($five, $all, ['a' => 1.0, 'b' => 2.0, 'c' => 3.0, 'd' => 4.0, 'e' => 5.0]));
+        // a place at capacity whose demand is not given counts as none
+        self::assertSame(['b', 'a', 'c'], ScoutScreen::capacityOrder(['a', 'b', 'c'], ['a' => true, 'b' => true], ['b' => 1.0]));
+        // indexes work as ids, and the answer is a list
+        self::assertSame([3, 5, 7], ScoutScreen::capacityOrder([4 => 5, 9 => 3, 2 => 7], [5 => true, 3 => true], [5 => 1.0, 3 => 2.0]));
+        self::assertSame([], ScoutScreen::capacityOrder([], [], []));
+    }
+
+    public function testTheModelsOrderHoldsForEveryPairThatIsNotATie(): void
+    {
+        // Every way of marking six places at capacity, with demand running against the model's order: a
+        // place that is not at capacity keeps its position, and so does everything on either side of it.
+        $ranked = [10, 11, 12, 13, 14, 15];
+        for ($mask = 0; $mask < 64; $mask++) {
+            $full = [];
+            $demand = [];
+            foreach ($ranked as $n => $id) {
+                if (($mask >> $n) & 1) {
+                    $full[$id] = true;
+                    $demand[$id] = 100.0 + $n;
+                }
+            }
+            $list = ScoutScreen::capacityOrder($ranked, $full, $demand);
+            $sorted = $list;
+            sort($sorted);
+            self::assertSame($ranked, $sorted, 'the same places, mask ' . $mask);
+            foreach ($ranked as $n => $id) {
+                if (isset($full[$id])) {
+                    continue;
+                }
+                self::assertSame($id, $list[$n], 'mask ' . $mask);
+                self::assertEqualsCanonicalizing(array_slice($ranked, 0, $n), array_slice($list, 0, $n), 'nothing passes it, mask ' . $mask);
+            }
+            // inside a row of neighbours the largest demand is first
+            foreach ($list as $n => $id) {
+                if ($n > 0 && isset($full[$id]) && isset($full[$list[$n - 1]])) {
+                    self::assertGreaterThan($demand[$id], $demand[$list[$n - 1]], 'mask ' . $mask);
+                }
+            }
+        }
+    }
+
+    public function testEveryKindHasItsOwnOrder(): void
+    {
+        $A = Seeds::assumptions([], ['id' => 'dc', 'traffic_matrix' => 'dc', 'flags' => ['inauguration_day' => false]]);
+        $profile = self::profile();
+        $rows = [
+            self::officeAt('w01', 1000.0, 100.0),                       // 0  below capacity
+            self::officeAt('w02', 1000.0, 2000.0),                      // 1  at capacity, the smaller demand, the nearer
+            self::officeAt('w03', 4000.0, 3000.0),                      // 2  at capacity, the larger demand, farther
+            self::officeAt('w04', 2000.0, 300.0),                       // 3  below capacity
+            self::officeAt('n05', 1000.0, 50.0, 'industrial_site'),     // 4
+            self::officeAt('n06', 1000.0, 80.0, 'industrial_site'),     // 5
+            self::officeAt('w07', 500.0, 0.0),                          // 6  no window
+        ];
+        $scores = ScoutScreen::scores($A, $profile, null, self::FUEL, self::BASE, $rows);
+        $key = ScoutScreen::capacityKey($A, $profile);
+        // what the comments above say
+        self::assertGreaterThanOrEqual($key, Estimator::qkey($scores['best'][1]));
+        self::assertGreaterThanOrEqual($key, Estimator::qkey($scores['best'][2]));
+        self::assertLessThan($key, Estimator::qkey($scores['best'][3]));
+        self::assertGreaterThan($scores['screen'][2], $scores['screen'][1], 'the model\'s own order has the nearer of two full trucks first');
+        self::assertGreaterThan($scores['demand'][1], $scores['demand'][2]);
+
+        $orders = ScoutScreen::kindOrders($rows, $scores, $key);
+        self::assertSame(['office_park', 'industrial_site'], array_keys($orders));
+        // the two places at capacity lead, the larger demand first; then the others by screen
+        self::assertSame([2, 1, 3, 0, 6], $orders['office_park']);
+        self::assertSame([5, 4], $orders['industrial_site']);
+        // without the capacity rule the screen alone decides
+        self::assertSame([1, 2, 3, 0, 6], ScoutScreen::kindOrders($rows, $scores, 0)['office_park']);
+        self::assertSame([], ScoutScreen::kindOrders([], ['screen' => [], 'start' => [], 'best' => [], 'demand' => []], $key));
+    }
+
+    public function testEqualScreensAreTakenInPlaceKeyOrder(): void
+    {
+        $A = Seeds::defaults();
+        $profile = self::profile();
+        $rows = [self::officeAt('w30', 1500.0, 200.0), self::officeAt('w10', 1500.0, 200.0), self::officeAt('w20', 1500.0, 200.0)];
+        $scores = ScoutScreen::scores($A, $profile, null, self::FUEL, self::BASE, $rows);
+        self::assertSame($scores['screen'][0], $scores['screen'][1]);
+        self::assertSame(['office_park' => [1, 2, 0]], ScoutScreen::kindOrders($rows, $scores, ScoutScreen::capacityKey($A, $profile)));
+        // ... also when all three fill the truck with the same demand
+        $full = [self::officeAt('w30', 1500.0, 2000.0), self::officeAt('w10', 1500.0, 2000.0), self::officeAt('w20', 1500.0, 2000.0)];
+        $scores = ScoutScreen::scores($A, $profile, null, self::FUEL, self::BASE, $full);
+        self::assertSame(135.0, $scores['best'][0]);
+        self::assertSame(['office_park' => [1, 2, 0]], ScoutScreen::kindOrders($full, $scores, ScoutScreen::capacityKey($A, $profile)));
     }
 
     public function testTheHostIsTheOneTheTypeDescribesAtTheDefaultSizeOfThePlace(): void
@@ -385,7 +550,7 @@ final class ScoutScreenTest extends TestCase
         self::assertSame(0, ScoutScreen::roundTripMinutes(Seeds::defaults(), self::profile(), self::BASE, self::fixtures()[0]['row'], ScoutScreen::NO_WINDOW));
     }
 
-    public function testTheShortlistTakesTheBestScreensInsideTheLimitThenThoseNearIt(): void
+    public function testReachableTakesThePlacesInsideTheLimitAndThoseNearItInTheOrderOfTheirKind(): void
     {
         $A = Seeds::assumptions([], ['id' => 'dc', 'traffic_matrix' => 'dc', 'flags' => ['inauguration_day' => false]]);
         $profile = self::profile();
@@ -410,12 +575,11 @@ final class ScoutScreenTest extends TestCase
             self::assertLessThan($minutes[$i + 1], $minutes[$i]);
         }
         self::assertSame(0, $minutes[6], 'a place without a window has no trip');
-        $byScreen = array_keys($scores['screen']);
-        usort($byScreen, static fn (int $a, int $b): int => $scores['screen'][$b] <=> $scores['screen'][$a]);
-        self::assertSame([5, 4, 3, 1, 2, 0, 6], $byScreen);
         foreach ($rows as $row) {
             self::assertLessThan(45.0, max(ScoutScreen::detail($A, $profile, null, self::FUEL, self::BASE, $row)['strip']));
         }
+        $orders = ScoutScreen::kindOrders($rows, $scores, ScoutScreen::capacityKey($A, $profile));
+        self::assertSame(['office_park' => [5, 4, 3, 1, 2, 0, 6]], $orders, 'one kind, best screen first');
 
         // A limit that holds w01 to w03, with w04 within a quarter over it and w05, w06 beyond.
         $limit = (int) (($minutes[2] + 1) / 2);
@@ -424,17 +588,50 @@ final class ScoutScreenTest extends TestCase
         $slack = ($minutes[3] + 0.5) / (2 * $limit);
         self::assertGreaterThan(2 * $limit * $slack, $minutes[4]);
 
-        $picked = ScoutScreen::shortlist($A, $profile, self::BASE, $rows, $scores, $limit, $slack, 10);
-        // inside the limit by screen (w02, w03, w01, then w07 without orders), then the one near it
-        self::assertSame([1, 2, 0, 6, 3], $picked);
-
-        // the cut takes the best of those inside first
-        self::assertSame([1, 2], ScoutScreen::shortlist($A, $profile, self::BASE, $rows, $scores, $limit, $slack, 2));
-        self::assertSame([], ScoutScreen::shortlist($A, $profile, self::BASE, $rows, $scores, $limit, $slack, 0));
+        $reach = static fn (int $limitMinutes, float $slackOver, int $max): array
+            => ScoutScreen::reachable($A, $profile, self::BASE, $rows, $scores, $orders, $limitMinutes, $slackOver, $max);
+        // In the order of the kind: w06 and w05 are passed over, w04 is near the limit, then those inside it
+        // (w02, w03, w01, and w07 without orders).
+        self::assertSame(['office_park' => [[3, false], [1, true], [2, true], [0, true], [6, true]]], $reach($limit, $slack, 10));
+        // the walk ends when enough places inside the limit are found
+        self::assertSame(['office_park' => [[3, false], [1, true], [2, true]]], $reach($limit, $slack, 2));
+        self::assertSame(['office_park' => []], $reach($limit, $slack, 0));
         // without slack nothing over the limit is asked about
-        self::assertSame([1, 2, 0, 6], ScoutScreen::shortlist($A, $profile, self::BASE, $rows, $scores, $limit, 1.0, 10));
+        self::assertSame(['office_park' => [[1, true], [2, true], [0, true], [6, true]]], $reach($limit, 1.0, 10));
         // a wide limit holds them all, best screen first
-        self::assertSame([5, 4, 3, 1, 2, 0, 6], ScoutScreen::shortlist($A, $profile, self::BASE, $rows, $scores, 60, 1.25, 10));
+        self::assertSame(
+            ['office_park' => [[5, true], [4, true], [3, true], [1, true], [2, true], [0, true], [6, true]]],
+            $reach(60, 1.25, 10)
+        );
+        // no more places near the limit are taken than places inside it
+        $far = [];
+        for ($i = 0; $i < 6; $i++) {
+            $far[] = self::officeAt('w1' . $i, 9000.0 + $i, 150.0 + $i);
+        }
+        $farScores = ScoutScreen::scores($A, $profile, null, self::FUEL, self::BASE, $far);
+        $farOrders = ScoutScreen::kindOrders($far, $farScores, ScoutScreen::capacityKey($A, $profile));
+        $taken = ScoutScreen::reachable($A, $profile, self::BASE, $far, $farScores, $farOrders, $limit, $slack, 4)['office_park'];
+        self::assertSame([[5, false], [4, false], [3, false], [2, false]], $taken);
+    }
+
+    public function testEveryKindIsWalkedOnItsOwn(): void
+    {
+        $A = Seeds::assumptions([], ['id' => 'dc', 'traffic_matrix' => 'dc', 'flags' => ['inauguration_day' => false]]);
+        $profile = self::profile();
+        $rows = [];
+        // Twelve offices and three warehouses, all close by.
+        for ($i = 0; $i < 12; $i++) {
+            $rows[] = self::officeAt(sprintf('w%02d', $i), 800.0 + 10.0 * $i, 200.0 - $i);
+        }
+        for ($i = 0; $i < 3; $i++) {
+            $rows[] = self::officeAt(sprintf('n%02d', $i), 900.0 + 10.0 * $i, 20.0 - $i, 'industrial_site');
+        }
+        $scores = ScoutScreen::scores($A, $profile, null, self::FUEL, self::BASE, $rows);
+        $orders = ScoutScreen::kindOrders($rows, $scores, ScoutScreen::capacityKey($A, $profile));
+        $reach = ScoutScreen::reachable($A, $profile, self::BASE, $rows, $scores, $orders, 30, 1.25, 5);
+        // The many offices do not crowd the warehouses out: each kind gives its own best.
+        self::assertSame([[0, true], [1, true], [2, true], [3, true], [4, true]], $reach['office_park']);
+        self::assertSame([[12, true], [13, true], [14, true]], $reach['industrial_site']);
     }
 
     public function testAPlaceWithoutAWindowIsHeldToTheLimitOnItsStraightLineEstimate(): void
@@ -456,22 +653,140 @@ final class ScoutScreenTest extends TestCase
         self::assertEqualsWithDelta(10.8, $estimate($rows[0]), 0.1);
         self::assertEqualsWithDelta(32.9, $estimate($rows[1]), 0.1);
 
-        // a limit of 15 minutes holds both; one of 10 holds the near one, and the far one is not "near the limit"
-        self::assertSame([2, 0, 1], ScoutScreen::shortlist($A, $profile, self::BASE, $rows, $scores, 17, 1.25, 10));
-        self::assertSame([2, 0], ScoutScreen::shortlist($A, $profile, self::BASE, $rows, $scores, 15, 1.25, 10));
-        self::assertSame([2, 0], ScoutScreen::shortlist($A, $profile, self::BASE, $rows, $scores, 15, 3.0, 10));
-        self::assertSame([], ScoutScreen::shortlist($A, $profile, self::BASE, [$rows[1]], ['screen' => [0.0], 'start' => [ScoutScreen::NO_WINDOW]], 5, 1.25, 10));
+        $orders = ScoutScreen::kindOrders($rows, $scores, ScoutScreen::capacityKey($A, $profile));
+        self::assertSame(['office_park' => [2, 0, 1]], $orders);
+        $reach = static fn (int $limit, float $slack): array
+            => ScoutScreen::reachable($A, $profile, self::BASE, $rows, $scores, $orders, $limit, $slack, 10)['office_park'];
+        // a limit of 17 minutes holds both; one of 15 holds the near one, and the far one is not "near the limit"
+        self::assertSame([[2, true], [0, true], [1, true]], $reach(17, 1.25));
+        self::assertSame([[2, true], [0, true]], $reach(15, 1.25));
+        self::assertSame([[2, true], [0, true]], $reach(15, 3.0));
+        self::assertSame(
+            ['office_park' => []],
+            ScoutScreen::reachable(
+                $A,
+                $profile,
+                self::BASE,
+                [$rows[1]],
+                ['screen' => [0.0], 'start' => [ScoutScreen::NO_WINDOW], 'best' => [0.0], 'demand' => [0.0]],
+                ['office_park' => [0]],
+                5,
+                1.25,
+                10
+            )
+        );
     }
 
-    public function testEqualScreensAreTakenInPlaceKeyOrder(): void
+    // ------------------------------------------------------------------------------------ one place, one entry
+
+    public function testTheSiteNameDropsWhatTellsThePartsOfASiteApart(): void
     {
-        $A = Seeds::defaults();
-        $profile = self::profile();
-        $rows = [self::officeAt('w30', 1500.0, 200.0), self::officeAt('w10', 1500.0, 200.0), self::officeAt('w20', 1500.0, 200.0)];
-        $scores = ScoutScreen::scores($A, $profile, null, self::FUEL, self::BASE, $rows);
-        self::assertSame($scores['screen'][0], $scores['screen'][1]);
-        self::assertSame([1, 2, 0], ScoutScreen::shortlist($A, $profile, self::BASE, $rows, $scores, 30, 1.25, 10));
+        $sites = [
+            // names of the loaded region: one employer or complex mapped building by building
+            'Freddie Mac - HQ 1' => 'freddie mac',
+            'Freddie Mac - HQ 4' => 'freddie mac',
+            'Freddie Mac - Westbranch' => 'freddie mac',
+            'Capital One: Center 2' => 'capital one',
+            'Rotunda Building II' => 'rotunda',
+            'Rotunda Building V' => 'rotunda',
+            'Parkside Building A' => 'parkside',
+            'South Campus Commons 7' => 'south campus commons',
+            'Westover Place XIV' => 'westover place',
+            'Westover Place' => 'westover place',
+            'Sonesta ES Suites Fairfax 2' => 'sonesta es suites fairfax',
+            'World Bank (G Building)' => 'world bank',
+            'University Research Center (north building)' => 'university research center',
+            'Preserve at Westfields Phase II' => 'preserve at westfields',
+            'Penderwood Water Tank Lot No. 2' => 'penderwood water tank',
+            'The Bethesdan Hotel, Tapestry Collection by Hilton' => 'the bethesdan hotel',
+            'Cargo Building 3' => 'cargo',
+            'MicroStrategy HQ' => 'microstrategy',
+            // a name that is only a part word keeps one word
+            'Building 6' => 'building',
+            'Tower 1' => 'tower',
+            'Courtyard 400' => 'courtyard',
+            // what a name starts with stays: a street number tells two buildings apart
+            '1600 Tysons Boulevard' => '1600 tysons boulevard',
+            '1650 Tysons Boulevard' => '1650 tysons boulevard',
+            '880 P' => '880',
+            // case, punctuation, the ampersand and a dash
+            'Vencore' => 'vencore',
+            "Herndon Farmers' Market" => 'herndon farmers market',
+            'Herndon Farmers Market' => 'herndon farmers market',
+            'Harpers Ferry Adventure center' => 'harpers ferry adventure center',
+            'Smith & Sons' => 'smith and sons',
+            "M-NCPPC \u{2013} South Germantown" => 'm ncppc',
+            'Coca-Cola Consolidated, Inc.' => 'coca cola consolidated',
+            "Caf\u{00E9} Zo\u{00EB} III" => "caf\u{00E9} zo\u{00EB}",
+            // nothing stands before the separator: the whole name is read
+            '(Annex)' => 'annex',
+            ': Two' => 'two',
+            // a word that only looks like a number is a word
+            'Mix' => 'mix',
+            'Civic Center' => 'civic center',
+            // no letter, no digit: no site name
+            '' => '',
+            ' - ' => '',
+            "\u{2605}\u{2605}" => '',
+        ];
+        foreach ($sites as $name => $site) {
+            self::assertSame($site, ScoutScreen::siteName((string) $name), (string) $name);
+        }
+        self::assertSame('', ScoutScreen::siteName("\xC3\x28 not text"));
     }
+
+    public function testASiteThatIsMappedAsSeveralPlacesIsOneEntry(): void
+    {
+        $at = static fn (string $site, float $metresNorth, bool $exempt = false): array => [
+            'site' => $site,
+            'lat' => self::BASE['lat'] + $metresNorth / 6371008.8 * 180.0 / 3.141592653589793,
+            'lng' => self::BASE['lng'],
+            'exempt' => $exempt,
+        ];
+        // Best first: four buildings of one employer in a row 300 m apart, another employer between them,
+        // and a place of the first name far away.
+        $places = [
+            $at('freddie mac', 0.0),        // 0 kept
+            $at('vencore', 100.0),          // 1 kept
+            $at('freddie mac', 300.0),      // 2 within 400 m of 0
+            $at('freddie mac', 600.0),      // 3 600 m from 0, 300 m from 2: one site through the chain
+            $at('freddie mac', 5000.0),     // 4 another site of the same name
+            $at('vencore', 450.0),          // 5 350 m from 1
+            $at('freddie mac', 5399.0),     // 6 within 400 m of 4
+            $at('', 0.0),                   // 7 a place without a site name is never merged
+            $at('', 0.0),                   // 8
+        ];
+        self::assertSame(
+            [[0, [2, 3]], [1, [5]], [4, [6]], [7, []], [8, []]],
+            ScoutScreen::sameSites($places, 400.0)
+        );
+        // the radius is the setting: at 250 m nothing reaches, at 300 m the chain does (the limit counts)
+        self::assertCount(9, ScoutScreen::sameSites($places, 250.0));
+        self::assertSame([0, [2, 3]], ScoutScreen::sameSites($places, 300.5)[0]);
+        // the first of a site is the one that is kept: the order of the list decides
+        self::assertSame([[0, [1]]], ScoutScreen::sameSites([$at('rotunda', 50.0), $at('rotunda', 0.0)], 400.0));
+        self::assertSame([], ScoutScreen::sameSites([], 400.0));
+    }
+
+    public function testAPlaceThatIsExemptIsKeptInItsOwnRight(): void
+    {
+        $at = static fn (string $site, float $metresNorth, bool $exempt = false): array => [
+            'site' => $site,
+            'lat' => self::BASE['lat'] + $metresNorth / 6371008.8 * 180.0 / 3.141592653589793,
+            'lng' => self::BASE['lng'],
+            'exempt' => $exempt,
+        ];
+        // The third building is one the owner has a lead for: it is not merged, and nothing is merged into it.
+        $places = [$at('freddie mac', 0.0), $at('freddie mac', 100.0), $at('freddie mac', 200.0, true), $at('freddie mac', 300.0)];
+        self::assertSame([[0, [1, 3]], [2, []]], ScoutScreen::sameSites($places, 400.0));
+        // also when it comes first
+        $places = [$at('freddie mac', 0.0, true), $at('freddie mac', 100.0), $at('freddie mac', 200.0)];
+        self::assertSame([[0, []], [1, [2]]], ScoutScreen::sameSites($places, 400.0));
+        // a chain does not run through it
+        $places = [$at('rotunda', 0.0), $at('rotunda', 350.0, true), $at('rotunda', 700.0)];
+        self::assertSame([[0, []], [1, []], [2, []]], ScoutScreen::sameSites($places, 400.0));
+    }
+
 
     // ------------------------------------------------------------------------------------ purity
 

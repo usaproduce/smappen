@@ -5,7 +5,6 @@ namespace App\Tests\TruckPlanner\Data;
 
 use App\Tests\TruckPlanner\Support\RecordingDatabase;
 use App\TruckPlanner\Data\ScoutLeadRepository;
-use App\TruckPlanner\Services\Support\TpConfig;
 use PHPUnit\Framework\TestCase;
 
 final class ScoutLeadRepositoryTest extends TestCase
@@ -17,13 +16,8 @@ final class ScoutLeadRepositoryTest extends TestCase
     private const REGION = 'dc';
     private const KEY = 'w264230766';
 
-    /** The Google content columns, which only a lookup writes and only the purge empties. */
-    private const GOOGLE_TEXTS = ['g_name', 'g_address', 'g_phone', 'g_website', 'g_maps_uri'];
-
-    protected function tearDown(): void
-    {
-        TpConfig::replace(null);
-    }
+    /** The columns that held Google Places content before only the place id was kept. They are gone. */
+    private const REMOVED = ['g_name', 'g_address', 'g_phone', 'g_website', 'g_maps_uri'];
 
     /**
      * A lead as MySQL returns it.
@@ -37,26 +31,9 @@ final class ScoutLeadRepositoryTest extends TestCase
             'id' => self::LEAD, 'organization_id' => self::ORG, 'truck_id' => self::TRUCK, 'region_id' => self::REGION,
             'place_key' => self::KEY, 'place_name' => 'Example Brewing', 'place_type' => 'taproom',
             'lat' => 39.010000000000005, 'lng' => -77.41, 'lead_state' => 'contacted', 'notes' => 'Call back Tuesday',
-            'spot_id' => null, 'google_place_id' => null,
-            'g_lookup_state' => null, 'g_name' => null, 'g_address' => null, 'g_phone' => null, 'g_website' => null,
-            'g_maps_uri' => null, 'g_fetched_on' => null, 'g_age_hours' => null, 'g_fresh' => 0,
+            'spot_id' => null, 'google_place_id' => null, 'g_lookup_state' => null, 'g_fetched_at' => null,
             'created_at' => '2026-10-04 23:50:12', 'updated_at' => '2026-10-05 08:01:00',
         ];
-    }
-
-    /**
-     * The row above after a lookup that found the place two days ago.
-     *
-     * @return array<string, mixed>
-     */
-    private static function lookedUp(): array
-    {
-        return self::databaseRow([
-            'google_place_id' => 'ChIJexample', 'g_lookup_state' => 'found', 'g_name' => 'Example Brewing Co',
-            'g_address' => '1 Example Rd, Sterling, VA 20166', 'g_phone' => '(703) 555-0100',
-            'g_website' => 'https://example.com/', 'g_maps_uri' => 'https://maps.google.com/?cid=1',
-            'g_fetched_on' => '2026-10-03', 'g_age_hours' => '49', 'g_fresh' => '1',
-        ]);
     }
 
     // ------------------------------------------------------------------------------------ reads
@@ -75,7 +52,7 @@ final class ScoutLeadRepositoryTest extends TestCase
                 'id' => self::LEAD, 'organization_id' => self::ORG, 'truck_id' => self::TRUCK, 'region_id' => self::REGION,
                 'place_key' => self::KEY, 'place_name' => 'Example Brewing', 'place_type' => 'taproom',
                 'lat' => 39.010000000000005, 'lng' => -77.41, 'status' => 'contacted', 'notes' => 'Call back Tuesday',
-                'spot_id' => null, 'google_place_id' => null, 'google' => null,
+                'spot_id' => null, 'google_place_id' => null, 'lookup_state' => null, 'matched_at' => null,
                 'created_at' => '2026-10-04 23:50:12', 'updated_at' => '2026-10-05 08:01:00',
             ],
             $leads[self::KEY]
@@ -87,19 +64,8 @@ final class ScoutLeadRepositoryTest extends TestCase
         $call = $db->only('FROM tp_scout_leads');
         self::assertSame('fetchAll', $call['kind']);
         self::assertStringContainsString('WHERE organization_id = ? AND truck_id = ? AND region_id = ? ORDER BY place_key', $call['sql']);
-        // the lifetime of Google content first, then the tenant, the truck and the region
-        self::assertSame([30, self::ORG, self::TRUCK, self::REGION], $call['params']);
+        self::assertSame([self::ORG, self::TRUCK, self::REGION], $call['params']);
         self::assertStringNotContainsString('SELECT *', $call['sql']);
-    }
-
-    public function testFreshnessIsDecidedInSqlWithTheDatabaseClock(): void
-    {
-        $db = new RecordingDatabase();
-        (new ScoutLeadRepository($db))->find(self::ORG, self::TRUCK, self::REGION, self::KEY);
-        $sql = $db->only('FROM tp_scout_leads')['sql'];
-        self::assertStringContainsString('(g_fetched_at IS NOT NULL AND g_fetched_at >= NOW() - INTERVAL ? DAY) AS g_fresh', $sql);
-        self::assertStringContainsString('TIMESTAMPDIFF(HOUR, g_fetched_at, NOW()) AS g_age_hours', $sql);
-        self::assertStringContainsString('DATE(g_fetched_at) AS g_fetched_on', $sql);
     }
 
     public function testOneLeadIsFoundByItsPlaceKey(): void
@@ -112,46 +78,46 @@ final class ScoutLeadRepositoryTest extends TestCase
         $call = $db->only('FROM tp_scout_leads');
         self::assertSame('fetch', $call['kind']);
         self::assertStringContainsString('WHERE organization_id = ? AND truck_id = ? AND region_id = ? AND place_key = ?', $call['sql']);
-        self::assertSame([30, self::ORG, self::TRUCK, self::REGION, self::KEY], $call['params']);
+        self::assertSame([self::ORG, self::TRUCK, self::REGION, self::KEY], $call['params']);
 
         self::assertNull((new ScoutLeadRepository(new RecordingDatabase()))->find(self::ORG, self::TRUCK, self::REGION, 'w0'));
     }
 
-    public function testALookupYoungerThanItsLifetimeIsReadAsGoogleContent(): void
+    public function testTheReadNamesItsColumnsAndTheThreeALookupLeaves(): void
     {
-        $db = (new RecordingDatabase())->queue(self::lookedUp());
-        $lead = (new ScoutLeadRepository($db))->find(self::ORG, self::TRUCK, self::REGION, self::KEY);
-        self::assertSame('ChIJexample', $lead['google_place_id']);
+        $db = new RecordingDatabase();
+        (new ScoutLeadRepository($db))->find(self::ORG, self::TRUCK, self::REGION, self::KEY);
         self::assertSame(
-            [
-                'lookup_state' => 'found', 'name' => 'Example Brewing Co', 'address' => '1 Example Rd, Sterling, VA 20166',
-                'phone' => '(703) 555-0100', 'website' => 'https://example.com/', 'maps_uri' => 'https://maps.google.com/?cid=1',
-                'fetched_on' => '2026-10-03', 'age_hours' => 49,
-            ],
-            $lead['google']
+            'SELECT id, organization_id, truck_id, region_id, place_key, place_name, place_type, lat, lng, lead_state, notes, spot_id, '
+            . 'google_place_id, g_lookup_state, g_fetched_at, created_at, updated_at FROM tp_scout_leads '
+            . 'WHERE organization_id = ? AND truck_id = ? AND region_id = ? AND place_key = ?',
+            $db->only('FROM tp_scout_leads')['sql']
         );
     }
 
-    public function testAnOlderLookupReadsAsNoGoogleContentAndThePlaceIdStays(): void
+    public function testALookupLeavesThePlaceIdTheOutcomeAndTheTime(): void
     {
-        // The row still holds its texts (the purge has not run yet); the database says it is not fresh.
-        $db = (new RecordingDatabase())->queue(['g_fresh' => 0, 'g_age_hours' => 745, 'g_fetched_on' => '2026-09-04'] + self::lookedUp());
-        $lead = (new ScoutLeadRepository($db))->find(self::ORG, self::TRUCK, self::REGION, self::KEY);
-        self::assertNull($lead['google']);
-        self::assertSame('ChIJexample', $lead['google_place_id']);
-    }
-
-    public function testTheLifetimeOfGoogleContentIsTheSetting(): void
-    {
-        $config = TpConfig::all();
-        $config['places']['contact_ttl_days'] = 7;
-        TpConfig::replace($config);
-        $db = new RecordingDatabase();
+        $db = (new RecordingDatabase())->queue(
+            self::databaseRow(['google_place_id' => 'ChIJexample', 'g_lookup_state' => 'found', 'g_fetched_at' => '2026-10-03 14:05:09']),
+            self::databaseRow(['g_lookup_state' => 'not_found', 'g_fetched_at' => '2026-10-04 09:00:00'])
+        );
         $repository = new ScoutLeadRepository($db);
-        $repository->find(self::ORG, self::TRUCK, self::REGION, self::KEY);
-        $repository->purgeExpiredGoogle(self::ORG);
-        self::assertSame(7, $db->calls[0]['params'][0]);
-        self::assertSame([self::ORG, 7], $db->only('SELECT COUNT(*)')['params']);
+        $found = $repository->find(self::ORG, self::TRUCK, self::REGION, self::KEY);
+        self::assertSame('ChIJexample', $found['google_place_id']);
+        self::assertSame('found', $found['lookup_state']);
+        self::assertSame('2026-10-03 14:05:09', $found['matched_at']);
+
+        $none = $repository->find(self::ORG, self::TRUCK, self::REGION, self::KEY);
+        self::assertNull($none['google_place_id']);
+        self::assertSame('not_found', $none['lookup_state']);
+        self::assertSame('2026-10-04 09:00:00', $none['matched_at']);
+
+        // A read row has no key that could carry what Google answered about the place.
+        self::assertSame(
+            ['id', 'organization_id', 'truck_id', 'region_id', 'place_key', 'place_name', 'place_type', 'lat', 'lng', 'status', 'notes',
+                'spot_id', 'google_place_id', 'lookup_state', 'matched_at', 'created_at', 'updated_at'],
+            array_keys($found)
+        );
     }
 
     // ------------------------------------------------------------------------------------ upsert
@@ -186,9 +152,6 @@ final class ScoutLeadRepositoryTest extends TestCase
             [$id, self::ORG, self::TRUCK, self::REGION, self::KEY, 'new', 'Spoke to the manager', null, 'Example Brewing', 'taproom', '39.010000000000005', '-77.41'],
             $insert['params']
         );
-        foreach (self::GOOGLE_TEXTS as $column) {
-            self::assertStringNotContainsString($column, $insert['sql']);
-        }
     }
 
     public function testALaterTouchChangesOnlyTheColumnsItCarries(): void
@@ -242,7 +205,12 @@ final class ScoutLeadRepositoryTest extends TestCase
     public function testOnlyTheOwnersColumnsCanBeSetThroughUpsert(): void
     {
         self::assertSame(['status', 'notes', 'spot_id', 'place_name', 'place_type', 'lat', 'lng'], array_keys(ScoutLeadRepository::COLUMNS));
-        foreach (['google_place_id', 'g_phone', 'g_website', 'g_fetched_at', 'organization_id', 'lead_state'] as $column) {
+        // Neither what a lookup leaves, nor a text of Google's answer under any name, nor a column of the row.
+        $refused = array_merge(
+            self::REMOVED,
+            ['google_place_id', 'g_lookup_state', 'g_fetched_at', 'organization_id', 'lead_state', 'name', 'address', 'phone', 'website', 'maps_uri']
+        );
+        foreach ($refused as $column) {
             $db = new RecordingDatabase();
             try {
                 (new ScoutLeadRepository($db))->upsert(self::ORG, self::TRUCK, self::REGION, self::KEY, [$column => 'x']);
@@ -260,55 +228,81 @@ final class ScoutLeadRepositoryTest extends TestCase
         (new ScoutLeadRepository($db))->upsert(self::ORG, self::TRUCK, self::REGION, self::KEY, ['status' => null]);
     }
 
-    // ------------------------------------------------------------------------------------ Google content
+    // ------------------------------------------------------------------------------------ what a lookup leaves
 
-    public function testAFoundLookupStoresThePlaceIdTheTextsAndTheDatabaseTime(): void
+    public function testAMatchWritesThePlaceIdTheOutcomeAndTheDatabaseTimeAndNothingElse(): void
     {
         $db = new RecordingDatabase();
-        (new ScoutLeadRepository($db))->setGoogle(self::LEAD, self::ORG, [
-            'lookup_state' => 'found',
-            'place_id' => 'ChIJexample',
-            'name' => 'Example Brewing Co',
-            'address' => '1 Example Rd, Sterling, VA 20166',
-            'phone' => '(703) 555-0100',
-            'website' => null,
-            'maps_uri' => 'https://maps.google.com/?cid=1',
-        ]);
+        (new ScoutLeadRepository($db))->setMatch(self::LEAD, self::ORG, true, 'ChIJN1t_tDeuEmsRUsoyG83frY4');
         $call = $db->only('UPDATE tp_scout_leads');
         self::assertSame(
-            'UPDATE tp_scout_leads SET google_place_id = ?, g_lookup_state = ?, g_name = ?, g_address = ?, g_phone = ?, '
-            . 'g_website = ?, g_maps_uri = ?, g_fetched_at = NOW() WHERE id = ? AND organization_id = ?',
+            'UPDATE tp_scout_leads SET google_place_id = ?, g_lookup_state = ?, g_fetched_at = NOW() WHERE id = ? AND organization_id = ?',
             $call['sql']
         );
-        self::assertSame(
-            ['ChIJexample', 'found', 'Example Brewing Co', '1 Example Rd, Sterling, VA 20166', '(703) 555-0100', null,
-                'https://maps.google.com/?cid=1', self::LEAD, self::ORG],
-            $call['params']
-        );
+        self::assertSame(['ChIJN1t_tDeuEmsRUsoyG83frY4', 'found', self::LEAD, self::ORG], $call['params']);
+        self::assertCount(1, $db->calls);
     }
 
-    public function testALookupThatFoundNothingLeavesAnEarlierPlaceIdAlone(): void
+    public function testASearchThatFoundNothingTakesAnEarlierPlaceIdAway(): void
     {
         $db = new RecordingDatabase();
-        (new ScoutLeadRepository($db))->setGoogle(self::LEAD, self::ORG, ['lookup_state' => 'not_found']);
+        (new ScoutLeadRepository($db))->setMatch(self::LEAD, self::ORG, false, null);
         $call = $db->only('UPDATE tp_scout_leads');
         self::assertSame(
-            'UPDATE tp_scout_leads SET g_lookup_state = ?, g_name = ?, g_address = ?, g_phone = ?, g_website = ?, g_maps_uri = ?, '
-            . 'g_fetched_at = NOW() WHERE id = ? AND organization_id = ?',
+            'UPDATE tp_scout_leads SET google_place_id = ?, g_lookup_state = ?, g_fetched_at = NOW() WHERE id = ? AND organization_id = ?',
             $call['sql']
         );
-        self::assertSame(['not_found', null, null, null, null, null, self::LEAD, self::ORG], $call['params']);
+        self::assertSame([null, 'not_found', self::LEAD, self::ORG], $call['params']);
     }
 
-    public function testALookupIsFoundOrNotFound(): void
+    public function testAPlaceFoundWithoutAUsableIdIsFoundWithoutOne(): void
     {
+        $db = new RecordingDatabase();
+        (new ScoutLeadRepository($db))->setMatch(self::LEAD, self::ORG, true, null);
+        self::assertSame([null, 'found', self::LEAD, self::ORG], $db->only('UPDATE tp_scout_leads')['params']);
+    }
+
+    public function testOnlyWhatLooksLikeAPlaceIdIsStoredAsOne(): void
+    {
+        // What a caller could pass by mistake: a phone number, a web address, a name, an address, a long text.
+        $notIds = ['(703) 555-0100', 'https://example.com/', 'Example Brewing Co', '1 Example Rd, Sterling, VA 20166', '',
+            'https://maps.google.com/?cid=1', str_repeat('a', 256), "ChIJ\nexample"];
+        foreach ($notIds as $text) {
+            $db = new RecordingDatabase();
+            try {
+                (new ScoutLeadRepository($db))->setMatch(self::LEAD, self::ORG, true, $text);
+                self::fail('stored as a place id: ' . $text);
+            } catch (\LogicException $e) {
+                self::assertSame([], $db->calls);
+            }
+        }
+        // and a search that found nothing has no id to keep
         $db = new RecordingDatabase();
         try {
-            (new ScoutLeadRepository($db))->setGoogle(self::LEAD, self::ORG, ['lookup_state' => 'maybe']);
-            self::fail('an unknown lookup state was stored');
+            (new ScoutLeadRepository($db))->setMatch(self::LEAD, self::ORG, false, 'ChIJexample');
+            self::fail('an id was stored for a place that was not found');
         } catch (\LogicException $e) {
             self::assertSame([], $db->calls);
         }
+        self::assertSame(1, preg_match(ScoutLeadRepository::PLACE_ID_FORM, 'ChIJN1t_tDeuEmsRUsoyG83frY4'));
+        self::assertSame(1, preg_match(ScoutLeadRepository::PLACE_ID_FORM, str_repeat('a', 255)));
+    }
+
+    public function testNoMethodTakesTheTextsOfAnAnswer(): void
+    {
+        // The public surface: nothing that stored or emptied Google content is left, and what a lookup
+        // writes goes through setMatch(), whose only values are a flag and a place id.
+        $methods = [];
+        foreach ((new \ReflectionClass(ScoutLeadRepository::class))->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+            $methods[] = $method->getName();
+        }
+        sort($methods);
+        self::assertSame(['__construct', 'find', 'forTruck', 'setMatch', 'setSpot', 'upsert'], $methods);
+        $parameters = [];
+        foreach ((new \ReflectionMethod(ScoutLeadRepository::class, 'setMatch'))->getParameters() as $parameter) {
+            $parameters[$parameter->getName()] = (string) $parameter->getType();
+        }
+        self::assertSame(['id' => 'string', 'orgId' => 'string', 'found' => 'bool', 'placeId' => '?string'], $parameters);
     }
 
     public function testTheSpotLinkIsSetAndTakenAway(): void
@@ -324,73 +318,19 @@ final class ScoutLeadRepositoryTest extends TestCase
         self::assertSame([null, self::LEAD, self::ORG], $db->calls[1]['params']);
     }
 
-    // ------------------------------------------------------------------------------------ purge
-
-    public function testThePurgeEmptiesTheGoogleColumnsOfOldLookupsAndKeepsThePlaceId(): void
-    {
-        $db = (new RecordingDatabase())->queue(['lead_count' => '3']);
-        $purged = (new ScoutLeadRepository($db))->purgeExpiredGoogle(self::ORG);
-
-        self::assertSame(3, $purged);
-        self::assertSame(['begin', 'fetch', 'query', 'commit'], $db->kinds());
-        $where = 'WHERE organization_id = ? AND g_fetched_at IS NOT NULL AND g_fetched_at < NOW() - INTERVAL ? DAY';
-        $count = $db->only('SELECT COUNT(*)');
-        self::assertSame('SELECT COUNT(*) AS lead_count FROM tp_scout_leads ' . $where, $count['sql']);
-        self::assertSame([self::ORG, 30], $count['params']);
-
-        $update = $db->only('UPDATE tp_scout_leads');
-        self::assertSame(
-            'UPDATE tp_scout_leads SET g_lookup_state = NULL, g_name = NULL, g_address = NULL, g_phone = NULL, g_website = NULL, '
-            . 'g_maps_uri = NULL, g_fetched_at = NULL ' . $where,
-            $update['sql']
-        );
-        self::assertSame([self::ORG, 30], $update['params']);
-        // the id Google gave the place may be kept
-        self::assertStringNotContainsString('google_place_id', $update['sql']);
-    }
-
-    public function testAPurgeWithNothingToDoWritesNothing(): void
-    {
-        $db = (new RecordingDatabase())->queue(['lead_count' => 0]);
-        self::assertSame(0, (new ScoutLeadRepository($db))->purgeExpiredGoogle(self::ORG));
-        self::assertSame(['begin', 'fetch', 'commit'], $db->kinds());
-    }
-
-    public function testTheDailySweepCoversEveryOrganization(): void
-    {
-        $db = (new RecordingDatabase())->queue(['lead_count' => 2]);
-        self::assertSame(2, (new ScoutLeadRepository($db))->purgeExpiredGoogle());
-        $where = 'WHERE g_fetched_at IS NOT NULL AND g_fetched_at < NOW() - INTERVAL ? DAY';
-        self::assertStringEndsWith($where, $db->only('SELECT COUNT(*)')['sql']);
-        self::assertStringEndsWith($where, $db->only('UPDATE tp_scout_leads')['sql']);
-        self::assertSame([30], $db->only('UPDATE tp_scout_leads')['params']);
-    }
-
-    public function testAFailingPurgeIsRolledBack(): void
-    {
-        $db = (new RecordingDatabase())->queue(['lead_count' => 1])->failOn('UPDATE tp_scout_leads');
-        try {
-            (new ScoutLeadRepository($db))->purgeExpiredGoogle(self::ORG);
-            self::fail('the failure was swallowed');
-        } catch (\RuntimeException $e) {
-            self::assertSame(['begin', 'fetch', 'query', 'rollback'], $db->kinds());
-        }
-    }
-
     // ------------------------------------------------------------------------------------ every statement
 
-    public function testEveryStatementOfAnOwnerCallCarriesTheOrganization(): void
+    public function testEveryStatementCarriesTheOrganizationAndNoneNamesARemovedColumn(): void
     {
         $db = new RecordingDatabase();
         $db->when('SELECT id FROM tp_scout_leads', ['id' => self::LEAD]);
-        $db->when('SELECT COUNT(*)', ['lead_count' => 1]);
         $repository = new ScoutLeadRepository($db);
         $repository->forTruck(self::ORG, self::TRUCK, self::REGION);
         $repository->find(self::ORG, self::TRUCK, self::REGION, self::KEY);
         $repository->upsert(self::ORG, self::TRUCK, self::REGION, self::KEY, ['status' => 'booked']);
-        $repository->setGoogle(self::LEAD, self::ORG, ['lookup_state' => 'not_found']);
+        $repository->setMatch(self::LEAD, self::ORG, true, 'ChIJexample');
+        $repository->setMatch(self::LEAD, self::ORG, false, null);
         $repository->setSpot(self::LEAD, self::ORG, null);
-        $repository->purgeExpiredGoogle(self::ORG);
 
         $statements = 0;
         foreach ($db->calls as $call) {
@@ -401,7 +341,11 @@ final class ScoutLeadRepositoryTest extends TestCase
             self::assertStringContainsString('organization_id = ?', $call['sql']);
             self::assertContains(self::ORG, $call['params'], $call['sql']);
             self::assertStringNotContainsString('SELECT *', $call['sql']);
+            foreach (self::REMOVED as $column) {
+                self::assertStringNotContainsString($column, $call['sql']);
+            }
         }
-        self::assertSame(8, $statements);
+        self::assertSame(7, $statements);
+        self::assertSame(['fetchAll', 'fetch', 'fetch', 'query', 'query', 'query', 'query'], $db->kinds(), 'no transaction: nothing is swept any more');
     }
 }

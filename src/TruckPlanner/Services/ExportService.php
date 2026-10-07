@@ -30,7 +30,8 @@ use App\TruckPlanner\Services\Support\TpConflict;
  *
  * It holds what the owner entered and what was computed from it for display. It holds nothing fetched from
  * Google: no drive leg, no result or context of a plan (only the three figures of a result that is still
- * current), no looked-up contact field. A Google place id may travel, as the terms allow.
+ * current). Looked-up contact details are stored nowhere, so there are none to leave out. A Google place
+ * id may travel, as the terms allow.
  *
  * Everything that can fail before the first byte fails as an ordinary error. After the first byte the
  * document is always closed as valid JSON: when a read fails half-way, the list that was being written is
@@ -470,8 +471,8 @@ class ExportService
     }
 
     /**
-     * A Scout lead: the place as it was noted and what the owner wrote about it. Looked-up contact fields
-     * are Google content and are not part of it.
+     * A Scout lead: the place as it was noted, what the owner wrote about it, and Google's id of the place
+     * when a contact lookup matched one. Nothing else of a lookup exists on the server.
      *
      * @param array<string, mixed> $row a row of TruckDataRepository::page('tp_scout_leads', ...)
      * @return array<string, mixed>
