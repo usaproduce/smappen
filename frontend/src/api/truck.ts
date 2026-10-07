@@ -392,11 +392,27 @@ export interface ScoutPlace {
 }
 
 export interface ScoutCandidate {
+  /** The kind of place the server lists it under (a place type). */
+  kind: string;
   result: ScoutResult;
   place: ScoutPlace;
   lead: Lead;
   maps_url: string;
   leg_sources: { out: DriveLegSource; back: DriveLegSource };
+  /** The truck's capacity caps its best window. */
+  at_capacity: boolean;
+  /** Orders neighbours at capacity. It ranks; it is not an estimate and is never shown. */
+  demand_key: number | null;
+  /** How many other entries of the same site were folded into this one. */
+  merged: number;
+}
+
+/** One kind of place in a Scout answer: how many were looked at and how many are listed. */
+export interface ScoutKindSummary {
+  kind: string;
+  screened: number;
+  listed: number;
+  merged: number;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -693,8 +709,17 @@ export interface AccuracyAnswer {
 }
 
 export interface ScoutAnswer {
-  /** At most 50, in rank order. The rank is the server's; the score is never shown. */
+  /**
+   * The best `quota` places of every kind, each kind in the server's order; with `types`, more of
+   * the kinds named. The rank is the server's; the score is never shown.
+   */
   candidates: ScoutCandidate[];
+  /** One row per kind, in the order the kinds are listed. */
+  kinds: ScoutKindSummary[];
+  /** How many places of a kind this answer lists at most. */
+  quota: number;
+  /** The standing notice: these are places to ask, not places that take trucks. */
+  notice: string;
   screened: number;
   truncated: boolean;
   limit_minutes: number;
@@ -1091,9 +1116,11 @@ export const truckApi = {
     return data.data;
   },
 
-  // Route 38 (60 requests an hour). `hide` lists the lead statuses removed before ranking.
-  async scout(options: { hide: LeadStatus[]; refresh?: boolean }): Promise<ScoutAnswer> {
+  // Route 38 (60 requests an hour). `hide` lists the lead statuses removed before ranking; `types`
+  // names kinds of place, of which the server then lists more than in its balanced answer.
+  async scout(options: { hide: LeadStatus[]; types?: string[]; refresh?: boolean }): Promise<ScoutAnswer> {
     const params: Record<string, string> = { hide: options.hide.join(',') };
+    if (options.types !== undefined && options.types.length > 0) params.types = options.types.join(',');
     if (options.refresh) params.refresh = '1';
     const { data } = await api.get('/api/truck/scout', { params });
     return data.data;

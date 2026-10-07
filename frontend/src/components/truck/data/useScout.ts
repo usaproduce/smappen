@@ -10,8 +10,8 @@ function hideKey(hide: readonly LeadStatus[]): string {
 }
 
 /**
- * Scout results (route 38): at most 50 places that could host the truck, in the server's rank order.
- * `hide` lists the lead statuses left out before ranking. The route is limited to 60 requests an
+ * Scout results (route 38): the places that could host the truck, the best few of every kind of
+ * place, each kind in the server's rank order. `hide` lists the lead statuses left out before ranking. The route is limited to 60 requests an
  * hour, so the answer is kept for ten minutes and never refetched by a timer or on focus; the
  * "Refresh" button calls `refreshScout`.
  */

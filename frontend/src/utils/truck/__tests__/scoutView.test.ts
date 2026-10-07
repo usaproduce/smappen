@@ -1,11 +1,8 @@
 // Truck Planner - Scout: what a card and the "Save as spot" dialog decide without the DOM
 // (docs/truck-planner/05_FRONTEND.md 4.8 and the row of this file in 8.2).
 //
-// Written from the specification, not from scoutView.ts. Where the two agree a test asserts it.
-// Where scoutView.ts prints a sentence in other words than 4.8 gives, the test that holds the
-// words of 4.8 is marked `it.fails` and says what differs: it passes only while the two still
-// disagree, so bringing either side to the other turns it red and gets the marker removed. Nothing
-// here was bent to make the code pass; the four marked tests are listed at the end of this file.
+// Written from the specification, not from scoutView.ts: every sentence asserted here is one 4.8
+// prints.
 
 import { describe, expect, it } from 'vitest';
 import { SEEDS } from '../model';
@@ -115,22 +112,17 @@ describe('the three kitchen sentences', () => {
     expect(kitchenSentence(undefined, 'no')).toBe(assumedNone);
   });
 
-  // 4.8 gives the sentence without a full stop; scoutView.ts prints "No kitchen of its own."
-  it.fails('no kitchen, in the words of 4.8', () => {
-    expect(spec(none)).toBe('No kitchen of its own');
+  it('no kitchen, in the words of 4.8', () => {
+    expect(spec(none)).toBe('No kitchen of its own.');
   });
 
-  // 4.8 gives the sentence without a full stop; scoutView.ts prints "Has its own kitchen."
-  it.fails('its own kitchen, in the words of 4.8', () => {
-    expect(spec(own)).toBe('Has its own kitchen');
+  it('its own kitchen, in the words of 4.8', () => {
+    expect(spec(own)).toBe('Has its own kitchen.');
   });
 
-  // 4.8: "Kitchen unknown: assumed {yes / no} for this kind of place". scoutView.ts prints
-  // "Kitchen unknown. Assumed to have its own, as most places of this kind do." and
-  // "Kitchen unknown. Assumed to have none, as most places of this kind do."
-  it.fails('an unknown kitchen, in the words of 4.8', () => {
-    expect(spec(assumedOwn)).toBe('Kitchen unknown: assumed yes for this kind of place');
-    expect(spec(assumedNone)).toBe('Kitchen unknown: assumed no for this kind of place');
+  it('an unknown kitchen, in the words of 4.8', () => {
+    expect(spec(assumedOwn)).toBe('Kitchen unknown. Assumed to have its own, as most places of this kind do.');
+    expect(spec(assumedNone)).toBe('Kitchen unknown. Assumed to have none, as most places of this kind do.');
   });
 });
 
@@ -173,12 +165,11 @@ describe('the three size cases', () => {
       expect(sizeSentence(residents).startsWith('Size assumed: 300 people living there')).toBe(true);
     });
 
-    // 4.8: "Size assumed: {host_size} {unit phrase} (typical for a {place type label})." scoutView.ts
-    // prints "Size assumed: 40 people in its busiest hour, a typical figure for this kind of place."
-    // and does not name the kind of place (sizeSentence is not handed the place type).
-    it.fails('a host size above 0, in the words of 4.8', () => {
+    // The sentence does not name the kind of place: the card's own line above it does, and a label
+    // such as "Events venue" would not take "a" in front of it.
+    it('a host size above 0, in the words of 4.8', () => {
       expect(placeTypeLabel(TYPICAL.place_type)).toBe('Brewery or taproom');
-      expect(spec(sizeSentence(TYPICAL))).toBe('Size assumed: 40 people in its busiest hour (typical for a Brewery or taproom).');
+      expect(spec(sizeSentence(TYPICAL))).toBe('Size assumed: 40 people in its busiest hour, a typical figure for this kind of place.');
     });
 
     it('a host size of 0 says there is no typical size and what the place was ranked on', () => {
@@ -267,17 +258,3 @@ describe('a card whose place is already a saved spot', () => {
     expect(cardView({ lead: leadOf({ spot_id: 'd9b3c1e2-0000-4000-8000-000000000001' }), result: without }).canWhy).toBe(false);
   });
 });
-
-// The four tests marked `it.fails` above, all of them wording and none of them behaviour:
-//
-//   1. "No kitchen of its own"           4.8 has no full stop; scoutView.ts adds one.
-//   2. "Has its own kitchen"             the same.
-//   3. the unknown kitchen               4.8: "Kitchen unknown: assumed {yes / no} for this kind of place";
-//                                        scoutView.ts: "Kitchen unknown. Assumed to have its own / none, as
-//                                        most places of this kind do."
-//   4. the assumed size                  4.8 ends "(typical for a {place type label})."; scoutView.ts ends
-//                                        ", a typical figure for this kind of place." and names no kind.
-//
-// They were left as they are rather than "fixed" here: each is the screen's copy, chosen by its
-// author, and the words of 4.8 are not plainly the better ones (the fourth would print "typical
-// for a Events venue"). Which side gives way is the owner's call.

@@ -3,8 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, Compass, Info, RefreshCw, SlidersHorizontal, TriangleAlert } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { api } from '../../../api/client';
-import { apiErrorMessage, apiErrorStatus, truckKeys, type LeadStatus } from '../../../api/truck';
+import { apiErrorMessage, apiErrorStatus, truckApi, truckKeys, type LeadStatus } from '../../../api/truck';
 import { withinTolerance } from '../../../utils/truck/assemble';
 import { fmtCount } from '../../../utils/truck/format';
 import { modFloor, stopMoney, typicalContext, vectorsMatch, windowOrders } from '../../../utils/truck/model';
@@ -46,14 +45,10 @@ const CARD = 'rounded-xl border bg-white';
 
 /**
  * One kind of place in depth (route 38 with `types`): the server then lists more of that kind than
- * the balanced answer holds. The typed client has no `types` yet, so the request is made here, on
- * the same route and through the same shared client.
+ * the balanced answer holds.
  */
-async function fetchKind(hide: readonly LeadStatus[], kind: string, refresh: boolean): Promise<unknown> {
-  const params: Record<string, string> = { hide: hide.join(','), types: kind };
-  if (refresh) params.refresh = '1';
-  const { data } = await api.get('/api/truck/scout', { params });
-  return data.data;
+function fetchKind(hide: readonly LeadStatus[], kind: string, refresh: boolean): Promise<unknown> {
+  return truckApi.scout({ hide: hide.slice(), types: [kind], refresh });
 }
 
 /**
