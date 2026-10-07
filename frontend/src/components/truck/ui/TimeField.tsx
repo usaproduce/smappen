@@ -62,6 +62,7 @@ export default function TimeField(props: TimeFieldProps) {
     }
     setOwnError(null);
     setDraft(null);
+    textAtFocus.current = null; // as in NumberField: no longer the text on show
     if (result.value !== value) onCommit(result.value);
   };
 
@@ -122,11 +123,13 @@ export default function TimeField(props: TimeFieldProps) {
                 textAtFocus.current = rest;
                 setDraft(rest);
               }
-              // as in NumberField: select a frame later, and only while the field still has focus
+              // as in NumberField: select a frame later, only while the field still has focus and
+              // still shows the text it had
               const el = input.current;
               if (el !== null) {
+                const shown = el.value;
                 window.requestAnimationFrame(() => {
-                  if (document.activeElement === el) el.select();
+                  if (document.activeElement === el && el.value === shown) el.select();
                 });
               }
             }}

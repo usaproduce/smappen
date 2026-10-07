@@ -61,9 +61,13 @@ export default function NumberField(props: NumberFieldProps) {
       setOwnError(result.error); // the text stays, so the owner sees what was refused
       return;
     }
+    const touched = draft !== textAtFocus.current;
     setOwnError(result.error);
     setDraft(null);
-    if (draft !== textAtFocus.current && !Object.is(result.value, value)) onCommit(result.value);
+    // The text taken at focus is no longer what the field shows. Kept, it would make a later edit
+    // that types it again (20, Enter, then back to 15) look untouched and be dropped.
+    textAtFocus.current = null;
+    if (touched && !Object.is(result.value, value)) onCommit(result.value);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -113,11 +117,13 @@ export default function NumberField(props: NumberFieldProps) {
               }
               // Select the figure, so typing replaces it: a frame later, because a click places its
               // caret after the focus event. Only while the field still has focus: select() on a
-              // field that lost it would pull focus back.
+              // field that lost it would pull focus back. And only while its text is still the one
+              // it had: a key pressed within that frame would otherwise be selected and typed over.
               const el = input.current;
               if (el !== null) {
+                const shown = el.value;
                 window.requestAnimationFrame(() => {
-                  if (document.activeElement === el) el.select();
+                  if (document.activeElement === el && el.value === shown) el.select();
                 });
               }
             }}
