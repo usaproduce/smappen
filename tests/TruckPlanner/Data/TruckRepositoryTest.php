@@ -309,6 +309,15 @@ final class TruckRepositoryTest extends TestCase
         self::assertSame(['{}', 2, self::TRUCK, self::ORG], $calls[1]['params']);
     }
 
+    public function testTouchStampsTheTruckAndChangesNoColumn(): void
+    {
+        $db = new RecordingDatabase();
+        (new TruckRepository($db))->touch(self::TRUCK, self::ORG);
+        self::assertCount(1, $db->calls);
+        $call = $db->only('UPDATE tp_trucks SET updated_at = NOW() WHERE id = ? AND organization_id = ?');
+        self::assertSame([self::TRUCK, self::ORG], $call['params']);
+    }
+
     public function testEveryStatementIsScopedToTheOrganization(): void
     {
         $db = (new RecordingDatabase())->when('FROM tp_trucks', self::databaseRow());
@@ -317,7 +326,8 @@ final class TruckRepositoryTest extends TestCase
         $repo->create(self::ORG, self::USER, self::row());
         $repo->update(self::TRUCK, self::ORG, ['name' => 'New name']);
         $repo->setOverrides(self::TRUCK, self::ORG, [], 1);
-        self::assertCount(4, $db->calls);
+        $repo->touch(self::TRUCK, self::ORG);
+        self::assertCount(5, $db->calls);
         foreach ($db->calls as $call) {
             self::assertContains(self::ORG, $call['params']);
             if (!str_starts_with($call['sql'], 'INSERT')) {

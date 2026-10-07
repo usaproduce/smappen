@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Tests\TruckPlanner\Services;
 
 use App\Tests\TruckPlanner\Support\FixedClock;
+use App\Tests\TruckPlanner\Support\LogCapture;
 use App\TruckPlanner\Services\Support\Clock;
 use PHPUnit\Framework\TestCase;
 
@@ -119,6 +120,24 @@ final class ClockTest extends TestCase
         self::assertTrue(Clock::isZone('Pacific/Kiritimati'));
         foreach (['', 'EST', 'New York', 'america/new_york', 'America/Sterling', '+05:00', 'US/Eastern'] as $name) {
             self::assertFalse(Clock::isZone($name), 'accepted: ' . $name);
+        }
+    }
+
+    public function testTheZoneOfATruckIsItsOwnOrTheDefaultWhenThisServerDoesNotKnowIt(): void
+    {
+        $lines = LogCapture::during(static function (): void {
+            self::assertSame('America/Chicago', Clock::zoneOf(['timezone' => 'America/Chicago']));
+        });
+        self::assertSame([], $lines, 'a zone the server knows is taken as it is, without a word');
+
+        foreach ([['timezone' => 'Mars/Olympus_Mons'], ['timezone' => 'US/Eastern'], ['timezone' => ''], ['timezone' => null], []] as $truck) {
+            $lines = LogCapture::during(static function () use ($truck): void {
+                $zone = Clock::zoneOf($truck);
+                self::assertSame('America/New_York', $zone);
+                // and a clock can read the day there: nothing is thrown for the stored name
+                self::assertSame('2026-10-04', (new FixedClock('2026-10-05 03:30:00'))->today($zone));
+            });
+            self::assertSame(['[tp] a truck has a time zone this server does not know, the default zone is used'], $lines);
         }
     }
 

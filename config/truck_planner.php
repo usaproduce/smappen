@@ -59,12 +59,16 @@ return [
         'refusal_ttl_s' => 3600,
         'backoff_quota_s' => 120,
         'backoff_upstream_s' => 30,
+        'max_bad_requests_per_call' => 2,
         'grid_fill_ratio' => 0.6,
         'routes_chunk_side' => 25,
         'routes_chunk_elements' => 625,
         'legacy_chunk_side' => 10,
         'cache_pairs_per_statement' => 200,
         'purge_rows_per_call' => 500,
+        // `modifiers` is never recorded by version 1: avoiding tolls or highways does not move a request to
+        // Google's Pro SKU (5.3). The name and its unit cost stay, so that the daily budget sums every Routes
+        // SKU there is and a later request that does reach Pro has its row.
         'skus' => [
             'plain' => 'tp_routes_matrix',
             'modifiers' => 'tp_routes_matrix_pro',
@@ -74,18 +78,20 @@ return [
         'attribution' => 'Drive times and distances: Google Maps Platform. Kept for at most 30 days.',
     ],
 
-    // Google Places contact lookup, on demand (5.4).
+    // Google Places contact lookup, on demand (5.4). Nothing of an answer is kept but Google's id of the place:
+    // there is no lifetime to set, because there is nothing to expire.
     'places' => [
-        'contact_ttl_days' => 30,
-        'force_min_age_hours' => 24,
         'bias_radius_m' => 500.0,
+        'match_radius_m' => 300.0,
         'connect_timeout_s' => 3,
         'timeout_s' => 6,
         'bucket' => 'tp_places_lookup',
         'bucket_wait_s' => 2,
         'refusal_ttl_s' => 3600,
         'backoff_s' => 60,
+        // The first lookup of a place is a Text Search by name, a later one a Place Details request by id.
         'sku' => 'tp_places_text',
+        'sku_details' => 'tp_places_details',
     ],
 
     // api.weather.gov hourly forecast (5.5).
@@ -99,6 +105,8 @@ return [
         'fresh_min_s' => 600,
         'fresh_default_s' => 3600,
         'stale_max_s' => 21600,
+        'pause_after_failure_s' => 60,
+        'max_periods' => 400,
         'sku_points' => 'tp_nws_points',
         'sku_hourly' => 'tp_nws_hourly',
         'source' => 'National Weather Service (weather.gov)',
@@ -131,9 +139,16 @@ return [
         'snapshot_ttl_days' => 30,
     ],
 
-    // Scouting (5.9).
+    // Scouting (5.9). The list is balanced by kind of place: `kind_quota` places of every kind, `kind_quota_deep`
+    // of each kind the request names, and never more than `max_listed` in one answer.
     'scout' => [
-        'shortlist_extra' => 10,
+        'kind_quota' => 8,
+        'kind_quota_deep' => 30,
+        'max_listed' => 150,
+        'shortlist_extra' => 4,
+        'max_batches' => 3,
+        'site_scan' => 2,
+        'same_site_m' => 400.0,
         'max_screen' => 15000,
         'cache_ttl_s' => 86400,
         'page_rows' => 2000,
@@ -144,6 +159,7 @@ return [
     // Suggestions (5.10).
     'suggest' => [
         'cache_ttl_s' => 600,
+        'pairs_per_call' => 2000,
     ],
 
     // api_cost_events.unit_cost_usd per SKU (5.3). Matrix SKUs are per element, the others per call.
@@ -153,6 +169,7 @@ return [
         'tp_routes_matrix_ent' => 0.015,
         'tp_distance_matrix' => 0.005,
         'tp_places_text' => 0.035,
+        'tp_places_details' => 0.020,
         'tp_nws_points' => 0.0,
         'tp_nws_hourly' => 0.0,
         'tp_eia_weekly' => 0.0,

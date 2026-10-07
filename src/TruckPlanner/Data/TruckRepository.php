@@ -182,6 +182,16 @@ class TruckRepository
         );
     }
 
+    /**
+     * Stamps the truck as changed now, without changing a column. For a change that plan results depend
+     * on and that leaves no time stamp of its own behind: a logged service that was deleted, a drive-time
+     * correction that was saved or deleted. Plan results computed before it are stale (04_BACKEND.md 5.8).
+     */
+    public function touch(string $id, string $orgId): void
+    {
+        $this->db()->query('UPDATE tp_trucks SET updated_at = NOW() WHERE id = ? AND organization_id = ?', [$id, $orgId]);
+    }
+
     private static function columnList(): string
     {
         $names = [];

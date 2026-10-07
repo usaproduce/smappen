@@ -230,7 +230,8 @@ CREATE TABLE IF NOT EXISTS tp_drive_overrides (
   KEY idx_tpdo_org (organization_id, truck_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- g_* columns hold Google Places content and are emptied 30 days after g_fetched_at. google_place_id may stay.
+-- Of a contact lookup only Google's id of the place is kept, with the outcome of the match and its time.
+-- Name, address, phone, website and Maps link of a lookup are Google Places content and are stored nowhere.
 CREATE TABLE IF NOT EXISTS tp_scout_leads (
   id               CHAR(36)     PRIMARY KEY,
   organization_id  CHAR(36)     NOT NULL,
@@ -246,11 +247,6 @@ CREATE TABLE IF NOT EXISTS tp_scout_leads (
   spot_id          CHAR(36)     NULL,
   google_place_id  VARCHAR(255) NULL,
   g_lookup_state   VARCHAR(12)  NULL,
-  g_name           VARCHAR(160) NULL,
-  g_address        VARCHAR(255) NULL,
-  g_phone          VARCHAR(40)  NULL,
-  g_website        VARCHAR(255) NULL,
-  g_maps_uri       VARCHAR(255) NULL,
   g_fetched_at     DATETIME     NULL,
   created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

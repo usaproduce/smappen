@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Tests\TruckPlanner\Services;
 
 use App\Tests\TruckPlanner\Support\FixedClock;
+use App\Tests\TruckPlanner\Support\LogCapture;
 use App\Tests\TruckPlanner\Support\RecordingDatabase;
 use App\TruckPlanner\Data\CountsRepository;
 use App\TruckPlanner\Data\RegionRepository;
@@ -518,6 +519,20 @@ final class SimulateServiceTest extends TestCase
         $unknown = new SpotRepository(new RecordingDatabase());
         $service = new SimulateService(new SpotService($unknown, null, new FixtureRegions($this->region)), $unknown, new RegionRepository($this->packRows), $this->clock);
         self::assertInvalid('spot_id was not found', 'spot_id', 'V11', static fn () => $service->run(self::ORG, SpotServiceTest::truck(), $A, ['point' => FixtureRegion::OFFICE, 'spot_id' => self::SPOT]));
+    }
+
+    public function testAStoredZoneThisServerDoesNotKnowDoesNotTakeTheRequestDown(): void
+    {
+        $truck = SpotServiceTest::truck();
+        $truck['timezone'] = 'Mars/Olympus_Mons';
+        $answer = null;
+        $lines = LogCapture::during(function () use (&$answer, $truck): void {
+            $answer = $this->simulate(['point' => FixtureRegion::OFFICE], $truck);
+        });
+        // today is read in the default zone (New York): 03:30 UTC on the 8th is still the 7th there
+        self::assertSame(['2026-10-07'], $this->calibration->asOf);
+        self::assertSame(['[tp] a truck has a time zone this server does not know, the default zone is used'], $lines);
+        self::assertSame($this->simulate(['point' => FixtureRegion::OFFICE])['estimate'], $answer['estimate'], 'and the estimate is the one of a truck on New York time');
     }
 
     // ------------------------------------------------------------------------------------ validation

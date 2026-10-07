@@ -96,6 +96,23 @@ class Clock
         return in_array($name, \DateTimeZone::listIdentifiers(), true);
     }
 
+    /**
+     * The time zone in which "today" and "now" are read for a truck: its stored zone, or the default zone
+     * (`regions.default_timezone`) when this server's zone database does not hold that name. A stored name
+     * must not take a request down, and the log says when the default stood in.
+     *
+     * @param array<string, mixed> $truck the truck value or a truck row (its `timezone` is read)
+     */
+    public static function zoneOf(array $truck): string
+    {
+        $zone = (string) ($truck['timezone'] ?? '');
+        if (self::isZone($zone)) {
+            return $zone;
+        }
+        error_log('[tp] a truck has a time zone this server does not know, the default zone is used');
+        return (string) TpConfig::get('regions.default_timezone');
+    }
+
     /** True when the last createFromFormat reported neither an error nor a warning. */
     private static function cleanParse(): bool
     {

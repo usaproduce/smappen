@@ -46,18 +46,44 @@ final class TpConfigTest extends TestCase
         self::assertSame(3600, TpConfig::get('routing.refusal_ttl_s'));
         self::assertSame(120, TpConfig::get('routing.backoff_quota_s'));
         self::assertSame(30, TpConfig::get('routing.backoff_upstream_s'));
+        self::assertSame(2, TpConfig::get('routing.max_bad_requests_per_call'));
         self::assertSame(625, TpConfig::get('routing.routes_chunk_side') ** 2);
         self::assertSame(100, TpConfig::get('routing.legacy_chunk_side') ** 2);
     }
 
     public function testPlacesAndScoutSettings(): void
     {
-        self::assertSame(30, TpConfig::get('places.contact_ttl_days'));
         self::assertSame(500.0, TpConfig::get('places.bias_radius_m'));
+        self::assertSame(300.0, TpConfig::get('places.match_radius_m'));
         self::assertSame('tp_places_lookup', TpConfig::get('places.bucket'));
-        self::assertSame(10, TpConfig::get('scout.shortlist_extra'));
+        self::assertSame('tp_places_text', TpConfig::get('places.sku'));
+        self::assertSame('tp_places_details', TpConfig::get('places.sku_details'));
+        // Nothing of a contact lookup is stored, so no setting gives it a lifetime.
+        self::assertSame(
+            ['bias_radius_m', 'match_radius_m', 'connect_timeout_s', 'timeout_s', 'bucket', 'bucket_wait_s', 'refusal_ttl_s', 'backoff_s', 'sku', 'sku_details'],
+            array_keys(TpConfig::get('places'))
+        );
+        // The list is balanced by kind: eight places of every kind, thirty of a kind that is asked for, 150 in all.
+        self::assertSame(8, TpConfig::get('scout.kind_quota'));
+        self::assertSame(30, TpConfig::get('scout.kind_quota_deep'));
+        self::assertSame(150, TpConfig::get('scout.max_listed'));
+        self::assertSame(4, TpConfig::get('scout.shortlist_extra'));
+        self::assertSame(3, TpConfig::get('scout.max_batches'));
+        self::assertSame(2, TpConfig::get('scout.site_scan'));
+        self::assertSame(400.0, TpConfig::get('scout.same_site_m'));
         self::assertSame(15000, TpConfig::get('scout.max_screen'));
         self::assertSame(86400, TpConfig::get('scout.cache_ttl_s'));
+        // One batch of every kind, there and back, fits one call of the leg provider.
+        $perRound = 18 * (TpConfig::get('scout.kind_quota') + TpConfig::get('scout.shortlist_extra'));
+        self::assertLessThanOrEqual(TpConfig::get('routing.max_elements_per_call'), 2 * $perRound);
+    }
+
+    public function testWeatherAndSuggestionSettings(): void
+    {
+        self::assertSame(60, TpConfig::get('weather.pause_after_failure_s'));
+        self::assertSame(400, TpConfig::get('weather.max_periods'));
+        self::assertSame(600, TpConfig::get('suggest.cache_ttl_s'));
+        self::assertSame(2000, TpConfig::get('suggest.pairs_per_call'));
     }
 
     public function testEverySkuHasAUnitCost(): void
@@ -70,6 +96,7 @@ final class TpConfigTest extends TestCase
                 'tp_routes_matrix_ent' => 0.015,
                 'tp_distance_matrix' => 0.005,
                 'tp_places_text' => 0.035,
+                'tp_places_details' => 0.020,
                 'tp_nws_points' => 0.0,
                 'tp_nws_hourly' => 0.0,
                 'tp_eia_weekly' => 0.0,
@@ -78,7 +105,7 @@ final class TpConfigTest extends TestCase
         );
         foreach (array_merge(
             array_values(TpConfig::get('routing.skus')),
-            [TpConfig::get('places.sku'), TpConfig::get('weather.sku_points'), TpConfig::get('weather.sku_hourly'), TpConfig::get('fuel.sku')]
+            [TpConfig::get('places.sku'), TpConfig::get('places.sku_details'), TpConfig::get('weather.sku_points'), TpConfig::get('weather.sku_hourly'), TpConfig::get('fuel.sku')]
         ) as $sku) {
             self::assertArrayHasKey($sku, $costs);
             self::assertLessThanOrEqual(48, strlen($sku), 'api_cost_events.sku is VARCHAR(48)');

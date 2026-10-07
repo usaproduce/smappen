@@ -83,6 +83,16 @@ final class TpCache
         return is_int($current['n'] ?? null) ? $current['n'] : 0;
     }
 
+    /**
+     * Forget one entry, and only that one: forgetPrefix() would also reach every key that merely starts
+     * with the same text. The entry is replaced by one that has expired already, so it reads as a miss at
+     * once, whatever the store still holds.
+     */
+    public static function forget(string $key): void
+    {
+        self::put($key, [], 0);
+    }
+
     /** Forget every entry whose key starts with `$prefix` (which must itself start with "tp:"). */
     public static function forgetPrefix(string $prefix): void
     {
