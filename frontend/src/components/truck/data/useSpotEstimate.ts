@@ -81,6 +81,13 @@ export interface SpotEstimate {
   outletsTotal: number | null;
   /** Places within 250 m that could be the host, nearest first; null when not loaded. */
   hostsNearby: HostHint[] | null;
+  /**
+   * Where the three lists above stand. `idle`: not asked for (a saved spot evaluated from its stored
+   * vectors without `withPlaces`, a place without a point) or not to be had while the region data
+   * is being rebuilt. `pending`: their request is on its way. `ready`: they are here. `error`: the
+   * request failed and there is nothing to list; `refetch` asks again.
+   */
+  placesStatus: 'idle' | 'pending' | 'ready' | 'error';
   /** Expected orders for each hour of a typical week (168 values, capped at the truck's capacity). */
   week: number[] | null;
   /** The top three windows of the typical week that do not overlap. */
@@ -336,6 +343,15 @@ export function useSpotEstimate(input: SpotEstimateInput): SpotEstimate {
     };
   }, [placesAnswer, shown, spot]);
 
+  // The lists travel with a `simulate` answer: the one asked for them alone (a saved spot on its
+  // stored vectors), else the one the vectors come from.
+  const placesAsked = useStored ? placesRequest !== null : request !== null;
+  const placesFailed = useStored ? places.isError : simulate.isError;
+  let placesStatus: SpotEstimate['placesStatus'];
+  if (placesAnswer !== undefined) placesStatus = 'ready';
+  else if (!placesAsked || rebuilding) placesStatus = 'idle';
+  else placesStatus = placesFailed ? 'error' : 'pending';
+
   let status: SpotEstimate['status'];
   if (noVectors) status = 'none';
   else if (request !== null && rebuilding) status = 'rebuilding';
@@ -362,6 +378,7 @@ export function useSpotEstimate(input: SpotEstimateInput): SpotEstimate {
     outlets: placesAnswer === undefined ? null : placesAnswer.outlets,
     outletsTotal: placesAnswer === undefined ? null : placesAnswer.outlets_total,
     hostsNearby: placesAnswer === undefined ? null : placesAnswer.hosts_nearby,
+    placesStatus,
     week,
     best,
     hour,

@@ -20,7 +20,7 @@ import type {
 } from './model';
 import { fmtFixed, fmtNumber } from './format';
 import { bandLabel } from './palette';
-import { driveFallbackReason, driveSourceLabel } from './wording';
+import { MAP_TEXT, driveFallbackReason, driveSourceLabel } from './wording';
 import type { DriveLegSourceKey, FallbackReasonKey } from './wording';
 
 // -------------------------------------------------------------------------------------------------
@@ -393,6 +393,16 @@ export function floatLayout(mapWidth: number): 'wide' | 'medium' | 'tight' | 'na
 }
 
 /**
+ * True while the spot card stands beside a map it has left narrower than 700 px (a window from
+ * 1,024 to 1,119 px wide): the open legend would cover almost half of what is left of the map, and
+ * with it the pin the card is about. The legend then closes to its button until the card goes or
+ * the owner opens it.
+ */
+export function legendGivesWay(mapLayout: 'wide' | 'medium' | 'tight' | 'narrow', cardBeside: boolean): boolean {
+  return cardBeside && (mapLayout === 'tight' || mapLayout === 'narrow');
+}
+
+/**
  * How the hour bar is laid out, by its own width: `wide` is one row with seven day buttons,
  * `compact` one row with a day select, `stacked` two rows.
  */
@@ -510,8 +520,7 @@ export interface StatusLine {
 }
 
 export const REBUILD_STATUS = 'Map data is being rebuilt after an update. New estimates are unavailable until it finishes.';
-export const GOOGLE_FAILED_STATUS =
-  'The Google map could not load, so the background map is hidden. Estimates and saved spots still work.';
+export const GOOGLE_FAILED_STATUS = MAP_TEXT.googleFailed;
 
 /**
  * What the status chip says: nothing while the colours draw, else one sentence about the colour

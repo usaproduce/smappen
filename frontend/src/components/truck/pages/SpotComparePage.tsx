@@ -269,7 +269,7 @@ export default function SpotComparePage() {
           ))}
           {chosen.length < COMPARE_MAX && others.length > 0 ? (
             <select
-              className="select h-11 md:h-8 text-sm font-semibold"
+              className="select h-11 md:h-8! text-sm font-semibold"
               style={{ width: 'auto', maxWidth: '100%', paddingTop: 0, paddingBottom: 0 }}
               aria-label="Add spot"
               value=""
@@ -288,8 +288,7 @@ export default function SpotComparePage() {
         </div>
 
         <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
-          {/* The two labels differ in length: each tab takes the width of its own words. */}
-          <div className="[&_[role=tab]]:flex-none">
+          <div>
             <div className="label">Compare on</div>
             <Tabs
               variant="segmented"

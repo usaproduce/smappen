@@ -256,6 +256,31 @@ final class RegionServiceTest extends TestCase
         self::assertFalse($service->buildScopeMatches($kernel, self::parameters()));
     }
 
+    public function testParameterDifferencesNamesWhatDiffersInTheRecordedOrder(): void
+    {
+        $service = new RegionService(new RegionRepository(new RecordingDatabase()));
+        self::assertSame([], $service->parameterDifferences(self::parameters()));
+
+        $changed = self::parameters();
+        $changed['place_types']['taproom']['default_size'] = 41;
+        $changed['walk_cutoff_m'] = 1000;
+        unset($changed['cns04_weight']);
+        self::assertSame(['walk_cutoff_m', 'cns04_weight', 'place_types'], $service->parameterDifferences($changed));
+        self::assertFalse($service->buildScopeMatches(self::kernel(), $changed));
+
+        // 400 and 400.0 are one number, key order says nothing, and one unit in the last place is the same build
+        $same = array_reverse(self::parameters(), true);
+        $same['walk_decay_m'] = 400.0;
+        $same['earth_radius_m'] = 6371008.800000001;
+        self::assertSame([], $service->parameterDifferences($same));
+
+        self::assertSame(
+            ['walk_decay_m', 'walk_cutoff_m', 'earth_radius_m', 'cns04_weight', 'cell_min_nearby', 'cell_min_venue', 'segment_cns', 'place_types'],
+            $service->parameterDifferences([]),
+            'a manifest without parameters differs in every one'
+        );
+    }
+
     // ------------------------------------------------------------------------------------ region info
 
     public function testAUsableRegion(): void
@@ -381,6 +406,25 @@ final class RegionServiceTest extends TestCase
         self::assertNull($service->info('zz'));
         self::assertNull($service->active('zz'));
         self::assertSame([], $service->countyFips('zz'));
+    }
+
+    public function testTextThatIsNotARegionIdIsNeverLookedUp(): void
+    {
+        // MySQL refuses to compare text outside ASCII with the id column (error 3988, a server error for the
+        // caller). A region id is 1 to 24 of a-z and 0-9: anything else is no region, and no query is made.
+        $service = $this->service(self::regionRow(), self::packRow(), self::parameters(), $db);
+        $texts = ["caf\u{e9}", "\u{6771}\u{4eac}", 'DC', 'dc ', "dc\n", 'd c', 'washington-dc', "dc\0", str_repeat('a', 25)];
+        foreach ($texts as $text) {
+            $shown = (string) json_encode($text);
+            self::assertNull($service->info($text), $shown);
+            self::assertNull($service->active($text), $shown);
+            self::assertSame([], $service->countyFips($text), $shown);
+            self::assertSame('NUS', $service->fuelArea($text, 'VA'), $shown);
+        }
+        self::assertSame([], $db->calls, 'nothing was asked of the database');
+
+        self::assertIsArray($service->info('dc'), 'a region id is looked up as before');
+        self::assertIsArray($this->service(self::regionRow(str_repeat('a', 24)), self::packRow(), self::parameters())->info(str_repeat('a', 24)));
     }
 
     public function testListReturnsEveryRegion(): void

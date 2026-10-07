@@ -111,7 +111,7 @@ export default function SpotResults({ spotId }: SpotResultsProps) {
   // on a tablet, so the choice between table and cards follows the width it actually has.
   return (
     <div className="@container space-y-3">
-      <div className="hidden @[560px]:block [&_.tp-scroll-x]:relative">
+      <div className="hidden @[560px]:block">
         <DataTable caption="Services logged at this spot" columns={columns} rows={query.data} rowKey={(s) => s.id} dense />
       </div>
       <ul className="tp-stat-list @[560px]:hidden" aria-label="Services logged at this spot">

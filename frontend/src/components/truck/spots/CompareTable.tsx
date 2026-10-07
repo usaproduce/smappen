@@ -218,8 +218,7 @@ export default function CompareTable({ columns, trafficNeutral, rebuilding }: Co
   const rows = rowsOf(trafficNeutral);
   return (
     <>
-      {/* `relative`: text that is only there for screen readers stays inside the box that scrolls. */}
-      <div className="tp-scroll-x relative hidden rounded-xl border bg-white sm:block" style={{ borderColor: 'var(--line-soft)' }}>
+      <div className="tp-scroll-x hidden rounded-xl border bg-white sm:block" style={{ borderColor: 'var(--line-soft)' }}>
         <table className="w-full text-sm" style={{ minWidth: 190 + 230 * columns.length }}>
           <caption className="sr-only">Spots side by side</caption>
           <thead style={{ background: 'var(--bg-panel)' }}>
@@ -251,7 +250,7 @@ export default function CompareTable({ columns, trafficNeutral, rebuilding }: Co
         </table>
       </div>
 
-      <div className="tp-scroll-x relative flex snap-x snap-mandatory gap-3 pb-2 sm:hidden" role="list" aria-label="Spots side by side">
+      <div className="tp-scroll-x flex snap-x snap-mandatory gap-3 pb-2 sm:hidden" role="list" aria-label="Spots side by side">
         {columns.map((column) => (
           <article
             key={column.spot.id}

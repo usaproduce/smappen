@@ -206,6 +206,50 @@ button.tp-chip { cursor: help; }
 }
 .tp-switch[data-on="true"] .tp-switch-knob { transform: translateX(20px); }
 
+/*
+ * Field heights (7.2): 44 px below 768 px, where a field is a touch target, and 36 px from there on.
+ * The app's own ".input, .select { height: 40px }" is written outside any cascade layer, where it
+ * beats every Tailwind height utility ("h-11 md:h-9" has no effect on such a field). So the two
+ * heights are set here, once, for everything Truck Planner renders: its pages (inside the gate's
+ * element) and the layers it portals to the body. The vertical padding goes with the fixed height,
+ * so the text is centred by the box and never cut.
+ */
+[data-tp-chunk] .input,
+[data-tp-chunk] .select,
+[data-tp-layer] .input,
+[data-tp-layer] .select {
+  height: 44px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+@media (min-width: 768px) {
+  [data-tp-chunk] .input,
+  [data-tp-chunk] .select,
+  [data-tp-layer] .input,
+  [data-tp-layer] .select {
+    height: 36px;
+  }
+}
+
+/*
+ * The shared address widget brings an input of its own (40 px, another border). Inside Truck Planner
+ * it sits among the fields above, so it takes their height, border and radius; every address field
+ * of truck code wraps the widget in ".tp-address".
+ */
+.tp-address input {
+  height: 44px;
+  border-color: var(--line);
+  border-radius: 8px;
+}
+.tp-address input:focus {
+  border-color: var(--brand);
+}
+@media (min-width: 768px) {
+  .tp-address input {
+    height: 36px;
+  }
+}
+
 /* Inputs keep the .input focus border; these fields add their own invalid state. */
 .tp-invalid,
 .tp-invalid:focus {
@@ -215,9 +259,11 @@ button.tp-chip { cursor: help; }
 /*
  * A block that scrolls sideways (a table, the timeline bar). It takes the width it is given and
  * adds nothing to the width its ancestors ask for, so a wide table can never push a grid column or
- * the page itself wider than the window.
+ * the page itself wider than the window. It is positioned, so that an absolutely placed child (the
+ * visually hidden header of a table column) scrolls with it instead of widening the page.
  */
 .tp-scroll-x {
+  position: relative;
   overflow-x: auto;
   width: 0;
   min-width: 100%;

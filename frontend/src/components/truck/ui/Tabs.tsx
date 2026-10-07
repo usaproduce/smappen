@@ -77,7 +77,7 @@ export default function Tabs({ tabs, value, onChange, variant, ariaLabel }: Tabs
                 if (!selected) onChange(tab.id);
               }}
               onKeyDown={(e) => onKeyDown(e, index)}
-              className={'inline-flex h-11 md:h-9 min-w-0 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 text-[13px] font-bold' + (selected ? ' bg-white' : '')}
+              className={'inline-flex h-11 md:h-9 min-w-0 flex-auto items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 text-[13px] font-bold' + (selected ? ' bg-white' : '')}
               style={{ color: selected ? 'var(--ink)' : 'var(--slate)', border: selected ? '1px solid var(--line-soft)' : '1px solid transparent' }}
             >
               {tab.label}

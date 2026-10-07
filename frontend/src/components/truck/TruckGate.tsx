@@ -12,6 +12,7 @@ import {
 } from '../../api/truck';
 import { TP_CHUNK_SENTINEL } from '../../utils/truck/model';
 import { VersionMismatch, buildAssumptions, versionsMatch } from '../../utils/truck/assemble';
+import { MAP_TEXT } from '../../utils/truck/wording';
 import { TruckContext, regionRebuilding, type TruckContextValue } from './data/TruckContext';
 import { useBootstrap, type BootstrapData } from './data/useBootstrap';
 import { QueryError } from './ui';
@@ -191,7 +192,7 @@ function GateSkeleton({ isMap }: { isMap: boolean }) {
         style={{ color: 'var(--body)' }}
         aria-busy="true"
       >
-        Loading map...
+        {MAP_TEXT.loading}
       </div>
     );
   }

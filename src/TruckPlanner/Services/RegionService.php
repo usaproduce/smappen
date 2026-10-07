@@ -28,6 +28,9 @@ class RegionService
     public const NOT_LOADED = 'not_loaded';
     public const BUILD_MISMATCH = 'build_mismatch';
 
+    /** The form of a region id (03_DATA.md section 1). */
+    private const ID_FORM = '/\A[a-z0-9]{1,24}\z/';
+
     /** Two units in the last place of a double, as a relative difference (2 x 2^-52). */
     private const JSON_NOISE = 4.5e-16;
 
@@ -174,7 +177,53 @@ class RegionService
      */
     public function buildScopeMatches(?array $kernel, array $parameters): bool
     {
-        return $this->kernelMatches($kernel) && $this->parametersMatch($parameters);
+        return $this->kernelMatches($kernel) && $this->parameterDifferences($parameters) === [];
+    }
+
+    /**
+     * The names of the manifest's `parameters` (03_DATA.md 8.5) that are not this server's seed values, in
+     * the order the pipeline records them: empty when the dataset was built with these seeds. `h3_res` and
+     * `job_review` are not seeds and are not looked at. A missing value differs.
+     *
+     * @param array<string, mixed> $parameters
+     * @return list<string>
+     */
+    public function parameterDifferences(array $parameters): array
+    {
+        $A = Seeds::defaults();
+        $expected = [
+            'walk_decay_m' => Estimator::seed($A, 'kernel.walk_decay_m'),
+            'walk_cutoff_m' => Estimator::seed($A, 'kernel.walk_cutoff_m'),
+            'earth_radius_m' => Estimator::seed($A, 'constants.earth_radius_m'),
+            'cns04_weight' => Estimator::seed($A, 'etl.cns04_weight'),
+            'cell_min_nearby' => Estimator::seed($A, 'etl.cell_min_nearby'),
+            'cell_min_venue' => Estimator::seed($A, 'etl.cell_min_venue'),
+            'segment_cns' => [],
+            'place_types' => [],
+        ];
+        foreach (Estimator::seed($A, 'vocabulary.segments') as $segment) {
+            if (str_starts_with($segment, 'w_')) {
+                $expected['segment_cns'][$segment] = Estimator::seed($A, 'segments.' . $segment . '.lodes_cns');
+            }
+        }
+        foreach (Estimator::seed($A, 'vocabulary.place_types') as $type) {
+            $row = Estimator::seed($A, 'place_types.rows.' . $type);
+            $expected['place_types'][$type] = [
+                'visitor_segment' => $row['visitor_segment'],
+                'default_size' => $row['default_size'],
+                'rival_kind' => $row['rival_kind'],
+                'host_fit' => $row['host_fit'],
+                'kitchen_default' => $row['kitchen_default'],
+            ];
+        }
+
+        $differing = [];
+        foreach ($expected as $name => $value) {
+            if (!array_key_exists($name, $parameters) || !self::same($parameters[$name], $value)) {
+                $differing[] = $name;
+            }
+        }
+        return $differing;
     }
 
     /**
@@ -311,56 +360,9 @@ class RegionService
         }
         $manifest = $this->regions->manifest($regionId, $version);
         $parameters = $manifest['parameters'] ?? null;
-        $ok = is_array($parameters) && $this->parametersMatch($parameters);
+        $ok = is_array($parameters) && $this->parameterDifferences($parameters) === [];
         TpCache::put($key, ['ok' => $ok], (int) TpConfig::get('regions.usable_verdict_ttl_s'));
         return $ok;
-    }
-
-    /**
-     * Every seed value the pipeline recorded equals the seed file (03_DATA.md 8.5 `parameters`). `h3_res`
-     * and `job_review` are not seeds and are not looked at. A missing value does not match.
-     *
-     * @param array<string, mixed> $parameters
-     */
-    private function parametersMatch(array $parameters): bool
-    {
-        $A = Seeds::defaults();
-        $scalars = [
-            'walk_decay_m' => 'kernel.walk_decay_m',
-            'walk_cutoff_m' => 'kernel.walk_cutoff_m',
-            'earth_radius_m' => 'constants.earth_radius_m',
-            'cns04_weight' => 'etl.cns04_weight',
-            'cell_min_nearby' => 'etl.cell_min_nearby',
-            'cell_min_venue' => 'etl.cell_min_venue',
-        ];
-        foreach ($scalars as $name => $path) {
-            if (!array_key_exists($name, $parameters) || !self::same($parameters[$name], Estimator::seed($A, $path))) {
-                return false;
-            }
-        }
-
-        $sectors = [];
-        foreach (Estimator::seed($A, 'vocabulary.segments') as $segment) {
-            if (str_starts_with($segment, 'w_')) {
-                $sectors[$segment] = Estimator::seed($A, 'segments.' . $segment . '.lodes_cns');
-            }
-        }
-        if (!self::same($parameters['segment_cns'] ?? null, $sectors)) {
-            return false;
-        }
-
-        $types = [];
-        foreach (Estimator::seed($A, 'vocabulary.place_types') as $type) {
-            $row = Estimator::seed($A, 'place_types.rows.' . $type);
-            $types[$type] = [
-                'visitor_segment' => $row['visitor_segment'],
-                'default_size' => $row['default_size'],
-                'rival_kind' => $row['rival_kind'],
-                'host_fit' => $row['host_fit'],
-                'kitchen_default' => $row['kitchen_default'],
-            ];
-        }
-        return self::same($parameters['place_types'] ?? null, $types);
     }
 
     /**
@@ -445,7 +447,9 @@ class RegionService
      */
     private function row(string $regionId): ?array
     {
-        if ($regionId === '' || $regionId === self::NONE) {
+        // Text that is not a region id is no region and is not looked up: MySQL refuses to compare text
+        // outside ASCII with the id column, and that refusal would surface as a server error.
+        if ($regionId === self::NONE || preg_match(self::ID_FORM, $regionId) !== 1) {
             return null;
         }
         if (!array_key_exists($regionId, $this->rows)) {

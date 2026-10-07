@@ -4,7 +4,7 @@ import { METERS_PER_MILE } from '../../../../utils/truck/model';
 import type { Regime } from '../../../../utils/truck/model';
 import { fmtCount, fmtCount1, fmtMiles } from '../../../../utils/truck/format';
 import { RIVAL_KIND_LABELS } from '../../../../utils/truck/wording';
-import { SourceLine, StatList, StatRow } from '../../ui';
+import { QueryError, SourceLine, StatList, StatRow } from '../../ui';
 
 export interface CompetitionProps {
   /** The pull of the food outlets around the point in the hour's regime (`vectors.rivals`). */
@@ -15,8 +15,13 @@ export interface CompetitionProps {
   outlets: OutletRow[] | null;
   /** How many the server found; it sends at most 60. */
   outletsTotal: number | null;
-  /** The list is on its way (a saved spot asks for it separately). */
-  loading: boolean;
+  /**
+   * Where the list stands (`placesStatus` of `useSpotEstimate`): on its way (a saved spot asks for
+   * it separately), failed, or not to be had right now.
+   */
+  listStatus: 'idle' | 'pending' | 'ready' | 'error';
+  /** Asks for the list again after a failure. */
+  onRetry: () => void;
   dim: boolean;
 }
 
@@ -27,7 +32,7 @@ const FIRST = 8;
  * food outlets around the point pull on the people there, and which outlets they are. The list is
  * OpenStreetMap data and carries its credit.
  */
-export default function Competition({ pull, regime, outlets, outletsTotal, loading, dim }: CompetitionProps) {
+export default function Competition({ pull, regime, outlets, outletsTotal, listStatus, onRetry, dim }: CompetitionProps) {
   const [all, setAll] = useState(false);
   const shown = outlets === null ? [] : all ? outlets : outlets.slice(0, FIRST);
   const cut = outlets !== null && outletsTotal !== null ? outletsTotal - outlets.length : 0;
@@ -47,14 +52,19 @@ export default function Competition({ pull, regime, outlets, outletsTotal, loadi
         1 equals one quick-service outlet at this exact point. Higher means more of the people here buy elsewhere.
       </p>
 
-      <h4 className="pt-1 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--slate)' }}>
-        Food outlets within walking distance
-      </h4>
+      {/* No list and none on its way (the region data is being rebuilt): no heading over nothing. */}
+      {outlets === null && listStatus === 'idle' ? null : (
+        <h4 className="pt-1 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--slate)' }}>
+          Food outlets within walking distance
+        </h4>
+      )}
       {outlets === null ? (
-        loading ? (
+        listStatus === 'pending' ? (
           <div aria-busy="true">
             <div aria-hidden="true" className="skeleton" style={{ height: 28, borderRadius: 8 }} />
           </div>
+        ) : listStatus === 'error' ? (
+          <QueryError message="Could not load the food outlets here." onRetry={onRetry} />
         ) : null
       ) : outlets.length === 0 ? (
         <p className="text-sm font-semibold" style={{ color: 'var(--body)' }}>

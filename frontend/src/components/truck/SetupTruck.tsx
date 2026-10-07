@@ -1,9 +1,10 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 import toast from 'react-hot-toast';
 import { ChevronDown, ChevronRight, TriangleAlert, Truck } from 'lucide-react';
 import type { RegionInfo } from '../../api/truck';
 import { SEEDS } from '../../utils/truck/model';
 import { parseCoords } from '../../utils/truck/format';
+import { profileWarningTexts } from '../../utils/truck/wording';
 import GooglePlaceAutocomplete from '../common/GooglePlaceAutocomplete';
 import { useSaveProfile } from './data/mutations';
 import { useAddressSearchAvailable } from './data/useMapsLoader';
@@ -25,8 +26,6 @@ const ADDRESS_TYPES: string[] = [];
 const ADDRESS_COUNTRIES = ['us'];
 const ADDRESS_FIELDS = ['place_id', 'name', 'formatted_address', 'geometry'];
 const ADDRESS_UNAVAILABLE = 'Address search is unavailable. Enter coordinates instead.';
-
-const TIMEZONE_ASSUMED = 'We assumed Eastern time for this truck.';
 
 interface Base {
   lat: number;
@@ -67,6 +66,8 @@ export default function SetupTruck({ regions }: { regions: readonly RegionInfo[]
   const [coordsOpen, setCoordsOpen] = useState(false);
   const [coordsText, setCoordsText] = useState('');
   const [ticket, setTicket] = useState<number | null>(ticketSeed.value);
+  const [problem, setProblem] = useState<string | null>(null);
+  const form = useRef<HTMLFormElement>(null);
 
   // The input stops at 120 characters, so the only way to be wrong is to be empty.
   const trimmedName = name.trim();
@@ -88,14 +89,22 @@ export default function SetupTruck({ regions }: { regions: readonly RegionInfo[]
     event.preventDefault();
     setNameTouched(true);
     if (!nameValid || base === null || ticket === null || save.isPending) return;
+    // A field that still shows its own refusal holds the save back: what is on screen there is not
+    // what would be saved.
+    const refused = form.current === null ? null : form.current.querySelector<HTMLElement>('[aria-invalid="true"]');
+    if (refused !== null) {
+      setProblem('Check the marked fields first. Nothing was saved.');
+      refused.focus();
+      return;
+    }
+    setProblem(null);
     // The promise, not a callback of mutate(): by the time the save has settled the gate has taken
     // this step off the screen, and callbacks of an unmounted component are never called.
     save
       .mutateAsync({ name: trimmedName, base: { lat: base.lat, lng: base.lng, address: base.address }, avg_ticket: ticket })
       .then((answer) => {
         // The page behind this step is on screen by now: say what the server decided.
-        if (answer.warnings.includes('timezone_assumed')) toast(TIMEZONE_ASSUMED, { duration: 8000 });
-        if (answer.warnings.includes('base_outside_region')) toast(outsideSentence(regions), { duration: 8000 });
+        for (const text of profileWarningTexts(answer.warnings)) toast(text, { duration: 8000 });
       })
       .catch(() => {
         // The hook has already shown the server's sentence.
@@ -104,7 +113,14 @@ export default function SetupTruck({ regions }: { regions: readonly RegionInfo[]
 
   return (
     <form
+      ref={form}
       onSubmit={submit}
+      // Enter in a field commits that field and nothing more: only "Save and continue" saves.
+      // (A browser would otherwise submit the form on Enter, before the field's value has arrived.)
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && e.target instanceof HTMLInputElement) e.preventDefault();
+      }}
+      onChange={() => setProblem(null)}
       noValidate
       className="bg-white rounded-xl border p-4 sm:p-6 mx-auto"
       style={{ maxWidth: 560, borderColor: 'var(--line-soft)' }}
@@ -122,7 +138,7 @@ export default function SetupTruck({ regions }: { regions: readonly RegionInfo[]
             <input
               {...control}
               type="text"
-              className="input h-11 md:h-10 text-sm"
+              className="input h-11 md:h-9 text-sm"
               value={name}
               maxLength={NAME_MAX}
               autoComplete="off"
@@ -139,18 +155,20 @@ export default function SetupTruck({ regions }: { regions: readonly RegionInfo[]
           </div>
           {searchAvailable && (
             <>
-              <GooglePlaceAutocomplete
-                placeholder="Search an address"
-                types={ADDRESS_TYPES}
-                countries={ADDRESS_COUNTRIES}
-                fields={ADDRESS_FIELDS}
-                unavailableText={ADDRESS_UNAVAILABLE}
-                onPlace={(place) => {
-                  setPicked({ lat: place.lat, lng: place.lng, address: place.address || place.name });
-                  setCoordsText('');
-                }}
-                onChange={() => setPicked(null)}
-              />
+              <div className="tp-address">
+                <GooglePlaceAutocomplete
+                  placeholder="Search an address"
+                  types={ADDRESS_TYPES}
+                  countries={ADDRESS_COUNTRIES}
+                  fields={ADDRESS_FIELDS}
+                  unavailableText={ADDRESS_UNAVAILABLE}
+                  onPlace={(place) => {
+                    setPicked({ lat: place.lat, lng: place.lng, address: place.address || place.name });
+                    setCoordsText('');
+                  }}
+                  onChange={() => setPicked(null)}
+                />
+              </div>
               <button
                 type="button"
                 className="inline-flex items-center gap-1 mt-1.5 min-h-[44px] md:min-h-[32px] text-[13px] font-bold"
@@ -175,7 +193,7 @@ export default function SetupTruck({ regions }: { regions: readonly RegionInfo[]
                   <input
                     {...control}
                     type="text"
-                    className="input h-11 md:h-10 text-sm tabular-nums"
+                    className="input h-11 md:h-9 text-sm tabular-nums"
                     placeholder="38.9696, -77.3861"
                     autoComplete="off"
                     value={coordsText}
@@ -209,7 +227,18 @@ export default function SetupTruck({ regions }: { regions: readonly RegionInfo[]
         />
       </div>
 
-      <button type="submit" className="btn btn-primary h-11 md:h-10 px-4 text-sm mt-6 w-full sm:w-auto" disabled={!ready}>
+      {problem !== null && (
+        <p role="alert" className="flex items-start gap-1.5 text-[13px] font-semibold mt-5" style={{ color: 'var(--money-negative)' }}>
+          <TriangleAlert size={15} className="flex-shrink-0 mt-0.5" aria-hidden="true" />
+          <span>{problem}</span>
+        </p>
+      )}
+
+      <button
+        type="submit"
+        className={'btn btn-primary h-11 md:h-9 px-4 text-sm w-full sm:w-auto ' + (problem !== null ? 'mt-3' : 'mt-6')}
+        disabled={!ready}
+      >
         {save.isPending ? 'Saving...' : 'Save and continue'}
       </button>
 

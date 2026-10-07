@@ -85,6 +85,13 @@ describe('apiErrorMessage', () => {
     expect(apiErrorMessage(failed(400, 'Rate limit reached'), 'x')).toBe('Rate limit reached');
   });
 
+  it('never shows what a 501 says: a route that is not built yet reads like any failed request', () => {
+    expect(apiErrorMessage(failed(501, 'Not implemented yet'), 'Could not load your results here.')).toBe('Could not load your results here.');
+    expect(apiErrorMessage(failed(501), 'x')).toBe('x');
+    // The same words under another status are a server sentence like any other.
+    expect(apiErrorMessage(failed(500, 'Not implemented yet'), 'x')).toBe('Not implemented yet');
+  });
+
   it('never shows the region rebuild text of the server', () => {
     const e = failed(409, 'Region data was built with different model constants');
     expect(apiErrorMessage(e, 'x')).toBe(REGION_REBUILD_SENTENCE);

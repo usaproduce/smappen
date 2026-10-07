@@ -172,11 +172,8 @@ export default function SpotTable({ rows, ticked, tickLimit, onTick, onOpen, hre
 
   return (
     <div className="@container">
-      {/*
-        The kit's table scrolls sideways in its own box; `relative` keeps its hidden header text
-        inside that box. The two long headings may take two lines, so the width goes to the cells.
-      */}
-      <div className="hidden @[960px]:block [&_.tp-scroll-x]:relative [&_th]:whitespace-normal [&_th]:align-bottom">
+      {/* The two long headings may take two lines, so the width goes to the cells. */}
+      <div className="hidden @[960px]:block [&_th]:whitespace-normal [&_th]:align-bottom">
         <DataTable caption="Saved spots" columns={columns} rows={rows} rowKey={(row) => row.spot.id} onRowClick={(row) => onOpen(row.spot.id)} empty={empty} />
       </div>
       <div className="@[960px]:hidden">

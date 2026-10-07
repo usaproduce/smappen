@@ -177,13 +177,15 @@ function AddressSearch({ onPick }: { onPick: (base: BaseValue) => void }) {
   }
   if (!isLoaded) return <div aria-hidden className="skeleton" style={{ height: 40, borderRadius: 8 }} />;
   return (
-    <GooglePlaceAutocomplete
-      placeholder="Search an address"
-      types={ADDRESS_TYPES}
-      countries={ADDRESS_COUNTRIES}
-      fields={ADDRESS_FIELDS}
-      unavailableText={ADDRESS_UNAVAILABLE}
-      onPlace={(place) => onPick({ lat: place.lat, lng: place.lng, address: place.address || place.name })}
-    />
+    <div className="tp-address">
+      <GooglePlaceAutocomplete
+        placeholder="Search an address"
+        types={ADDRESS_TYPES}
+        countries={ADDRESS_COUNTRIES}
+        fields={ADDRESS_FIELDS}
+        unavailableText={ADDRESS_UNAVAILABLE}
+        onPlace={(place) => onPick({ lat: place.lat, lng: place.lng, address: place.address || place.name })}
+      />
+    </div>
   );
 }

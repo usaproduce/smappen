@@ -22,10 +22,10 @@ import {
   type ProfileDraft,
   type ProfileNumberKey,
 } from '../../../utils/truck/profileForm';
-import { DAYPART_LABELS } from '../../../utils/truck/wording';
+import { DAYPART_LABELS, profileWarningTexts } from '../../../utils/truck/wording';
 import { useBootstrap, useSaveProfile, useTruck } from '../data';
 import { Field, MoneyField, NumberField, StatList, StatRow, Toggle } from '../ui';
-import BasePicker, { outsideSentence } from './BasePicker';
+import BasePicker from './BasePicker';
 import CountyChecklist from './CountyChecklist';
 import FuelPriceCard from './FuelPriceCard';
 import StartingValuesModal from './StartingValuesModal';
@@ -41,7 +41,6 @@ export interface TruckCostsTabProps {
 }
 
 const CARD = 'bg-white rounded-xl border p-4 sm:p-5';
-const TIMEZONE_ASSUMED = 'We assumed Eastern time for this truck.';
 const NO_REGIONS: never[] = [];
 
 /**
@@ -94,8 +93,7 @@ export default function TruckCostsTab({ draft, onChange, onSaved, onDiscard }: T
       .then((answer) => {
         setTried(false);
         onSaved();
-        if (answer.warnings.includes('timezone_assumed')) toast(TIMEZONE_ASSUMED, { duration: 8000 });
-        if (answer.warnings.includes('base_outside_region')) toast(outsideSentence(regions), { duration: 8000 });
+        for (const text of profileWarningTexts(answer.warnings)) toast(text, { duration: 8000 });
       })
       .catch(() => {
         // The hook has put the saved values back and shown the server's sentence.

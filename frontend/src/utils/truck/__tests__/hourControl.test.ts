@@ -33,6 +33,7 @@ import {
   howAtHour,
   howOnDay,
   initialCamera,
+  legendGivesWay,
   legendStartsOpen,
   mapRegionLabel,
   markerShare,
@@ -452,6 +453,20 @@ describe('layout by width', () => {
     expect(legendStartsOpen(1024)).toBe(true);
     expect(legendStartsOpen(1023)).toBe(false);
     expect(legendStartsOpen(375)).toBe(false);
+  });
+
+  it('closes the legend to its button while the card stands beside a map under 700 px wide', () => {
+    // A 1,024 px window: the map alone is wide, beside the card it is 604 px.
+    expect(legendGivesWay(floatLayout(1024), false)).toBe(false);
+    expect(legendGivesWay(floatLayout(1024 - CARD_WIDTH), true)).toBe(true);
+    expect(legendGivesWay(floatLayout(1119 - CARD_WIDTH), true)).toBe(true);
+    expect(legendGivesWay(floatLayout(1120 - CARD_WIDTH), true)).toBe(false);
+    expect(legendGivesWay(floatLayout(1440 - CARD_WIDTH), true)).toBe(false);
+    // A tablet held sideways, the card at its right.
+    expect(legendGivesWay(floatLayout(900 - CARD_WIDTH), true)).toBe(true);
+    // A narrow map with the card under it (a bottom sheet) keeps the owner's own choice.
+    expect(legendGivesWay('narrow', false)).toBe(false);
+    expect(legendGivesWay('tight', false)).toBe(false);
   });
 
   it('arranges the floating cards by the room the map has, with the card open or not', () => {

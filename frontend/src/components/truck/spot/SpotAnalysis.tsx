@@ -233,7 +233,10 @@ export default function SpotAnalysis({ subject, termsOverride, layout, onSaveAsS
     spot === null
       ? null
       : spot.archived
-        ? SPOT_STATE_TAGS.archived
+        ? // On the spot page the title carries this tag: the page prints it beside the name.
+          page
+          ? null
+          : SPOT_STATE_TAGS.archived
         : spot.vectors_state === 'stale'
           ? rebuilding
             ? SPOT_STATE_TAGS.rebuilding
@@ -315,7 +318,8 @@ export default function SpotAnalysis({ subject, termsOverride, layout, onSaveAsS
             regime={hour.regime}
             outlets={est.outlets}
             outletsTotal={est.outletsTotal}
-            loading={est.outlets === null && !rebuilding}
+            listStatus={est.placesStatus}
+            onRetry={est.refetch}
             dim={dim}
           />
         </Section>

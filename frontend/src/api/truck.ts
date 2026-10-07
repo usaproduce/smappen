@@ -838,14 +838,16 @@ export function apiErrorStatus(e: unknown): number | null {
 /**
  * The sentence to show for a failed request. Null when there was no response: the shared client
  * has already toasted "Connection lost", so call sites must not toast again. Otherwise the server's
- * sentence when it sent one, else `fallback`. Two server sentences are never shown as they are: the
- * rate-limit middleware's and the region rebuild notice.
+ * sentence when it sent one, else `fallback`. Three server sentences are never shown as they are:
+ * the rate-limit middleware's, the region rebuild notice, and whatever a 501 says (a route that is
+ * not built yet answers "Not implemented yet", which tells the owner nothing: the caller's own
+ * sentence is shown, as for any request that failed without a reason).
  */
 export function apiErrorMessage(e: unknown, fallback: string): string | null {
   const response = responseOf(e);
   if (response === null) return null;
   const sentence = sentenceOf(response);
-  if (sentence === null) return fallback;
+  if (sentence === null || response.status === 501) return fallback;
   if (response.status === 429 && sentence.startsWith('Rate limit reached')) return RATE_LIMIT_SENTENCE;
   if (response.status === 409 && sentence === REGION_REBUILD_ERROR) return REGION_REBUILD_SENTENCE;
   return sentence;

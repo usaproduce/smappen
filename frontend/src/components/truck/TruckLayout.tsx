@@ -151,6 +151,8 @@ function PageFrame({ children }: { children: ReactNode }) {
 /** What shows while the lazy chunk loads: plain skeleton blocks in the shape of a page. */
 function TruckPageFallback({ isMap }: { isMap: boolean }) {
   if (isMap) {
+    // The words of MAP_TEXT.loading in utils/truck/wording.ts, written out here: this file is in
+    // the main bundle and may import no truck module.
     return (
       <div
         className="absolute inset-0 grid place-items-center text-sm font-semibold"

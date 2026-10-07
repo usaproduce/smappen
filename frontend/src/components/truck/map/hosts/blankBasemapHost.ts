@@ -81,6 +81,9 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
   let cursorBeforeDrag: string | null = null;
   // A press that went down on a pin and then dragged the map: the click that may follow is not the pin's.
   let draggedFromPin = false;
+  // A finger's tap that ended without a drag: the map click it stands for, until the browser's own
+  // `click` arrives (see onTapClick).
+  let tap: MapPointerEvent | null = null;
 
   function emit(kind: PointerKind, e: MapPointerEvent): void {
     listeners[kind].forEach((cb) => cb(e));
@@ -186,6 +189,7 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
 
   function onPointerDown(e: PointerEvent): void {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    tap = null;
     const at = local(e);
     const pin = onPin(e.target);
     draggedFromPin = false;
@@ -262,7 +266,10 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
       const wasClick = click && !drag.moved && !drag.onPin && pointers.size === 0;
       drag = null;
       endDragCursor();
-      if (wasClick && width > 0 && height > 0) emit('click', pointerEvent(at, e));
+      if (wasClick && width > 0 && height > 0) {
+        if (e.pointerType === 'touch') tap = pointerEvent(at, e);
+        else emit('click', pointerEvent(at, e));
+      }
     }
     if (pointers.size < 2) pinch = null;
     if (pointers.size === 1 && drag === null) {
@@ -270,6 +277,18 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
       const [id, p] = pointers.entries().next().value as [number, Point];
       drag = { id, startX: p.x, startY: p.y, lastX: p.x, lastY: p.y, moved: true, onPin: false };
     }
+  }
+
+  /**
+   * The browser's own `click`, on the root. For a finger it is the last event of a tap, and the
+   * browser aims it at whatever lies under the finger by then. So a tap becomes the map's click only
+   * here: were it emitted at `pointerup`, the card it opens would already be on screen, and the same
+   * tap would go on to press whatever that card put under the finger.
+   */
+  function onTapClick(e: MouseEvent): void {
+    const waiting = tap;
+    tap = null;
+    if (waiting !== null && !onPin(e.target)) emit('click', waiting);
   }
 
   /** Capture phase, on the pin layer: the click that ends a drag which began on a pin never reaches the pin. */
@@ -345,10 +364,12 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
     root.removeEventListener('pointerup', onPointerUp);
     root.removeEventListener('pointercancel', onPointerCancel);
     root.removeEventListener('pointerleave', onPointerLeave);
+    root.removeEventListener('click', onTapClick);
     root.removeEventListener('wheel', onWheel);
     root.removeEventListener('keydown', onKeyDown);
     if (pinLayer !== null) pinLayer.removeEventListener('click', onPinClick, true);
     draggedFromPin = false;
+    tap = null;
     if (resizeObserver !== null) {
       resizeObserver.disconnect();
       resizeObserver = null;
@@ -401,6 +422,7 @@ export function createBlankBasemapHost(root: HTMLElement, startCamera: MapCamera
       root.addEventListener('pointerup', onPointerUp);
       root.addEventListener('pointercancel', onPointerCancel);
       root.addEventListener('pointerleave', onPointerLeave);
+      root.addEventListener('click', onTapClick);
       root.addEventListener('wheel', onWheel, { passive: false });
       root.addEventListener('keydown', onKeyDown);
       pins.addEventListener('click', onPinClick, true);

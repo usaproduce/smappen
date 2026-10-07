@@ -581,7 +581,7 @@ class RegionLoader
             is_array($parameters) && $service->buildScopeMatches($service->kernelFromSeeds(), $parameters),
             'every seed value the pipeline used equals this server\'s (seeds revision '
                 . json_encode($manifest['inputs']['seeds_revision'] ?? null) . ' at build, ' . (int) $A['seeds_revision'] . ' here)',
-            'differs in: ' . implode(', ', self::differingParameters($A, is_array($parameters) ? $parameters : [])) . ': rebuild the region'
+            'differs in: ' . implode(', ', $service->parameterDifferences(is_array($parameters) ? $parameters : [])) . ': rebuild the region'
         );
 
         $matrix = self::trafficMatrix($manifest['region']);
@@ -603,47 +603,6 @@ class RegionLoader
     {
         $named = $region['traffic_matrix'] ?? null;
         return is_string($named) && $named !== '' ? $named : 'us_mean';
-    }
-
-    /**
-     * For the operator: which recorded parameters are not this server's seed values. The verdict itself is
-     * RegionService::buildScopeMatches().
-     *
-     * @param array<string, mixed> $A
-     * @param array<string, mixed> $parameters
-     * @return list<string>
-     */
-    private static function differingParameters(array $A, array $parameters): array
-    {
-        $expected = [
-            'walk_decay_m' => Estimator::seed($A, 'kernel.walk_decay_m'),
-            'walk_cutoff_m' => Estimator::seed($A, 'kernel.walk_cutoff_m'),
-            'earth_radius_m' => Estimator::seed($A, 'constants.earth_radius_m'),
-            'cns04_weight' => Estimator::seed($A, 'etl.cns04_weight'),
-            'cell_min_nearby' => Estimator::seed($A, 'etl.cell_min_nearby'),
-            'cell_min_venue' => Estimator::seed($A, 'etl.cell_min_venue'),
-            'segment_cns' => [],
-            'place_types' => [],
-        ];
-        foreach (Estimator::seed($A, 'vocabulary.segments') as $segment) {
-            if (str_starts_with($segment, 'w_')) {
-                $expected['segment_cns'][$segment] = Estimator::seed($A, 'segments.' . $segment . '.lodes_cns');
-            }
-        }
-        foreach (Estimator::seed($A, 'vocabulary.place_types') as $type) {
-            $row = Estimator::seed($A, 'place_types.rows.' . $type);
-            foreach (['visitor_segment', 'default_size', 'rival_kind', 'host_fit', 'kitchen_default'] as $key) {
-                $expected['place_types'][$type][$key] = $row[$key];
-            }
-        }
-        $differing = [];
-        foreach ($expected as $name => $value) {
-            // == on purpose: 400 and 400.0 are the same number, and key order does not matter
-            if (!array_key_exists($name, $parameters) || $parameters[$name] != $value) {
-                $differing[] = $name;
-            }
-        }
-        return $differing === [] ? ['(a value within the last digits)'] : $differing;
     }
 
     // ----------------------------------------------------------------------------------------- step 3

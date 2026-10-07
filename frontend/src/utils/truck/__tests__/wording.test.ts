@@ -16,6 +16,8 @@ import {
   CONFIDENCE_TEXT,
   DRIVE_SOURCE,
   HOST_SIZE_LABEL,
+  MAP_TEXT,
+  PROFILE_WARNING_TEXT,
   OSM_COPYRIGHT_URL,
   LEHD_URL,
   PLACE_TYPE_LABELS,
@@ -39,6 +41,7 @@ import {
   overrideErrorMessage,
   placeTypeLabel,
   precipClassWord,
+  profileWarningTexts,
   seedLabel,
   segmentGroup,
   segmentLabel,
@@ -194,6 +197,27 @@ describe('the standing notice and the standing lines (6.3)', () => {
 
   it('prints the data vintages from the region', () => {
     expect(spec(vintagesLine(DC_VINTAGES))).toBe('Residents: April 2020. Jobs: 2023. Places: OpenStreetMap, Sat, Oct 3, 2026.');
+  });
+
+  it('has the two toasts of a profile save and says nothing for a code it does not know', () => {
+    expect(spec(PROFILE_WARNING_TEXT.timezone_assumed)).toBe('We assumed Eastern time for this truck.');
+    expect(spec(PROFILE_WARNING_TEXT.base_outside_region)).toBe(
+      'Your base is outside the counties we have data for. Nothing can be estimated near it; the rest of the map works.',
+    );
+    expect(profileWarningTexts(['base_outside_region', 'timezone_assumed'])).toEqual([
+      PROFILE_WARNING_TEXT.base_outside_region,
+      PROFILE_WARNING_TEXT.timezone_assumed,
+    ]);
+    expect(profileWarningTexts([])).toEqual([]);
+    expect(profileWarningTexts(['a_code_of_a_later_server', 'toString', 'timezone_assumed'])).toEqual([PROFILE_WARNING_TEXT.timezone_assumed]);
+  });
+
+  it("has the map's own strings", () => {
+    expect(spec(MAP_TEXT.loading)).toBe('Loading map...');
+    expect(spec(MAP_TEXT.googleFailed)).toBe('The Google map could not load, so the background map is hidden. Estimates and saved spots still work.');
+    expect(spec(MAP_TEXT.zoomIn)).toBe('Zoom in');
+    expect(spec(MAP_TEXT.zoomOut)).toBe('Zoom out');
+    expect(spec(MAP_TEXT.blankLabel)).toBe('Background grid. Arrow keys move it, plus and minus zoom.');
   });
 });
 
@@ -542,7 +566,7 @@ describe('banned wording (6.9)', () => {
 });
 
 describe('worked examples', () => {
-  it('this file asserts 103 values the specification prints', () => {
-    expect(specCount()).toBe(103);
+  it('this file asserts 110 values the specification prints', () => {
+    expect(specCount()).toBe(110);
   });
 });

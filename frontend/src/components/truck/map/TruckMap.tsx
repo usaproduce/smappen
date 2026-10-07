@@ -7,6 +7,7 @@ import { SMAPPEN_MAP_STYLE_DARK, SMAPPEN_MAP_STYLE_MONO } from '../../../utils/m
 import { useTruckHourStore } from '../../../stores/truckHourStore';
 import { useTruckUiStore } from '../../../stores/truckUiStore';
 import { MAX_ZOOM, MIN_ZOOM } from '../../../utils/truck/map/viewport';
+import { MAP_TEXT as TEXT } from '../../../utils/truck/wording';
 import { useTruckMapsLoader } from '../data/useMapsLoader';
 import { useThemeName } from '../ui/useThemeName';
 import { cellOutline, createHexLayer, prepareMesh } from './HexLayer';
@@ -29,14 +30,6 @@ import type { MapCamera, MapHit, MapHost, MapPointerEvent, TruckMapHandle, Truck
  *
  * The component fills its positioned parent.
  */
-
-const TEXT = {
-  loading: 'Loading map...',
-  googleFailed: 'The Google map could not load, so the background map is hidden. Estimates and saved spots still work.',
-  zoomIn: 'Zoom in',
-  zoomOut: 'Zoom out',
-  blankLabel: 'Background grid. Arrow keys move it, plus and minus zoom.',
-} as const;
 
 const CONTAINER_STYLE = { width: '100%', height: '100%' } as const;
 const SVG_NS = 'http://www.w3.org/2000/svg';

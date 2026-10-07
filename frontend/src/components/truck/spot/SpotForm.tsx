@@ -145,7 +145,7 @@ export default function SpotForm({ mode, initial, spotId, nearbyHosts, presentat
   if (draft.point === null) placesState = 'no-point';
   else if (places !== null) placesState = 'ready';
   else if (rebuilding) placesState = 'unavailable';
-  else if (est.status === 'error') placesState = 'error';
+  else if (est.status === 'error' || est.placesStatus === 'error') placesState = 'error';
 
   const question = !editing && !asked && draft.hostChoice === 'none' ? hostQuestion(places) : null;
 
@@ -653,13 +653,15 @@ function PlaceSearch({ onPick }: { onPick: (place: { lat: number; lng: number; a
   }
   if (!isLoaded) return <div aria-hidden className="skeleton" style={{ height: 40, borderRadius: 8 }} />;
   return (
-    <GooglePlaceAutocomplete
-      placeholder="Search an address"
-      types={ADDRESS_TYPES}
-      countries={ADDRESS_COUNTRIES}
-      fields={ADDRESS_FIELDS}
-      unavailableText={ADDRESS_UNAVAILABLE}
-      onPlace={(place) => onPick({ lat: place.lat, lng: place.lng, address: place.address || place.name, name: place.name })}
-    />
+    <div className="tp-address">
+      <GooglePlaceAutocomplete
+        placeholder="Search an address"
+        types={ADDRESS_TYPES}
+        countries={ADDRESS_COUNTRIES}
+        fields={ADDRESS_FIELDS}
+        unavailableText={ADDRESS_UNAVAILABLE}
+        onPlace={(place) => onPick({ lat: place.lat, lng: place.lng, address: place.address || place.name, name: place.name })}
+      />
+    </div>
   );
 }

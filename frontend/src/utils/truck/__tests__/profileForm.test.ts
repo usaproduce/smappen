@@ -47,7 +47,7 @@ import {
   startingValues,
   validateProfileDraft,
 } from '../profileForm';
-import { PLACEHOLDER_SEED } from '../wording';
+import { PLACEHOLDER_SEED, seedLabel } from '../wording';
 
 /** The profile the server makes from the defaults: every `profile_defaults` value, a name and a base. */
 function defaultProfile(): TruckProfileX {
@@ -584,5 +584,23 @@ describe('fixed in this version', () => {
       value: 'typical size 40, hosts taproom and bar patrons, no food of its own',
     });
     expect(rows.find((r) => r.key === 'holidays.rules.thanksgiving')).toMatchObject({ label: 'Thanksgiving Day', value: 'Major holiday' });
+  });
+
+  it('names every seed in plain language: none falls back to the words of its path', () => {
+    const labels: Record<string, string> = {};
+    for (const g of groups) {
+      if (g.id === 'place_types' || g.id === 'holidays') continue; // told row by row, from the tables themselves
+      for (const r of g.rows) {
+        expect(seedLabel(r.key), r.key).not.toBe(r.key);
+        expect(r.label, r.key).toBe(seedLabel(r.key));
+        expect(r.label.includes('_'), r.key).toBe(false);
+        expect(labels[r.label], r.key + ' and ' + labels[r.label]).toBeUndefined();
+        labels[r.label] = r.key;
+      }
+    }
+    expect(rows.find((r) => r.key === 'money.fuel_price_fallback.gasoline.R1Z')?.label).toBe('Default gasoline price, Lower Atlantic (Virginia, West Virginia)');
+    expect(rows.find((r) => r.key === 'suggest.max_stops_per_day')?.label).toBe('Most stops in a suggested day');
+    expect(rows.find((r) => r.key === 'etl.cell_min_nearby')?.label).toBe('Fewest people nearby for a map hexagon to be kept');
+    expect(rows.find((r) => r.key === 'constants.meters_per_mile')?.label).toBe('Metres in a mile');
   });
 });

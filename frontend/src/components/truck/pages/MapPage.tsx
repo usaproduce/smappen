@@ -5,12 +5,14 @@ import toast from 'react-hot-toast';
 import { truckKeys, type HostHint, type Spot } from '../../../api/truck';
 import type { LatLng, MapLayer } from '../../../utils/truck/model';
 import { fmtCoord } from '../../../utils/truck/format';
+import { profileWarningTexts } from '../../../utils/truck/wording';
 import {
   CARD_WIDTH,
   cardSide,
   floatLayout,
   hourKeyAction,
   initialCamera,
+  legendGivesWay,
   legendStartsOpen,
   mapRegionLabel,
   placePoint,
@@ -45,9 +47,6 @@ const WRITE_DELAY_MS = 300;
 const NAMES_FROM_ZOOM = 13;
 /** The path of this page: the only address its parameters are ever written to. */
 const MAP_PATH = /\/truck\/map\/?$/;
-
-const TIMEZONE_ASSUMED = 'We assumed Eastern time for this truck.';
-const BASE_OUTSIDE = 'Your base is outside the area we have data for. The map and the estimates will be empty.';
 
 /** Runs when the browser has nothing more urgent to do (soon after, where it cannot say). Returns a cancel. */
 function whenIdle(run: () => void): () => void {
@@ -151,6 +150,8 @@ export default function MapPage() {
   const [float, setFloat] = useState(() => floatLayout(window.innerWidth));
   const [short, setShort] = useState(false);
   const [legendOpen, setLegendOpen] = useState(() => legendStartsOpen(window.innerWidth));
+  // The owner's choice for as long as the card stands beside a narrow map: closed until they open it.
+  const [legendBesideCard, setLegendBesideCard] = useState(false);
   const [namesOn, setNamesOn] = useState(boot.camera.zoom >= NAMES_FROM_ZOOM);
   const [strip, setStrip] = useState<Uint8Array | null>(null);
   const [basePick, setBasePick] = useState<LatLng | null>(null);
@@ -410,8 +411,7 @@ export default function MapPage() {
     saveProfile
       .mutateAsync({ base: { lat: basePick.lat, lng: basePick.lng, address: '' } })
       .then((answer) => {
-        if (answer.warnings.includes('base_outside_region')) toast(BASE_OUTSIDE, { duration: 8000 });
-        if (answer.warnings.includes('timezone_assumed')) toast(TIMEZONE_ASSUMED, { duration: 8000 });
+        for (const text of profileWarningTexts(answer.warnings)) toast(text, { duration: 8000 });
         // The owner may have left the page while the save was on its way: then there is nowhere to go back to.
         if (alive.current) leavePick();
       })
@@ -462,9 +462,22 @@ export default function MapPage() {
   }, []);
 
   // ---- the cards over the map --------------------------------------------------------------------------
+  // Beside a map the card has left narrow, the open legend would cover the place the card is about:
+  // it closes to its button for that time and comes back when the card goes.
+  const legendWaits = legendGivesWay(float, subject !== null && side === 'right');
+  useEffect(() => {
+    if (!legendWaits) setLegendBesideCard(false);
+  }, [legendWaits]);
   const switcher = <LayerSwitch layer={layer} onChange={setLayer} />;
   const legendCard = (
-    <Legend ref={legend} layer={layer} vintages={region !== null ? region.vintages : null} open={legendOpen} onToggle={() => setLegendOpen((v) => !v)} />
+    <Legend
+      ref={legend}
+      layer={layer}
+      vintages={region !== null ? region.vintages : null}
+      capacity={profile.capacity_orders_per_hour}
+      open={legendWaits ? legendBesideCard : legendOpen}
+      onToggle={() => (legendWaits ? setLegendBesideCard((v) => !v) : setLegendOpen((v) => !v))}
+    />
   );
   const tools = (
     <MapTools

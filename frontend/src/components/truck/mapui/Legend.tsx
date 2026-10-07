@@ -2,6 +2,7 @@ import { forwardRef, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { RegionInfo } from '../../../api/truck';
 import type { MapLayer } from '../../../utils/truck/model';
+import { fmtCount } from '../../../utils/truck/format';
 import { LEGEND_CAPTIONS, LEGEND_TITLES, markerShare } from '../../../utils/truck/hourControl';
 import { FLOOR_TEXT, LEGEND_SWATCHES, legendSwatches, legendTicks } from '../../../utils/truck/palette';
 import { SourceLine } from '../ui';
@@ -11,6 +12,8 @@ export interface LegendProps {
   layer: MapLayer;
   /** The vintages of the region's data, for the source line; null without a region. */
   vintages: RegionInfo['vintages'];
+  /** The truck's orders per hour at full speed: the "Opportunity" colours never show more, and the legend says so. */
+  capacity: number;
   /** False: the legend is the "Legend" button with the source line beside it. */
   open: boolean;
   onToggle: () => void;
@@ -35,7 +38,7 @@ const SWATCH_WIDTH = RAMP_WIDTH / LEGEND_SWATCHES;
  * The source line stays on screen when the legend is closed: the colours are partly computed from
  * OpenStreetMap data.
  */
-const Legend = forwardRef<LegendHandle, LegendProps>(function Legend({ layer, vintages, open, onToggle }, ref) {
+const Legend = forwardRef<LegendHandle, LegendProps>(function Legend({ layer, vintages, capacity, open, onToggle }, ref) {
   const theme = useThemeName();
   const marker = useRef<SVGGElement>(null);
   const byte = useRef<number | null>(null);
@@ -67,8 +70,12 @@ const Legend = forwardRef<LegendHandle, LegendProps>(function Legend({ layer, vi
   useLayoutEffect(place);
 
   if (!open) {
+    // Without a region there is no source line: the card is then as wide as its button, not a bar across the map.
     return (
-      <div className="bg-white rounded-xl border shadow-float flex items-center gap-2 p-1 pr-2.5" style={{ borderColor: 'var(--line-soft)' }}>
+      <div
+        className={'bg-white rounded-xl border shadow-float flex items-center gap-2 p-1' + (vintages !== null ? ' pr-2.5' : ' self-start')}
+        style={{ borderColor: 'var(--line-soft)' }}
+      >
         <button
           type="button"
           onClick={onToggle}
@@ -150,12 +157,21 @@ const Legend = forwardRef<LegendHandle, LegendProps>(function Legend({ layer, vi
       <p className="mt-1.5 text-xs font-semibold" style={{ color: 'var(--body)' }}>
         No colour: under {FLOOR_TEXT[layer]}
       </p>
+      {/* The layer is capped at what the truck can serve: a smaller truck never reaches the dark end of the scale. */}
+      {layer === 'opportunity' ? (
+        <p className="mt-0.5 text-xs font-semibold" style={{ color: 'var(--body)' }}>
+          Capped at your truck's {fmtCount(capacity)} an hour
+        </p>
+      ) : null}
       <p className="mt-1.5 text-xs font-medium leading-snug" style={{ color: 'var(--body)' }}>
         {LEGEND_CAPTIONS[layer]}
       </p>
-      <div className="mt-2 border-t pt-2" style={{ borderColor: 'var(--line-soft)' }}>
-        <SourceLine kinds={['map']} vintages={vintages} />
-      </div>
+      {/* Without a region there are no vintages and so no source line: no empty footer either. */}
+      {vintages !== null ? (
+        <div className="mt-2 border-t pt-2" style={{ borderColor: 'var(--line-soft)' }}>
+          <SourceLine kinds={['map']} vintages={vintages} />
+        </div>
+      ) : null}
     </section>
   );
 });

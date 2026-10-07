@@ -292,6 +292,39 @@ export const STRIPS = {
   tryAgain: 'Try again',
 } as const;
 
+/**
+ * What the owner reads, as a toast, for the two warnings a save of the profile can come back with
+ * (04_BACKEND 4.4). `base_outside_region` is a base inside the box of a region but outside its
+ * counties: the truck has that region, so the map has its colours and only the surroundings of the
+ * base are empty. (A base in no region's box gets no warning: the first-run step and Settings say
+ * so before the save, and the map says "No map data for this area yet.")
+ */
+export const PROFILE_WARNING_TEXT = {
+  timezone_assumed: 'We assumed Eastern time for this truck.',
+  base_outside_region: 'Your base is outside the counties we have data for. Nothing can be estimated near it; the rest of the map works.',
+} as const;
+
+/** The toasts for the warnings of one profile save, in the order sent; a code this build does not know says nothing. */
+export function profileWarningTexts(warnings: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const code of warnings) {
+    if (code === 'timezone_assumed' || code === 'base_outside_region') out.push(PROFILE_WARNING_TEXT[code]);
+  }
+  return out;
+}
+
+/**
+ * The fixed strings of the map that more than one file prints (4.2, 5.6): the line while the map
+ * loads, the notice when Google could not load, and the labels of the blank base map's controls.
+ */
+export const MAP_TEXT = {
+  loading: 'Loading map...',
+  googleFailed: 'The Google map could not load, so the background map is hidden. Estimates and saved spots still work.',
+  zoomIn: 'Zoom in',
+  zoomOut: 'Zoom out',
+  blankLabel: 'Background grid. Arrow keys move it, plus and minus zoom.',
+} as const;
+
 // -------------------------------------------------------------------------------------------------
 // 6.8 Place type and segment labels
 // -------------------------------------------------------------------------------------------------
@@ -736,6 +769,12 @@ const SEED_LABELS: Readonly<Record<string, string>> = {
   'timeline.long_day_minutes': 'A day longer than this is pointed out',
   'timeline.early_start_minute': 'Prep before this time of day is pointed out',
   'money.fee_warn_share': 'A fee above this share of sales is pointed out',
+  'money.fuel_price_fallback.gasoline.R1Y': 'Default gasoline price, Central Atlantic (DC, Maryland)',
+  'money.fuel_price_fallback.gasoline.R1Z': 'Default gasoline price, Lower Atlantic (Virginia, West Virginia)',
+  'money.fuel_price_fallback.gasoline.NUS': 'Default gasoline price, national average',
+  'money.fuel_price_fallback.diesel.R1Y': 'Default diesel price, Central Atlantic (DC, Maryland)',
+  'money.fuel_price_fallback.diesel.R1Z': 'Default diesel price, Lower Atlantic (Virginia, West Virginia)',
+  'money.fuel_price_fallback.diesel.NUS': 'Default diesel price, national average',
   'drive_fallback.detour_factor': 'Road miles for each straight-line mile',
   'drive_fallback.local_miles': 'Miles driven at local speed',
   'drive_fallback.local_mph': 'Local speed without traffic',
@@ -744,7 +783,31 @@ const SEED_LABELS: Readonly<Record<string, string>> = {
   'traffic.us_mean': 'Traffic by day and hour, national average',
   'traffic.dc_typical': 'Average traffic over all hours, Washington region',
   'traffic.us_mean_typical': 'Average traffic over all hours, national average',
+  'suggest.service_minutes': 'Length of a suggested service window',
+  'suggest.earliest_open_minute': 'Earliest opening time that is suggested',
+  'suggest.latest_close_minute': 'Latest closing time that is suggested',
+  'suggest.windows_per_spot': 'Windows tried for each spot and day',
+  'suggest.max_candidates': 'Windows kept for each day before they are combined',
+  'suggest.max_stops_per_day': 'Most stops in a suggested day',
+  'suggest.max_day_minutes': 'Longest day that is suggested',
+  'suggest.min_stop_orders': 'Fewest expected orders for a window to be considered',
+  'suggest.day_results': 'Day plans offered when a day is suggested',
+  'suggest.week_day_options': 'Day plans weighed for each day of a suggested week',
+  'suggest.max_days_per_week': 'Most service days in a suggested week',
+  'suggest.max_visits_per_spot_per_week': 'Most visits to one spot in a suggested week',
+  'suggest.min_day_take_home': 'Take-home a day has to beat to be suggested',
+  'scout.window_minutes': 'Length of the window Scout compares places on',
+  'scout.max_results': 'Places in the Scout list',
+  'etl.cns04_weight': 'Weight of construction jobs among industrial workers',
+  'etl.cell_min_nearby': 'Fewest people nearby for a map hexagon to be kept',
+  'etl.cell_min_venue': 'Fewest venue visitors for a map hexagon to be kept',
   'constants.z80': 'Width of an 80% range',
+  'constants.earth_radius_m': 'Radius of the Earth',
+  'constants.pi': 'Pi',
+  'constants.ln2': 'Natural logarithm of 2',
+  'constants.meters_per_mile': 'Metres in a mile',
+  'constants.round_half': 'Rounding: halves go away from zero',
+  'constants.qkey_scale': 'Precision of ranking comparisons',
   'hours.regime_of_hour': 'Which hours use day and which use evening competition',
   'hours.daypart_of_hour': 'Which hours are breakfast, lunch, dinner and late',
   'map.opportunity_hi': 'Top of the orders colour scale',
