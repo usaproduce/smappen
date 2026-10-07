@@ -1,8 +1,185 @@
 /*
- * Truck Planner print stylesheet (docs/truck-planner/05_FRONTEND.md 7.4). Empty until the day sheet
- * package fills it.
+ * Truck Planner print stylesheet (docs/truck-planner/05_FRONTEND.md 7.4): the day sheet on paper.
  *
- * Rules for whoever does: plain CSS, no Tailwind directive and no @apply (it ships with the lazy
- * Truck Planner chunk); every rule inside "@media print" and prefixed with "html.tp-printing", so
- * that printing any other smappen page is untouched.
+ * Plain CSS, no Tailwind directive and no @apply (it ships with the lazy Truck Planner chunk). Every
+ * rule sits inside "@media print" and is prefixed with "html.tp-printing", the class DaySheetPage
+ * puts on <html> while it is mounted and takes off when it is left, so printing any other smappen
+ * page is untouched.
+ *
+ * The page rule (Letter, portrait, 12 mm margins) is not in this file: a class cannot scope it, so
+ * DaySheetPage adds it as <style id="tp-page"> for as long as it is mounted.
+ *
+ * The sheet prints black on white with no backgrounds and no shadows. Every estimate on it is text
+ * (value, range and label in words), so a black-and-white page says as much as the screen.
  */
+
+@media print {
+  /* ---- The page flows over as many sheets of paper as it needs ------------------------------ */
+
+  html.tp-printing,
+  html.tp-printing body,
+  html.tp-printing #root {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  html.tp-printing {
+    background: #fff !important;
+  }
+
+  /* The app shell is a full-height flex column: as a plain block it breaks across pages. */
+  html.tp-printing .min-h-screen {
+    display: block !important;
+    min-height: 0 !important;
+  }
+
+  /* One column, as wide as the paper: the page frame and the sheet's own width limit go. */
+  html.tp-printing #main-content,
+  html.tp-printing #main-content .max-w-7xl,
+  html.tp-printing .tp-sheet-page {
+    display: block !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  html.tp-printing .carafe-route-fade {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  /* ---- What a printed sheet does not show --------------------------------------------------- */
+
+  /* The top nav, the skip link, the sub-nav, toolbars and buttons, toasts, the phone bottom bar. */
+  html.tp-printing header,
+  html.tp-printing .skip-link,
+  html.tp-printing nav[aria-label="Truck Planner sections"],
+  html.tp-printing .tp-no-print,
+  html.tp-printing .sm-toast,
+  html.tp-printing .tp-bottom-bar,
+  html.tp-printing .tp-popover {
+    display: none !important;
+  }
+
+  /* ---- Colours: black on white, no backgrounds, no shadows ---------------------------------- */
+
+  html.tp-printing *,
+  html.tp-printing *::before,
+  html.tp-printing *::after {
+    color: #000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  /*
+   * The dark theme repaints every white surface with rules of its own that are marked important and
+   * count up to five classes. The class is repeated here only to outrank them, so a sheet printed
+   * from the dark theme, with backgrounds switched on in the print dialog, is still white.
+   */
+  html.tp-printing.tp-printing.tp-printing.tp-printing.tp-printing.tp-printing .bg-white {
+    background: transparent !important;
+  }
+
+  /* The sheet is the page: no card around it. */
+  html.tp-printing .tp-sheet {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  /* A chip prints as bordered text. */
+  html.tp-printing .tp-chip {
+    height: auto !important;
+    padding: 1pt 5pt !important;
+    border: 1px solid rgba(0, 0, 0, 0.4) !important;
+  }
+
+  /* ---- Type ---------------------------------------------------------------------------------- */
+
+  /* Body 11 pt. Everything on the sheet takes its size from where it stands. */
+  html.tp-printing .tp-sheet {
+    font-size: 11pt !important;
+    line-height: 1.35 !important;
+  }
+
+  html.tp-printing .tp-sheet * {
+    font-size: inherit !important;
+    line-height: inherit !important;
+  }
+
+  /* The day's title. */
+  html.tp-printing .tp-sheet .tp-sheet-title {
+    font-size: 18pt !important;
+    font-weight: 700 !important;
+    line-height: 1.2 !important;
+  }
+
+  /* Section titles. */
+  html.tp-printing .tp-sheet .tp-sheet-h {
+    font-size: 13pt !important;
+    font-weight: 700 !important;
+    line-height: 1.25 !important;
+  }
+
+  /* The times of the "Times" table. */
+  html.tp-printing .tp-sheet .tp-sheet-time {
+    font-size: 12pt !important;
+    font-weight: 700 !important;
+    font-variant-numeric: tabular-nums !important;
+  }
+
+  /* ---- Tables: full width, hairlines of black at 40 % ---------------------------------------- */
+
+  html.tp-printing .tp-sheet-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  html.tp-printing .tp-sheet-table tr {
+    border: 0 !important;
+  }
+
+  html.tp-printing .tp-sheet-table th,
+  html.tp-printing .tp-sheet-table td {
+    padding-top: 3pt !important;
+    padding-bottom: 3pt !important;
+    border: 0 !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.4) !important;
+  }
+
+  html.tp-printing .tp-sheet-foot {
+    border-color: rgba(0, 0, 0, 0.4) !important;
+  }
+
+  /* ---- Page breaks --------------------------------------------------------------------------- */
+
+  /* A stop block and a table row stay whole. */
+  html.tp-printing .tp-sheet-stop,
+  html.tp-printing .tp-sheet-table tr {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  /* A heading stays with what it heads. */
+  html.tp-printing .tp-sheet h1,
+  html.tp-printing .tp-sheet h2,
+  html.tp-printing .tp-sheet h3 {
+    break-after: avoid !important;
+    page-break-after: avoid !important;
+  }
+
+  /* ---- Links print as their text only: no underline, no address after them ------------------- */
+
+  html.tp-printing a {
+    text-decoration: none !important;
+  }
+
+  html.tp-printing a::after {
+    content: none !important;
+  }
+}
