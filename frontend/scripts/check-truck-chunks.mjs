@@ -5,13 +5,15 @@
 //   node scripts/check-truck-chunks.mjs "$TMP/tp-build"
 //
 // /truck is the app's first lazy route. This script looks at a finished build and fails (exit 1)
-// unless Truck Planner really is one chunk of its own:
+// unless Truck Planner really is a chunk of its own, with the map engine in a second one:
 //
 //   1. exactly one assets/TruckPages-*.js;
 //   2. the sentinel string (exported by utils/truck/model.ts and rendered by TruckGate, so it cannot
 //      be tree-shaken) is in that file and in no other .js file;
-//   3. no assets/index-*.js contains `cellToBoundary` (h3-js stayed out of the main bundle);
-//   4. index.html does not mention TruckPages- (the chunk is not preloaded);
+//   3. no assets/index-*.js contains `cellToBoundary` (h3-js stayed out of the main bundle), and
+//      neither does TruckPages: exactly one assets/MapPage-*.js holds it (the map engine is fetched
+//      when the map is opened, not with the other truck pages);
+//   4. index.html does not mention TruckPages- or MapPage- (the chunks are not preloaded);
 //   5. the gzip sizes meet the bundle budget: TruckPages at most 260 kB, and the main chunk at most
 //      8 kB above its size before Truck Planner.
 //
@@ -87,6 +89,7 @@ const styles = readdirSync(assetsDir)
 
 const truckChunks = scripts.filter((s) => /^TruckPages-.*\.js$/.test(s.name));
 const mainChunks = scripts.filter((s) => /^index-.*\.js$/.test(s.name));
+const mapChunks = scripts.filter((s) => /^MapPage-.*\.js$/.test(s.name));
 const html = readFileSync(indexHtml, 'utf8');
 
 const failures = [];
@@ -121,13 +124,21 @@ check(mainChunks.length >= 1, 'a main chunk assets/index-*.js exists (found ' + 
 const mainWithH3 = mainChunks.filter((s) => s.text.includes(H3_MARKER)).map((s) => s.name);
 check(mainWithH3.length === 0, 'no assets/index-*.js contains ' + H3_MARKER + (mainWithH3.length ? ' (found in: ' + mainWithH3.join(', ') + ')' : ''));
 
-// 4. The chunk is not preloaded.
-check(!html.includes('TruckPages-'), 'index.html does not mention TruckPages-');
+// 3b. The map engine is a chunk of its own.
+const withH3 = scripts.filter((s) => s.text.includes(H3_MARKER)).map((s) => s.name);
+check(
+  mapChunks.length === 1 && withH3.length === 1 && withH3[0] === mapChunks[0].name,
+  H3_MARKER + ' is in exactly one assets/MapPage-*.js and in no other script (found in: ' + (withH3.join(', ') || 'none') + ')',
+);
+
+// 4. The chunks are not preloaded.
+check(!html.includes('TruckPages-') && !html.includes('MapPage-'), 'index.html mentions neither TruckPages- nor MapPage-');
 
 // 5. The bundle budget.
 if (truckChunks.length === 1) {
   const chunk = truckChunks[0];
   check(chunk.gzip <= CHUNK_BUDGET, 'TruckPages gzip ' + kb(chunk.gzip) + ' is within the budget of ' + kb(CHUNK_BUDGET));
+  if (mapChunks.length === 1) console.log('        (with the map chunk: ' + kb(chunk.gzip + mapChunks[0].gzip) + ' gzip in all)');
 }
 const mainGzip = mainChunks.reduce((sum, s) => sum + s.gzip, 0);
 const growth = mainGzip - MAIN_BASELINE;
