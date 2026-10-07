@@ -15,6 +15,8 @@ export interface WeatherChipProps {
   toHour: number;
   /** State and age of the forecast (the day-context answer's `forecast`): a stale one says so in the title. */
   info?: Pick<ForecastInfo, 'state' | 'generated_local'> | null;
+  /** The stretch is over (a stop that has closed, a date before today): a missing forecast is then not one still to come. */
+  passed?: boolean;
 }
 
 const ICONS: Record<WeatherSummary['icon'], LucideIcon> = {
@@ -30,15 +32,16 @@ const ICONS: Record<WeatherSummary['icon'], LucideIcon> = {
  * highest chance the forecast gives for it. The forecast is the one for the area around the truck's
  * base, which the title says.
  */
-export default function WeatherChip({ forecast, fromHour, toHour, info }: WeatherChipProps) {
+export default function WeatherChip({ forecast, fromHour, toHour, info, passed = false }: WeatherChipProps) {
   const { A } = useTruck();
   const summary = weatherSummary(A, forecast, fromHour, toHour);
   if (!summary.usable) {
+    // The forecast only holds hours still to come, so "not yet" would be wrong about hours behind us.
     return (
       <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">
-        <span className="tp-chip">{WEATHER.none}</span>
+        <span className="tp-chip">{passed ? WEATHER.passed : WEATHER.none}</span>
         <span className="text-xs font-semibold" style={{ color: 'var(--body)' }}>
-          {WEATHER.noneHelp}
+          {passed ? WEATHER.passedHelp : WEATHER.noneHelp}
         </span>
       </span>
     );

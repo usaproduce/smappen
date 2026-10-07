@@ -145,6 +145,7 @@ export default function TodayPage() {
       fromHour: hours.fromHour,
       toHour: hours.toHour,
       nextDay,
+      passed: stop.close_minute <= minute,
       effect: evaluated ? weatherEffect(result.stops[index]).text : null,
     };
   });

@@ -672,6 +672,8 @@ export function precipClassWord(cls: string | null | undefined): string {
 export const WEATHER = {
   none: 'No forecast yet',
   noneHelp: 'Forecasts cover about six days.',
+  passed: 'No forecast',
+  passedHelp: 'These hours have passed.',
   title: 'Forecast for the area around your base',
   noChance: 'The forecast gives no chance for these hours.',
   staleTail: ', may be out of date',

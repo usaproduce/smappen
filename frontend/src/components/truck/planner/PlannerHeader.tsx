@@ -89,7 +89,7 @@ export default function PlannerHeader(props: PlannerHeaderProps) {
           </div>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
             {context !== null ? <HolidayChip context={context} /> : null}
-            {context !== null ? <WeatherChip forecast={context.forecast} fromHour={fromHour} toHour={toHour} info={forecast} /> : null}
+            {context !== null ? <WeatherChip forecast={context.forecast} fromHour={fromHour} toHour={toHour} info={forecast} passed={past} /> : null}
           </div>
         </div>
         <Field

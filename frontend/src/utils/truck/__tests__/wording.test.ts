@@ -427,6 +427,8 @@ describe('kit strings', () => {
     expect(spec(precipClassWord('dry'))).toBe('Dry');
     expect(spec(wording.WEATHER.none)).toBe('No forecast yet');
     expect(spec(wording.WEATHER.noneHelp)).toBe('Forecasts cover about six days.');
+    expect(spec(wording.WEATHER.passed)).toBe('No forecast');
+    expect(spec(wording.WEATHER.passedHelp)).toBe('These hours have passed.');
     expect(spec(wording.WEATHER.title)).toBe('Forecast for the area around your base');
     expect(spec(wording.WEATHER.noChance)).toBe('The forecast gives no chance for these hours.');
     expect(spec(treatedAsDay('Saturday'))).toBe('Treated as a Saturday');
@@ -566,7 +568,7 @@ describe('banned wording (6.9)', () => {
 });
 
 describe('worked examples', () => {
-  it('this file asserts 110 values the specification prints', () => {
-    expect(specCount()).toBe(110);
+  it('this file asserts 112 values the specification prints', () => {
+    expect(specCount()).toBe(112);
   });
 });

@@ -16,6 +16,8 @@ export interface WeatherStop {
   toHour: number;
   /** The stop opens after midnight: its hours are those of the next civil date. */
   nextDay: boolean;
+  /** The stop has closed (by the truck's clock). */
+  passed: boolean;
   /** What the forecast does to this stop's orders, as a sentence; null while the day is not worked out. */
   effect: string | null;
 }
@@ -71,7 +73,7 @@ export default function WeatherAtStops({ today, stops, forecast, forecastNext, i
                 <span className="whitespace-nowrap tabular-nums">{stop.window}</span>
               </p>
               <div className="mt-1">
-                <WeatherChip forecast={stop.nextDay ? forecastNext : forecast} fromHour={stop.fromHour} toHour={stop.toHour} info={info} />
+                <WeatherChip forecast={stop.nextDay ? forecastNext : forecast} fromHour={stop.fromHour} toHour={stop.toHour} info={info} passed={stop.passed} />
               </div>
               {stop.effect !== null ? (
                 <p className="mt-1 text-[13px] font-semibold" style={{ color: 'var(--body)' }}>
