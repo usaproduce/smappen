@@ -327,3 +327,11 @@ alternative source for the metro-wide places table, if the owner prefers to pay 
   (ODbL: an attribution line where that data is listed; share-alike on the derived places table once there are
   customers). It is the only non-Google map-related source, and only because Google has no bulk equivalent.
 - The original blueprint bundle, if it exists, to reconcile the model against.
+
+**2026-10-07.** This list was put to the owner and he answered "yes please deploy". That is the go-ahead of the
+first item, and the first production deploy followed it. He did not answer the traffic-table item or the
+OpenStreetMap item one by one, so neither is recorded as cleared: the release went out as built (seeds revision 1,
+the TomTom-derived table with its attribution line; the OpenStreetMap-derived places table with its credit), and
+both stay open here. Either can still be changed after the deploy, the first by a seeds revision with neutral
+values, the second by a new region build. Routes API, `EIA_API_KEY`, `TP_CONTACT_EMAIL` and the daily purge line
+of the runbook (04_BACKEND 8.5 step 11) were not set by the deploy.
