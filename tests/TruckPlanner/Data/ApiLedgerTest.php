@@ -148,4 +148,36 @@ final class ApiLedgerTest extends TestCase
         });
         self::assertSame(PHP_INT_MAX, $units);
     }
+
+    public function testSpentUsdSumsTheCostOfTheGivenSkusForTheDayAndForTheMonth(): void
+    {
+        // MySQL hands a DECIMAL sum back as text
+        $db = (new RecordingDatabase())->when('FROM api_cost_events', ['day_usd' => '1.250000', 'month_usd' => '12.375000']);
+        $spent = (new ApiLedger($db))->spentUsd(['tp_routes_matrix', 'tp_places_text']);
+        self::assertSame(['day' => 1.25, 'month' => 12.375], $spent);
+        $call = $db->only('FROM api_cost_events');
+        self::assertStringContainsString('SUM(CASE WHEN called_at >= CURDATE() THEN total_cost_usd ELSE 0 END)', $call['sql']);
+        self::assertStringContainsString('SUM(total_cost_usd)', $call['sql']);
+        self::assertStringContainsString('sku IN (?, ?)', $call['sql']);
+        // from the first of the database's month
+        self::assertStringContainsString('called_at >= DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)', $call['sql']);
+        self::assertSame(['tp_routes_matrix', 'tp_places_text'], $call['params']);
+    }
+
+    public function testSpentUsdWithoutSkusAsksNothing(): void
+    {
+        $db = new RecordingDatabase();
+        self::assertSame(['day' => 0.0, 'month' => 0.0], (new ApiLedger($db))->spentUsd([]));
+        self::assertSame([], $db->calls);
+    }
+
+    public function testAnUnreadableLedgerLooksLikeSpentAllowances(): void
+    {
+        $db = (new RecordingDatabase())->failOn('FROM api_cost_events');
+        $spent = null;
+        LogCapture::during(static function () use ($db, &$spent): void {
+            $spent = (new ApiLedger($db))->spentUsd(['tp_routes_matrix']);
+        });
+        self::assertSame(['day' => INF, 'month' => INF], $spent);
+    }
 }

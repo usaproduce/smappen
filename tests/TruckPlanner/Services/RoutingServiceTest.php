@@ -1125,6 +1125,52 @@ final class RoutingServiceTest extends TestCase
         self::assertCount(1, $this->http->requests);
     }
 
+    public function testTheSpendingAllowanceOfTheDay(): void
+    {
+        // Settings: 5 dollars a day. 4.975 are spent, so 2.5 cents are left: one element with toll estimates
+        // (1.5 cents) fits, a second does not.
+        $this->tables->usdToday = 4.975;
+        $this->queueRoutes([[0, 0]]);
+        $legs = $this->loop([self::BASE, self::S1]);
+        self::assertCount(1, $this->http->requests);
+        self::assertSame(['straight_line/budget', 'google_routes'], self::labels($legs));
+        self::assertEqualsWithDelta(0.01, $this->guard->spendLeftUsd(), 1e-9);
+
+        // One cent is left for everybody: an element without toll estimates (half a cent) still fits...
+        $other = self::truck([], self::OTHER_TRUCK);
+        $this->queueRoutes([[0, 0]]);
+        self::assertSame(['google_routes'], self::labels($this->service()->legs(self::OTHER_ORG, $other, [self::BASE, self::S2], [['base', 's2']], ['tolls' => false])));
+        self::assertCount(2, $this->http->requests);
+        // ...and one with them does not, whoever asks.
+        self::assertSame(['straight_line/budget'], self::labels($this->service()->legs(self::OTHER_ORG, $other, [self::BASE, self::S2], [['s2', 'base']])));
+        self::assertCount(2, $this->http->requests);
+    }
+
+    public function testTheSpendingAllowanceOfTheMonth(): void
+    {
+        // Settings: 40 dollars a month. 39.975 went earlier this month and nothing yet today.
+        $this->tables->usdEarlierThisMonth = 39.975;
+        $this->queueRoutes([[0, 0]]);
+        $legs = $this->loop([self::BASE, self::S1]);
+        self::assertCount(1, $this->http->requests);
+        self::assertSame(['straight_line/budget', 'google_routes'], self::labels($legs));
+    }
+
+    public function testAnAllowanceOfZeroAsksGoogleForNothing(): void
+    {
+        $before = getenv('TP_GOOGLE_DAILY_USD');
+        putenv('TP_GOOGLE_DAILY_USD=0');
+        try {
+            $legs = $this->loop([self::BASE, self::S1]);
+            self::assertSame([], $this->http->requests);
+            self::assertSame(['straight_line/budget', 'straight_line/budget'], self::labels($legs));
+            self::assertSame([], $this->tables->legs, 'nothing to cache');
+            self::assertSame([], $this->tables->ledger, 'and nothing to meter');
+        } finally {
+            putenv($before === false ? 'TP_GOOGLE_DAILY_USD' : 'TP_GOOGLE_DAILY_USD=' . $before);
+        }
+    }
+
     public function testACallFetchesAtMost650Elements(): void
     {
         // 26 points, every ordered pair: 650 legs in a grid of 676 elements, cut into 625 + 25 + 25 + 1
@@ -1757,6 +1803,10 @@ final class LegTables extends Database
     /** Billable units "already in the ledger today" before the test wrote any. */
     public int $unitsBefore = 0;
 
+    /** Dollars "already in the ledger" before the test wrote any: today, and earlier this month. */
+    public float $usdToday = 0.0;
+    public float $usdEarlierThisMonth = 0.0;
+
     /** @var list<string> every statement in order, whitespace squashed */
     public array $statements = [];
 
@@ -1927,6 +1977,18 @@ final class LegTables extends Database
                 $units += in_array($row['sku'], $params, true) ? (int) $row['billable_units'] : 0;
             }
             return ['units' => $units];
+        }
+        $spent = 'SELECT COALESCE(SUM(CASE WHEN called_at >= CURDATE() THEN total_cost_usd ELSE 0 END), 0) AS day_usd, '
+            . 'COALESCE(SUM(total_cost_usd), 0) AS month_usd FROM api_cost_events WHERE sku IN (';
+        if (str_starts_with($sql, $spent)
+            && str_ends_with($sql, ') AND called_at >= DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)')) {
+            // every row the test wrote is of today
+            $usd = $this->usdToday;
+            foreach ($this->ledger as $row) {
+                $usd += in_array($row['sku'], $params, true) ? (float) $row['total_cost_usd'] : 0.0;
+            }
+            // MySQL hands a DECIMAL sum back as text
+            return ['day_usd' => sprintf('%.6F', $usd), 'month_usd' => sprintf('%.6F', $this->usdEarlierThisMonth + $usd)];
         }
         throw new \LogicException('LegTables: unexpected statement: ' . $sql);
     }

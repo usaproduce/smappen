@@ -1549,6 +1549,23 @@ final class ScoutingServiceTest extends TestCase
         self::assertSame([], $this->ledgerRows->calls);
     }
 
+    public function testWithTheSpendingAllowanceUsedUpTheLookupIsNotAvailable(): void
+    {
+        // Settings: 5 dollars a day. 4.98 are spent: the 2 cents left do not cover a search by name (3.5 cents).
+        $this->ledgerRows->when('FROM api_cost_events', ['day_usd' => '4.980000', 'month_usd' => '4.980000']);
+        foreach ([false, true] as $force) {
+            self::assertRefused(
+                TpUnavailable::class,
+                'Contact lookup is not available on this server',
+                fn () => $this->service->lookupContact(self::ORG, self::truck(), self::TAPROOM, $force)
+            );
+        }
+        self::assertSame([], $this->http->requests, 'Google is not asked');
+        self::assertSame([], $this->leadTable->rows);
+        self::assertSame([], $this->bucketCalls, 'no token is taken for a lookup that cannot be made');
+        self::assertSame([], $this->ledgerRows->find('INSERT INTO api_cost_events'), 'and nothing is metered');
+    }
+
     public function testTheFirstLookupSearchesByNameAndKeepsOnlyThePlaceId(): void
     {
         $this->found();

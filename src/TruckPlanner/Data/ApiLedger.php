@@ -101,6 +101,39 @@ class ApiLedger
         }
     }
 
+    /**
+     * What the ledger's own estimates say the given SKUs have cost, in dollars: since the start of the
+     * database server's day, and since the first of its month. It is what the two spending allowances are
+     * checked against (UpstreamGuard::spendLeftUsd()). When the ledger cannot be read both answers are
+     * infinite, so the caller sees spent allowances and asks Google for nothing.
+     *
+     * @param list<string> $skus
+     * @return array{day: float, month: float}
+     */
+    public function spentUsd(array $skus): array
+    {
+        if ($skus === []) {
+            return ['day' => 0.0, 'month' => 0.0];
+        }
+        try {
+            $row = $this->db()->fetch(
+                'SELECT COALESCE(SUM(CASE WHEN called_at >= CURDATE() THEN total_cost_usd ELSE 0 END), 0) AS day_usd,
+                        COALESCE(SUM(total_cost_usd), 0) AS month_usd
+                   FROM api_cost_events
+                  WHERE sku IN (' . Sql::marks(count($skus)) . ')
+                    AND called_at >= DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)',
+                array_values($skus)
+            );
+            return ['day' => (float) ($row['day_usd'] ?? 0), 'month' => (float) ($row['month_usd'] ?? 0)];
+        } catch (\Throwable $e) {
+            if (!self::$failureLogged) {
+                self::$failureLogged = true;
+                error_log('[tp] ledger read failed');
+            }
+            return ['day' => INF, 'month' => INF];
+        }
+    }
+
     /** First 16 hexadecimal characters of the SHA-256 of the sorted mask tokens, null without a mask. */
     public static function maskHash(?string $fieldMask): ?string
     {

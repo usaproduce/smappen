@@ -143,6 +143,7 @@ class RoutingService implements LegProvider
                     'backoff' => false,
                     'org_left' => null,
                     'global_left' => null,
+                    'usd_left' => null,
                 ];
                 $rows = $this->legRows()->findFresh($routeKey, array_values($wanted));
                 foreach ($wanted as $pairId => $pairKey) {
@@ -567,7 +568,7 @@ class RoutingService implements LegProvider
             $this->sendLegacy($batch, $run);
             return;
         }
-        $reason = $this->stopped($batch, $run);
+        $reason = $this->stopped($batch, $run, DriveLegRepository::SRC_ROUTES);
         if ($reason !== null) {
             self::giveUp($batch, $run, $reason);
             return;
@@ -603,7 +604,7 @@ class RoutingService implements LegProvider
             min(DistanceMatrixClient::MAX_ORIGINS, DistanceMatrixClient::MAX_DESTINATIONS)
         );
         foreach ($parts as $part) {
-            $reason = $this->stopped($part, $run);
+            $reason = $this->stopped($part, $run, DriveLegRepository::SRC_LEGACY);
             if ($reason !== null) {
                 self::giveUp($part, $run, $reason);
                 continue;
@@ -627,8 +628,9 @@ class RoutingService implements LegProvider
      *
      * @param array{o: list<array{0: int, 1: int}>, d: list<array{0: int, 1: int}>} $batch
      * @param array<string, mixed> $run
+     * @param string $src the API the batch would go to (DriveLegRepository::SRC_ROUTES or SRC_LEGACY)
      */
-    private function stopped(array $batch, array &$run): ?string
+    private function stopped(array $batch, array &$run, string $src): ?string
     {
         $guard = $this->guard();
         if (!$guard->hasGoogleKey()) {
@@ -658,11 +660,33 @@ class RoutingService implements LegProvider
         if ($run['global_left'] < $elements) {
             return 'budget';
         }
+        // The bound on money: the day's and the month's allowance in dollars, at the price this batch is
+        // billed at (an element with toll estimates costs three times one without).
+        $run['usd_left'] ??= $guard->spendLeftUsd();
+        if ($run['usd_left'] < UpstreamGuard::costUsd(self::skuOf($src, $run), $elements)) {
+            return 'budget';
+        }
         $bucket = (string) TpConfig::get('routing.bucket');
         if (!$guard->takeTokens($bucket, $elements, (int) TpConfig::get('routing.bucket_wait_s'))) {
             return 'rate';
         }
         return null;
+    }
+
+    /**
+     * The ledger SKU a batch is billed as: by the API it goes to and, for Routes, by whether toll estimates
+     * are asked for. The clients record the same SKU with the call.
+     *
+     * @param array<string, mixed> $run
+     */
+    private static function skuOf(string $src, array $run): string
+    {
+        /** @var array<string, string> $skus */
+        $skus = TpConfig::get('routing.skus');
+        if ($src === DriveLegRepository::SRC_LEGACY) {
+            return $skus['legacy'];
+        }
+        return $run['tolls'] === true ? $skus['tolls'] : $skus['plain'];
     }
 
     /**
@@ -707,6 +731,9 @@ class RoutingService implements LegProvider
         $run['fetched'] += $count;
         $run['org_left'] -= $count;
         $run['global_left'] -= $count;
+        if ($run['usd_left'] !== null) {
+            $run['usd_left'] -= UpstreamGuard::costUsd(self::skuOf($src, $run), $count);
+        }
         $this->guard()->spendOrgElements($run['org'], $count);
 
         $rows = [];

@@ -128,6 +128,58 @@ class UpstreamGuard
         return $used >= $budget ? 0 : $budget - $used;
     }
 
+    /**
+     * Dollars this server may still spend on Google for Truck Planner: what is left of the day's
+     * allowance or of the month's, whichever is less. Both are counted from the ledger's own estimates
+     * over every SKU that has a price, so drive times and contact lookups draw on the same two
+     * allowances. 0.0 when either is used up, and when the ledger cannot be read.
+     *
+     * This is the bound on money. The element budgets above only bound how much one request and one
+     * organization may ask for: an element costs three times as much with toll estimates as without.
+     */
+    public function spendLeftUsd(): float
+    {
+        $spent = $this->ledger->spentUsd(self::pricedSkus());
+        $left = min(self::allowanceUsd('daily') - $spent['day'], self::allowanceUsd('monthly') - $spent['month']);
+        return $left > 0.0 ? $left : 0.0;
+    }
+
+    /** What the ledger will record for `$units` units of a SKU, in dollars. */
+    public static function costUsd(string $sku, int $units): float
+    {
+        $costs = TpConfig::get('unit_cost_usd');
+        $price = is_array($costs) && isset($costs[$sku]) ? (float) $costs[$sku] : 0.0;
+        return max(0, $units) * $price;
+    }
+
+    /**
+     * The allowance of a day or of a month, in dollars. The environment's TP_GOOGLE_DAILY_USD or
+     * TP_GOOGLE_MONTHLY_USD stands in when it holds a number that is not negative, so the owner can
+     * change an allowance without a release; anything else there is ignored and the setting counts.
+     *
+     * @param string $period "daily" or "monthly"
+     */
+    public static function allowanceUsd(string $period): float
+    {
+        $fromEnv = Config::get($period === 'daily' ? 'TP_GOOGLE_DAILY_USD' : 'TP_GOOGLE_MONTHLY_USD', '');
+        if (is_numeric($fromEnv) && (float) $fromEnv >= 0.0 && is_finite((float) $fromEnv)) {
+            return (float) $fromEnv;
+        }
+        return max(0.0, (float) TpConfig::get('google.' . $period . '_budget_usd'));
+    }
+
+    /** @return list<string> every SKU of the price list that costs money */
+    private static function pricedSkus(): array
+    {
+        $skus = [];
+        foreach ((array) TpConfig::get('unit_cost_usd') as $sku => $price) {
+            if ((float) $price > 0.0) {
+                $skus[] = (string) $sku;
+            }
+        }
+        return $skus;
+    }
+
     private function orgDayKey(string $orgId): string
     {
         return 'tp:routes:day:' . $orgId . ':' . str_replace('-', '', $this->clock->today('UTC'));

@@ -326,7 +326,9 @@ final class PlacesContentNotStoredTest extends TestCase
         self::assertSame(1, substr_count((string) json_encode($this->leadRows->calls), self::PLACE_ID));
         self::assertStringNotContainsString(self::PLACE_ID, (string) json_encode($this->ledgerRows->calls) . json_encode($this->cache->values));
         self::assertSame([], $this->cache->values, 'a lookup that worked leaves no cache entry at all');
-        self::assertCount(1, $this->ledgerRows->calls, 'one metered call');
+        // The ledger is read once (what is left of the spending allowance) and written once (the call).
+        self::assertSame(['fetch', 'query'], $this->ledgerRows->kinds());
+        self::assertCount(1, $this->ledgerRows->find('INSERT INTO api_cost_events'), 'one metered call');
     }
 
     public function testALaterLookupByTheKeptIdWritesNothingAtAll(): void

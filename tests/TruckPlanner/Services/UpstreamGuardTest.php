@@ -192,6 +192,89 @@ final class UpstreamGuardTest extends TestCase
         self::assertSame(0, $left);
     }
 
+    public function testTheSpendingAllowanceIsWhatIsLeftOfTheDayOrOfTheMonthWhicheverIsLess(): void
+    {
+        // settings: 5 dollars a day, 40 a month
+        $this->db->when('FROM api_cost_events', ['day_usd' => '1.250000', 'month_usd' => '12.000000']);
+        self::assertEqualsWithDelta(3.75, $this->guard()->spendLeftUsd(), 1e-9, 'the day is the tighter one');
+        $call = $this->db->only('FROM api_cost_events');
+        // every SKU that costs money, and none of the free ones (forecast, fuel price)
+        self::assertSame(
+            ['tp_routes_matrix', 'tp_routes_matrix_pro', 'tp_routes_matrix_ent', 'tp_distance_matrix', 'tp_places_text', 'tp_places_details'],
+            $call['params']
+        );
+        self::assertStringContainsString('SUM(total_cost_usd)', $call['sql']);
+
+        $month = (new RecordingDatabase())->when('FROM api_cost_events', ['day_usd' => '0.500000', 'month_usd' => '39.100000']);
+        self::assertEqualsWithDelta(0.9, $this->guardOn($month)->spendLeftUsd(), 1e-9, 'the month is the tighter one');
+    }
+
+    public function testASpentOrUnreadableLedgerLeavesNoMoney(): void
+    {
+        $day = (new RecordingDatabase())->when('FROM api_cost_events', ['day_usd' => '5.000000', 'month_usd' => '5.000000']);
+        self::assertSame(0.0, $this->guardOn($day)->spendLeftUsd());
+        $over = (new RecordingDatabase())->when('FROM api_cost_events', ['day_usd' => '0.000000', 'month_usd' => '41.300000']);
+        self::assertSame(0.0, $this->guardOn($over)->spendLeftUsd());
+
+        $broken = (new RecordingDatabase())->failOn('FROM api_cost_events');
+        $left = null;
+        LogCapture::during(function () use ($broken, &$left): void {
+            $left = $this->guardOn($broken)->spendLeftUsd();
+        });
+        self::assertSame(0.0, $left, 'a ledger that cannot be read is a spent allowance');
+    }
+
+    public function testTheOwnerCanSetTheAllowancesInTheEnvironment(): void
+    {
+        $before = [];
+        foreach (['TP_GOOGLE_DAILY_USD', 'TP_GOOGLE_MONTHLY_USD'] as $name) {
+            $before[$name] = [getenv($name), $_ENV[$name] ?? null];
+            unset($_ENV[$name]);
+        }
+        $spent = static fn (): RecordingDatabase => (new RecordingDatabase())->when('FROM api_cost_events', ['day_usd' => '1.000000', 'month_usd' => '1.000000']);
+        try {
+            putenv('TP_GOOGLE_DAILY_USD=2.5');
+            putenv('TP_GOOGLE_MONTHLY_USD=100');
+            self::assertSame(2.5, UpstreamGuard::allowanceUsd('daily'));
+            self::assertSame(100.0, UpstreamGuard::allowanceUsd('monthly'));
+            self::assertEqualsWithDelta(1.5, $this->guardOn($spent())->spendLeftUsd(), 1e-9);
+
+            // 0 switches Google off for Truck Planner
+            putenv('TP_GOOGLE_DAILY_USD=0');
+            self::assertSame(0.0, $this->guardOn((new RecordingDatabase())->when('FROM api_cost_events', ['day_usd' => '0', 'month_usd' => '0']))->spendLeftUsd());
+
+            // what is not a number that makes sense is ignored: the settings count
+            foreach (['', 'lots', '-3', 'INF', 'NAN'] as $text) {
+                putenv('TP_GOOGLE_DAILY_USD=' . $text);
+                putenv('TP_GOOGLE_MONTHLY_USD=' . $text);
+                self::assertSame(5.0, UpstreamGuard::allowanceUsd('daily'), 'daily for ' . var_export($text, true));
+                self::assertSame(40.0, UpstreamGuard::allowanceUsd('monthly'), 'monthly for ' . var_export($text, true));
+            }
+        } finally {
+            foreach ($before as $name => [$process, $env]) {
+                putenv($process === false ? $name : $name . '=' . $process);
+                if ($env !== null) {
+                    $_ENV[$name] = $env;
+                }
+            }
+        }
+    }
+
+    public function testACallIsPricedFromThePriceList(): void
+    {
+        self::assertEqualsWithDelta(0.045, UpstreamGuard::costUsd('tp_routes_matrix_ent', 3), 1e-12);
+        self::assertEqualsWithDelta(3.25, UpstreamGuard::costUsd('tp_routes_matrix', 650), 1e-12);
+        self::assertSame(0.035, UpstreamGuard::costUsd('tp_places_text', 1));
+        self::assertSame(0.0, UpstreamGuard::costUsd('tp_nws_hourly', 400), 'the forecast is free');
+        self::assertSame(0.0, UpstreamGuard::costUsd('tp_no_such_sku', 5));
+        self::assertSame(0.0, UpstreamGuard::costUsd('tp_routes_matrix', -4));
+    }
+
+    private function guardOn(RecordingDatabase $db): UpstreamGuard
+    {
+        return new UpstreamGuard($this->clock, new ApiLedger($db), static fn (): bool => true);
+    }
+
     public function testAnUnknownApiIsAProgrammingError(): void
     {
         $guard = $this->guard();

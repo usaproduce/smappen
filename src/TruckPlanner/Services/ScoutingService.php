@@ -1098,13 +1098,18 @@ class ScoutingService
     /**
      * May Google be asked now? One token of the shared bucket is taken for the call that follows.
      *
-     * @throws TpUnavailable without a key, and while Google refuses the key or a back-off runs
+     * @throws TpUnavailable without a key, while Google refuses the key or a back-off runs, and when the
+     *                       day's or the month's spending allowance does not cover one more lookup
      * @throws TpRateLimited when the bucket is empty
      */
     private function admit(): void
     {
         $guard = $this->guard ??= new UpstreamGuard($this->clock);
         if (!$guard->hasGoogleKey() || $guard->refused('places') || $guard->inBackoff('places')) {
+            throw new TpUnavailable(self::LOOKUP_UNAVAILABLE);
+        }
+        // The dearer of the two lookups is the price asked for: a first lookup is a text search.
+        if ($guard->spendLeftUsd() < UpstreamGuard::costUsd((string) TpConfig::get('places.sku'), 1)) {
             throw new TpUnavailable(self::LOOKUP_UNAVAILABLE);
         }
         if (!$guard->takeTokens((string) TpConfig::get('places.bucket'), 1, (int) TpConfig::get('places.bucket_wait_s'))) {

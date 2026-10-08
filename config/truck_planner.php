@@ -8,8 +8,9 @@ declare(strict_types=1);
  * environment by the client classes (GOOGLE_API_KEY, EIA_API_KEY, TP_CONTACT_EMAIL, MAIL_FROM, APP_ENV).
  *
  * The budgets, rate numbers and the per-call cap are placeholders to tune with real use. They limit what
- * this server asks Google for. They are not a cost bound for the key: that bound is the quota set in the
- * Google Cloud console.
+ * this server asks Google for. `google` below is the bound on what Truck Planner's own calls can cost. It
+ * is not a cost bound for the key, which the browser and the rest of smappen use as well: that bound is
+ * the quota set in the Google Cloud console.
  */
 return [
     // Sent to the browser by the bootstrap endpoint (4.3). Exactly these seven keys.
@@ -160,6 +161,16 @@ return [
     'suggest' => [
         'cache_ttl_s' => 600,
         'pairs_per_call' => 2000,
+    ],
+
+    // What this server may spend on Google for Truck Planner, in dollars by the price list below: drive
+    // times and contact lookups of every account together (5.3). When the day's or the month's allowance is
+    // used up nothing more is asked of Google until the day or the month ends: drive times are then
+    // labelled straight-line estimates and the contact lookup says it is not available. The environment's
+    // TP_GOOGLE_DAILY_USD and TP_GOOGLE_MONTHLY_USD stand in for these two when set (0 switches Google off).
+    'google' => [
+        'daily_budget_usd' => 5.0,
+        'monthly_budget_usd' => 40.0,
     ],
 
     // api_cost_events.unit_cost_usd per SKU (5.3). Matrix SKUs are per element, the others per call.
